@@ -41,6 +41,7 @@ from qtpy.QtGui import QFont, QColor
 import napari
 from napari.utils.notifications import show_info, show_warning, show_error
 
+from .small_screen import fit_review_window, wrap_all_labels
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
 from . import double_disagreement as dd
 from .causal_review_io import (
@@ -1880,6 +1881,7 @@ The notes box travels with the video.
             no_q.setStyleSheet("color: #888; padding: 8px;")
             self._questions_layout.addWidget(no_q)
             self._questions_layout.addStretch()
+            wrap_all_labels(self._questions_container)
             return
 
         # Store question widget references for answer collection
@@ -1963,6 +1965,10 @@ The notes box travels with the video.
         self._questions_layout.addWidget(notes_group)
 
         self._questions_layout.addStretch()
+        # Every label in the question panel wraps to the panel's width, so a
+        # long banner or prompt never runs off the right edge on a small
+        # screen (review/small_screen.py).
+        wrap_all_labels(self._questions_container)
 
     # ===================================================================
     # Question widgets
@@ -4013,22 +4019,16 @@ def main():
     print(f"Launching {tool_name} ({mode}) over {pending_dir} ...")
     print("Building queue (scanning bundles for triaged elements) ...", flush=True)
     viewer = napari.Viewer(title=f"MouseReach {tool_name} ({mode})")
-    # napari's layer panels take a third of a small screen and a reviewer
-    # does not need them; Window menu -> layer controls / layer list brings
-    # them back.
-    try:
-        qv = getattr(viewer.window, "_qt_viewer", None) or viewer.window.qt_viewer
-        qv.dockLayerControls.setVisible(False)
-        qv.dockLayerList.setVisible(False)
-    except Exception:
-        pass
     widget = CausalReviewWidget(viewer, triage_only=triage_only)
     widget._use_cv = bool(args.cv)
     if args.worklist:
         n = widget.load_worklist(args.worklist)
         print(f"Worklist: {n} segments across "
               f"{len(widget._worklist or {})} videos -- nothing else will be shown.")
-    viewer.window.add_dock_widget(widget, name=tool_name, area="right")
+    dock = viewer.window.add_dock_widget(widget, name=tool_name, area="right")
+    # napari's layer panels hidden, the panel capped at ~40% of the screen
+    # so the video gets most of it (review/small_screen.py).
+    fit_review_window(viewer, widget, dock)
     widget.load_pending_queue(pending_dir)
     napari.run()
     return 0

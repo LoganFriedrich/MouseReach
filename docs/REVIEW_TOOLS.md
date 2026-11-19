@@ -190,6 +190,30 @@ re-segmentation** (see "Escalating out of triage").
   no tracking-point names in triage, so the video gets the room (Window menu
   brings the panels back; re-segmentation shows the names).
 
+### Both review windows fit a 1366x768 screen (since 2026-11-19)
+
+On the processing server's 1366x768 display the Segmentation Fixer was
+unusable: napari's layer panels took about 270 px, the panel was wider than
+the room left (its text and table columns were cut off) and the video was
+about 215 px wide. Now, however the tool is opened (`mousereach-fix-segmentation`,
+`mousereach-review-tool`, the Review Queues buttons, the dashboard):
+
+- napari's layer controls and layer list are hidden (Window menu brings them back);
+- the review panel is never wider than about 40% of the screen, so the video
+  gets the rest; long lines wrap, and anything that still cannot fit scrolls;
+- in the Segmentation Fixer, the current boundary's question is pinned at the
+  top in a box called **This boundary** -- "Boundary N of M at frame X. Is
+  this where the tray finished moving?" -- with **Yes, correct**, **Move it
+  to the current frame** and **No boundary here**. These are shortcuts over
+  the guided walk's own answers (Yes + Confirm; Use current frame + Confirm;
+  remove this boundary): same records, same moves. **Save these cuts** /
+  **Skip this video** are pinned at the bottom; everything between scrolls;
+- "Manual cut editing" and "Segments these cuts produce" fold away, closed
+  when the tool opens; click a title to open it.
+
+The code is `review/small_screen.py`. A window that was already open keeps
+its old layout: close the tool and open it again.
+
 ### An answer that cannot count is not recorded (since 2026-10-23)
 
 Two answers can never be used for the segment they are given for, and the tool

@@ -61,8 +61,15 @@ from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QGroupBox, QMessageBox,
-    QCheckBox, QSplitter, QSpinBox, QRadioButton, QButtonGroup,
+    QCheckBox, QSpinBox, QRadioButton, QButtonGroup, QGridLayout,
 )
+
+from .small_screen import (CollapsibleSection, fit_review_window,
+                           scrollable_body, wrap_all_labels)
+
+# Candidate chips per row in the guided walk (a grid, so five chips never
+# make the panel wider than a small screen allows).
+CHIP_COLUMNS = 3
 
 from .keyboard import keep_typing_in_panel, review_keys_on_layer
 
@@ -162,7 +169,20 @@ jump to see where a boundary really is. The WHOLE video is loaded, pre-roll
 and post-roll included: step backwards from boundary 1 to watch the pre-roll
 end.
 
-THE WORKFLOW -- one question per boundary:
+THE QUICK WAY -- the box pinned at the top ("This boundary"):
+it always shows the current boundary as "Boundary N of M at frame X. Is
+this where the tray finished moving?" with three buttons:
+* "Yes, correct" -- records Yes and loads the next boundary.
+* "Move it to the current frame" -- step the video to the first frame
+  after the tray finished moving, then press it: the boundary moves there
+  and the next one loads.
+* "No boundary here" -- the segmenter invented it: it is removed and later
+  segments renumber.
+"Save these cuts" is pinned at the bottom. Everything between scrolls.
+The two optional sections ("Manual cut editing", "Segments these cuts
+produce") start folded: click their titles to open them.
+
+THE WORKFLOW IN DETAIL -- one question per boundary (the Guided walk box):
 
 * The walk parks the video on each boundary in turn and asks: "Is this the
   boundary?" (is this frame the first one after the jump, within 10 frames).
@@ -231,8 +251,13 @@ automatic.
 """
 
     def _build_ui(self):
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        # Small-screen layout (review/small_screen.py): everything but the
+        # Save/Skip row and the status line sits in a scroll area, so the
+        # panel never needs more height or width than the screen gives it;
+        # the Save row stays pinned at the bottom, always in reach.
+        layout = scrollable_body(self)
+        outer = self.layout()
+        self._scroll_body = layout.parentWidget()
 
         head_row = QHBoxLayout()
         self.header = QLabel("No video loaded")
@@ -314,6 +339,11 @@ automatic.
                         "Keyboard: Alt-Right.")
         segf.clicked.connect(lambda: self._jump_frames(self._segment_length()))
         step_row.addWidget(segf)
+        step_row.addStretch()
+        layout.addLayout(step_row)
+        # Frame/time readout and Go-to on their own row: on one row with the
+        # step buttons they were wider than a small screen's panel.
+        step_row = QHBoxLayout()
         self._frame_label = QLabel("Frame: -- / --")
         step_row.addWidget(self._frame_label)
         self._time_label = QLabel("Time: --:--")
@@ -331,8 +361,6 @@ automatic.
         step_row.addWidget(gb)
         layout.addLayout(step_row)
 
-        split = QSplitter(Qt.Vertical)
-        layout.addWidget(split, 1)
 
         # --- guided walk: one question per BOUNDARY ------------------------
         gw_box = QGroupBox("Guided walk (one boundary at a time)")
@@ -344,10 +372,12 @@ automatic.
         self.gw_header.setWordWrap(True)
         gv.addWidget(self.gw_header)
 
-        r = QHBoxLayout()
+        # The question on its own line, the answer controls under it (side
+        # by side they did not fit a small screen's panel).
         self.gw_q = QLabel("")
         self.gw_q.setWordWrap(True)
-        r.addWidget(self.gw_q, 1)
+        gv.addWidget(self.gw_q)
+        r = QHBoxLayout()
         self.gw_yes = QRadioButton("Yes")
         self.gw_yes.setChecked(True)
         self.gw_yes.setToolTip("This frame IS the boundary (the first frame "
@@ -386,9 +416,12 @@ automatic.
 
         # Nearby candidate tray advances the segmenter itself proposed --
         # click one to jump the playhead there AND fill it in as the answer.
-        self.gw_cands = QHBoxLayout()
-        self.gw_cands.addWidget(QLabel("Segmenter's nearby candidates:"))
-        self.gw_cands.addStretch()
+        # The chips sit in a grid (CHIP_COLUMNS across) under their label:
+        # five in one row were wider than a small screen's panel.
+        gv.addWidget(QLabel("Segmenter's nearby candidates:"))
+        self.gw_cands = QGridLayout()
+        self.gw_cands.setHorizontalSpacing(4)
+        self.gw_cands.setVerticalSpacing(2)
         gv.addLayout(self.gw_cands)
 
         nav = QHBoxLayout()
@@ -396,6 +429,17 @@ automatic.
         bb.setToolTip("Revisit the previous boundary.")
         bb.clicked.connect(self._gw_back)
         nav.addWidget(bb)
+        nav.addStretch()
+        cb = QPushButton("Confirm -> next boundary")
+        cb.setStyleSheet("font-weight: bold;")
+        cb.setToolTip("Record the answer (moving the boundary if you said "
+                      "No) and load the next one.")
+        cb.clicked.connect(self._gw_confirm)
+        nav.addWidget(cb)
+        gv.addLayout(nav)
+        # The remove button on its own row: with Back and Confirm beside it
+        # the row was wider than a small screen's panel.
+        nav = QHBoxLayout()
         rmb = QPushButton("No advance here -- remove this boundary")
         rmb.setStyleSheet("background: #5a1616; color: white;")
         rmb.setToolTip(
@@ -405,25 +449,65 @@ automatic.
         rmb.clicked.connect(self._gw_remove_boundary)
         nav.addWidget(rmb)
         nav.addStretch()
-        cb = QPushButton("Confirm -> next boundary")
-        cb.setStyleSheet("font-weight: bold;")
-        cb.setToolTip("Record the answer (moving the boundary if you said "
-                      "No) and load the next one.")
-        cb.clicked.connect(self._gw_confirm)
-        nav.addWidget(cb)
         gv.addLayout(nav)
 
         self.gw_status = QLabel("")
         self.gw_status.setWordWrap(True)
         self.gw_status.setStyleSheet("color: #e08020;")
-        gv.addWidget(self.gw_status)
-        split.addWidget(gw_box)
+        layout.addWidget(gw_box)
+
+        # --- the current boundary's question, PINNED at the top -----------
+        # Outside the scroll area, so the question and its answer buttons are
+        # always on screen together, whatever is scrolled below. The three
+        # buttons are shortcuts over the guided walk's own answers (same
+        # records, same moves); the full controls stay in the box below for
+        # typing a frame or picking a candidate.
+        quick = QGroupBox("This boundary")
+        qv = QVBoxLayout()
+        qv.setContentsMargins(6, 4, 6, 4)
+        quick.setLayout(qv)
+        self.gw_plain = QLabel("")
+        self.gw_plain.setWordWrap(True)
+        self.gw_plain.setStyleSheet("font-weight: bold; font-size: 13px;")
+        qv.addWidget(self.gw_plain)
+        qrow = QHBoxLayout()
+        yb = QPushButton("Yes, correct")
+        yb.setStyleSheet("font-weight: bold; background: #2d5016; color: white;")
+        yb.setToolTip("The tray finished moving at this frame (within %d "
+                      "frames). Records Yes and goes to the next boundary."
+                      % GUIDED_TOLERANCE_FRAMES)
+        yb.clicked.connect(self._gw_quick_yes)
+        qrow.addWidget(yb)
+        mb = QPushButton("Move it to the current frame")
+        mb.setToolTip("Step the video to the first frame AFTER the tray "
+                      "finished moving, then press this: the boundary moves "
+                      "to that frame and the next boundary loads.")
+        mb.clicked.connect(self._gw_quick_move)
+        qrow.addWidget(mb)
+        nb = QPushButton("No boundary here")
+        nb.setStyleSheet("background: #5a1616; color: white;")
+        nb.setToolTip(
+            "There is no tray advance anywhere near this frame: the "
+            "segmenter invented this boundary. Removing it merges the two "
+            "segments it separated, and every later segment renumbers.")
+        nb.clicked.connect(self._gw_remove_boundary)
+        qrow.addWidget(nb)
+        qrow.addStretch()
+        qv.addLayout(qrow)
+        qv.addWidget(self.gw_status)
+        outer.insertWidget(0, quick)
 
         # --- candidates ---------------------------------------------------
-        cand_box = QGroupBox("Manual cut editing (OPTIONAL -- for fixes the "
-                             "questions above cannot express)")
+        # Optional, so it folds away (closed by default): on a small screen the
+        # guided walk and the video come first. Click its title to open it.
+        cand_box = CollapsibleSection("Manual cut editing (OPTIONAL)")
+        self.cand_section = cand_box
         cv = QVBoxLayout()
-        cand_box.setLayout(cv)
+        cv.setContentsMargins(4, 0, 0, 0)
+        cand_box.content.setLayout(cv)
+        sub = QLabel("For fixes the questions above cannot express.")
+        sub.setStyleSheet("color: #888;")
+        cv.addWidget(sub)
         cv.addWidget(QLabel(
             "Every timepoint the corner trackers proposed; 'yes' rows are the "
             "current cuts. Click a row to jump the video there. Use this when "
@@ -436,35 +520,45 @@ automatic.
         self.cand_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.cand_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.cand_table.itemSelectionChanged.connect(self._jump_to_selected)
+        self.cand_table.setMinimumHeight(180)
         cv.addWidget(self.cand_table)
 
+        # Two rows of buttons: one row was wider than a small screen's panel.
         row = QHBoxLayout()
-        for text, slot, tip in (
+        row2 = QHBoxLayout()
+        for i, (text, slot, tip) in enumerate((
                 ("Use this candidate", self._use_selected,
                  "Add the selected table row's timepoint as a new cut."),
                 ("Drop this cut", self._drop_selected,
                  "Remove the cut at/near the selected table row's timepoint."),
                 ("Add a cut at the current frame", self._add_here,
                  "Add a cut exactly where the video playhead is now -- for a "
-                 "tray advance the segmenter never proposed.")):
+                 "tray advance the segmenter never proposed."))):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(slot)
-            row.addWidget(b)
+            (row if i < 2 else row2).addWidget(b)
         self.only_unused = QCheckBox("Hide candidates already used")
         self.only_unused.setToolTip(
             "Show only proposed timepoints that are NOT currently cuts.")
         self.only_unused.toggled.connect(lambda _: self._refresh_candidates())
-        row.addWidget(self.only_unused)
+        row2.addWidget(self.only_unused)
         row.addStretch()
+        row2.addStretch()
         cv.addLayout(row)
-        split.addWidget(cand_box)
+        cv.addLayout(row2)
+        layout.addWidget(cand_box)
 
         # --- resulting segments -------------------------------------------
-        seg_box = QGroupBox("Segments these cuts produce (READ-ONLY check -- "
-                            "nothing to fill in)")
+        # Read-only, so it folds away too (closed by default).
+        seg_box = CollapsibleSection("Segments these cuts produce (READ-ONLY)")
+        self.seg_section = seg_box
         sv = QVBoxLayout()
-        seg_box.setLayout(sv)
+        sv.setContentsMargins(4, 0, 0, 0)
+        seg_box.content.setLayout(sv)
+        sub = QLabel("A check -- nothing to fill in.")
+        sub.setStyleSheet("color: #888;")
+        sv.addWidget(sub)
         sv.addWidget(QLabel(
             "A tray advance comes about every 30 seconds. A segment far from "
             "that is where a cut is missing or wrong."))
@@ -483,15 +577,20 @@ automatic.
         self.seg_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.seg_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.seg_table.itemSelectionChanged.connect(self._jump_to_segment)
+        self.seg_table.setMinimumHeight(180)
         sv.addWidget(self.seg_table)
-        split.addWidget(seg_box)
+        layout.addWidget(seg_box)
+        layout.addStretch()
 
-        # --- actions -------------------------------------------------------
-        act = QHBoxLayout()
+        # Every label in the scrolling part wraps to the panel's width.
+        wrap_all_labels(self._scroll_body)
+
+        # --- actions (pinned under the scroll area) -----------------------
         self.count_label = QLabel("")
         self.count_label.setStyleSheet("font-weight: bold;")
-        act.addWidget(self.count_label)
-        act.addStretch()
+        self.count_label.setWordWrap(True)
+        outer.addWidget(self.count_label)
+        act = QHBoxLayout()
         for text, slot, style, tip in (
                 ("Back to the algorithm's cuts", self._reset, "",
                  "Throw away every change on this video and restore the "
@@ -509,11 +608,12 @@ automatic.
             b.clicked.connect(slot)
             b.setStyleSheet(style)
             act.addWidget(b)
-        layout.addLayout(act)
+        act.addStretch()
+        outer.addLayout(act)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        outer.addWidget(self.status)
 
     # ------------------------------------------------------------- queue
 
@@ -680,6 +780,8 @@ automatic.
         if not b:
             self.gw_header.setText("No boundaries to walk (no cuts yet) -- "
                                    "use the manual controls below.")
+            self.gw_plain.setText("No boundaries yet -- add cuts with "
+                                  "'Manual cut editing' below.")
             return
         self._gw_idx = max(0, min(self._gw_idx, len(b) - 1))
         i = self._gw_idx
@@ -695,6 +797,9 @@ automatic.
             "BEFORE this boundary (earlier frames): %s.\n"
             "AFTER this boundary (later frames): %s."
             % (num, n, frame, left, right))
+        self.gw_plain.setText(
+            "Boundary %d of %d at frame %d. Is this where the tray finished "
+            "moving?" % (num, n, frame))
         self.gw_q.setText(
             "Is this the boundary? (is frame %d the first frame after the "
             "scoring-area jump, within %d frames)"
@@ -717,16 +822,19 @@ automatic.
         cands.sort(key=lambda c: abs(int(c["frame"]) - frame))
         return cands[:limit]
 
-    def _gw_fill_candidate_row(self, row: QHBoxLayout, boundary_frame: int,
+    def _gw_fill_candidate_row(self, row: QGridLayout, boundary_frame: int,
                                spin: QSpinBox, checkbox: QCheckBox,
                                is_end: bool):
         """Rebuild one question's candidate chips. Clicking a chip jumps the
         playhead to the frame it implies for THIS question (cut frame for a
         start, cut-1 for an end) and fills it in as the answer -- same
-        pick-from-what-the-algo-saw flow as the review tool's reach picker."""
-        # drop previous chips (everything after the leading label, before stretch)
-        while row.count() > 2:
-            item = row.takeAt(1)
+        pick-from-what-the-algo-saw flow as the review tool's reach picker.
+
+        The chips fill a grid CHIP_COLUMNS wide (its label sits above it), so
+        the row never makes the panel wider than a small screen allows."""
+        # drop previous chips
+        while row.count():
+            item = row.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
@@ -734,7 +842,7 @@ automatic.
         if not cands:
             lbl = QLabel("(none nearby)")
             lbl.setStyleSheet("color: #666;")
-            row.insertWidget(1, lbl)
+            row.addWidget(lbl, 0, 0)
             return
         for i, c in enumerate(cands):
             cut = int(c["frame"])
@@ -749,7 +857,7 @@ automatic.
             btn.clicked.connect(
                 lambda _=False, f=answer: self._gw_pick_candidate(
                     f, spin, checkbox))
-            row.insertWidget(1 + i, btn)
+            row.addWidget(btn, i // CHIP_COLUMNS, i % CHIP_COLUMNS)
 
     def _gw_pick_candidate(self, frame: int, spin: QSpinBox, checkbox: QCheckBox):
         self._goto(frame)
@@ -794,6 +902,25 @@ automatic.
                 + "Walk finished (%d/%d boundaries answered). Check the "
                   "segment table for double-length rows (a missed boundary), "
                   "then 'Save these cuts'." % (len(self._gw_records), total))
+
+    def _gw_quick_yes(self):
+        """Pinned 'Yes, correct': the guided walk's Yes + Confirm."""
+        if not self.boundaries:
+            return
+        self.gw_yes.setChecked(True)
+        self._gw_confirm()
+
+    def _gw_quick_move(self):
+        """Pinned 'Move it to the current frame': the guided walk's
+        'Use current frame' + Confirm (records No, moved to the playhead)."""
+        if not self.boundaries:
+            return
+        self._gw_use_playhead(self.gw_spin, self.gw_no)
+        if not self.gw_no.isChecked():
+            self.gw_status.setText("Could not read the current frame -- "
+                                   "nothing was changed.")
+            return
+        self._gw_confirm()
 
     def _gw_remove_boundary(self):
         """The segmenter invented this boundary: remove the cut entirely."""
@@ -1314,7 +1441,9 @@ def main():
     print("Segmentation fixer over %s" % queue)
     viewer = napari.Viewer(title="MouseReach -- fix segmentation")
     widget = FixSegmentationWidget(viewer, queue)
-    viewer.window.add_dock_widget(widget, name="Fix segmentation", area="right")
+    dock = viewer.window.add_dock_widget(widget, name="Fix segmentation",
+                                         area="right")
+    fit_review_window(viewer, widget, dock)
     napari.run()
     return 0
 

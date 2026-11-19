@@ -2157,8 +2157,10 @@ class PipelineDashboard(QWidget):
             manifest = json.loads(mp.read_text(encoding="utf-8"))
             title = f"{'Deep' if deep else 'Triage'} Review -- {video_id}"
             v = napari.Viewer(title=title)
+            from mousereach.review.small_screen import fit_review_window
             w = CausalReviewWidget(v, triage_only=(not deep), deep_review=deep)
-            v.window.add_dock_widget(w, name=title, area="right")
+            dock = v.window.add_dock_widget(w, name=title, area="right")
+            fit_review_window(v, w, dock)   # fits a small screen
             w.load_from_manifest(manifest, bundle)
             self._review_windows = getattr(self, "_review_windows", [])
             self._review_windows.append((v, w))  # keep refs so the windows survive

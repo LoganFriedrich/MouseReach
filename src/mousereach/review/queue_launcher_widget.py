@@ -385,8 +385,10 @@ Each tool opens in its own window and has its own ? guide.
             import napari
             from mousereach.review.fix_segmentation_widget import FixSegmentationWidget
             v = napari.Viewer(title="Re-segmentation")
+            from mousereach.review.small_screen import fit_review_window
             w = FixSegmentationWidget(v, Path(queue_root))
-            v.window.add_dock_widget(w, name="Re-segmentation", area="right")
+            dock = v.window.add_dock_widget(w, name="Re-segmentation", area="right")
+            fit_review_window(v, w, dock)   # fits a small screen
             self._open_windows.append((v, w))
             show_info("Opened Re-segmentation.")
         except Exception as e:
@@ -402,8 +404,10 @@ Each tool opens in its own window and has its own ? guide.
             import napari
             from mousereach.review.causal_review_widget import CausalReviewWidget
             v = napari.Viewer(title=title)
+            from mousereach.review.small_screen import fit_review_window
             w = CausalReviewWidget(v, triage_only=triage_only, deep_review=deep_review)
-            v.window.add_dock_widget(w, name=title, area="right")
+            dock = v.window.add_dock_widget(w, name=title, area="right")
+            fit_review_window(v, w, dock)   # fits a small screen
             w.load_pending_queue(Path(queue_root))
             self._open_windows.append((v, w))
             show_info(f"Opened {title}.")
