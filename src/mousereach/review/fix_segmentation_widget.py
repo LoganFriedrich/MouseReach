@@ -53,7 +53,7 @@ import numpy as np
 # Qt-free hand_cuts module, which every cut editor saves through; imported here
 # under its old name for the callers that import it from this module.
 from .hand_cuts import (invalidate_stale_downstream, mark_as_hand_cuts,  # noqa: E402
-                        commit_hand_cuts, HandCutsNotSaved,
+                        commit_hand_cuts, HandCutsNotSaved, BOUNDARY_CALLS_KEY,
                         release_after_hand_cuts, asked_again_note)
 
 
@@ -138,7 +138,13 @@ class FixSegmentationWidget(QWidget):
         self._video_layer = None
         self._queue: List[Path] = []
         self._gw_idx: int = 0
-        self._gw_records: Dict[int, dict] = {}
+        # What the person did with each cut, keyed by the cut's CURRENT frame
+        # (never by its position in the list, which shifts when a cut moves
+        # past another, is removed or is added). A cut is called once it has
+        # an entry here; Save refuses while any cut has none (owner decision
+        # MRR-08d, hand_cuts.BOUNDARY_CALLS_KEY).
+        self._calls: Dict[int, dict] = {}
+        self._removed_calls: List[dict] = []
 
         from qtpy.QtCore import QTimer
         self.is_playing = False
@@ -174,18 +180,26 @@ THE WORKFLOW -- one question per boundary:
   type the frame number.
 * If there is NO tray advance anywhere near here, press "No advance here --
   remove this boundary". Every later segment renumbers automatically.
-* Press "Confirm -> next boundary". Repeat to the end, then "Save these
-  cuts". Saving stamps the boundaries as human-made; the pipeline keeps
-  them on the re-run.
+* Press "Confirm -> next boundary". The walk goes on to the next boundary
+  nobody has answered. Repeat to the end, then "Save these cuts". Saving
+  stamps the boundaries as human-made; the pipeline keeps them on the re-run.
+
+EVERY BOUNDARY MUST BE ANSWERED BEFORE SAVING: "Save these cuts" refuses,
+and says which frames are left, until every boundary has been accepted
+(Confirm), moved, removed, or added by you. A cut you add by hand counts as
+answered. A video saved before this rule with boundaries left unanswered is
+listed here again; the boundaries already answered are kept and the walk
+starts at the first one left. "Back to the algorithm's cuts" clears every
+answer.
 
 IF A BOUNDARY WAS MISSED (a segment looks double-length in the table, or
 you saw an extra jump): add it with "Add a cut at the current frame" in the
-manual controls below -- the walk picks it up immediately.
+manual controls below -- it counts as answered by you.
 
 EVERYTHING BELOW THE QUESTION IS OPTIONAL. The candidate table and the
 add/drop-cut buttons are manual controls; the segment table just shows what
 the current boundaries produce -- red rows hint at a missing boundary. If
-you never need them, Confirm + Save is the whole job.
+you never need them, Confirm at every boundary + Save is the whole job.
 
 NAVIGATION (identical to the other review tools, plus segment jumps):
 Play/Rev/Stop with speed buttons; step buttons for 1/10/100 frames; <seg and
@@ -666,11 +680,60 @@ automatic.
         self._load_video(bundle, stem)
         self._refresh_candidates()
         self._refresh_segments()
-        self._gw_idx = 0
-        self._gw_records = {}
+        self._removed_calls = []
+        # Calls a person already made on these very cuts on this visit (a save
+        # that left boundaries unwalked) or that the video was sent back to
+        # finish: kept, so only the remaining boundaries are walked
+        # (resegmented.carried_calls).
+        try:
+            from .resegmented import carried_calls
+            kept = {} if self._uncut else carried_calls(bundle, stem, self.seg)
+        except Exception as err:
+            logger.warning("Could not read the earlier boundary calls of %s: %s", stem, err)
+            kept = {}
+        self._calls = {f: r for f, r in kept.items() if f in self.boundaries}
+        self._gw_idx = self._first_uncalled_idx()
         self._gw_load()
+        if self._calls:
+            self.gw_status.setText(
+                "%d of %d boundaries were already accepted or moved by a person; "
+                "the walk starts at the first one nobody has called."
+                % (len(self._calls), len(self.boundaries)))
 
     # ------------------------------------------------------------ guided walk
+
+    def _call(self, frame: int, action: str, shown: Optional[int] = None) -> None:
+        """Record a person's explicit call on the cut now at ``frame``."""
+        rec = {"frame": int(frame), "action": action,
+               "by": os.environ.get("USERNAME", os.environ.get("USER", "unknown")),
+               "at": datetime.now().isoformat()}
+        if shown is not None:
+            rec["shown_frame"] = int(shown)
+        self._calls[int(frame)] = rec
+
+    def _uncall(self, frame: int, action: str = "removed") -> None:
+        """The cut at ``frame`` is gone: drop its call, keep the removal."""
+        self._calls.pop(int(frame), None)
+        self._removed_calls.append({
+            "frame": int(frame), "action": action,
+            "by": os.environ.get("USERNAME", os.environ.get("USER", "unknown")),
+            "at": datetime.now().isoformat()})
+
+    def _uncalled(self) -> List[int]:
+        """Cut frames nobody has accepted, moved or added yet, in order."""
+        return [b for b in sorted(self.boundaries) if int(b) not in self._calls]
+
+    def _first_uncalled_idx(self, after: Optional[int] = None) -> int:
+        """Position of the first uncalled cut after position ``after`` (else
+        the first anywhere); the last position when every cut is called."""
+        b = sorted(self.boundaries)
+        order = list(range(len(b)))
+        if after is not None:
+            order = order[after + 1:] + order[:after + 1]
+        for i in order:
+            if int(b[i]) not in self._calls:
+                return i
+        return max(0, len(b) - 1)
 
     def _gw_load(self):
         """Show the question for the current boundary and park the playhead
@@ -699,6 +762,10 @@ automatic.
             "Is this the boundary? (is frame %d the first frame after the "
             "scoring-area jump, within %d frames)"
             % (frame, GUIDED_TOLERANCE_FRAMES))
+        done = self._calls.get(frame)
+        if done:
+            self.gw_q.setText(self.gw_q.text() + "\n(Already %s by %s -- confirming "
+                              "again is fine.)" % (done.get("action"), done.get("by")))
         self.gw_yes.setChecked(True)
         self.gw_spin.setValue(frame)
         self.gw_status.setText("")
@@ -765,35 +832,46 @@ automatic.
         spin.setValue(f)
 
     def _gw_confirm(self):
-        """Record this boundary's answer (moving it if denied), advance."""
+        """Record this boundary's answer (moving it if denied), then go to the
+        next boundary nobody has called. The answer is kept under the cut's
+        frame (its frame after a move), never its position."""
         b = sorted(self.boundaries)
         if not b:
             return
         i = self._gw_idx
         frame = int(b[i])
-        rec = {"boundary_num": i + 1, "algo_frame": frame,
-               "confirmed": not self.gw_no.isChecked()}
         note = ""
+        now_at = frame
         if self.gw_no.isChecked():
             f = int(self.gw_spin.value())
-            rec["corrected_frame"] = f
+            if f != frame and f in b:
+                self.gw_status.setText(
+                    "Frame %d is already another boundary. Pick another frame, or "
+                    "use 'No advance here -- remove this boundary'." % f)
+                return
+            self._calls.pop(frame, None)
             b[i] = f
             self.boundaries = sorted(b)
+            self._call(f, "moved", shown=frame)
+            now_at = f
             note = "boundary %d moved to frame %d." % (i + 1, f)
-        self._gw_records[i + 1] = rec
+        else:
+            self._call(frame, "accepted", shown=frame)
         self._refresh_candidates(); self._refresh_segments()
+        left = self._uncalled()
         total = len(self.boundaries)
-        if self._gw_idx < total - 1:
-            self._gw_idx += 1
+        if left:
+            pos = sorted(self.boundaries).index(now_at)
+            self._gw_idx = self._first_uncalled_idx(after=pos)
             self._gw_load()
             if note:
                 self.gw_status.setText(note)
         else:
             self.gw_status.setText(
                 ("%s  " % note if note else "")
-                + "Walk finished (%d/%d boundaries answered). Check the "
+                + "Walk finished (%d/%d boundaries accepted or moved). Check the "
                   "segment table for double-length rows (a missed boundary), "
-                  "then 'Save these cuts'." % (len(self._gw_records), total))
+                  "then 'Save these cuts'." % (total - len(left), total))
 
     def _gw_remove_boundary(self):
         """The segmenter invented this boundary: remove the cut entirely."""
@@ -802,16 +880,15 @@ automatic.
             return
         i = self._gw_idx
         frame = int(b[i])
-        self._gw_records[i + 1] = {"boundary_num": i + 1, "algo_frame": frame,
-                                   "confirmed": False, "removed": True}
+        self._uncall(frame)
         del b[i]
         self.boundaries = b
         self._refresh_candidates(); self._refresh_segments()
         self.gw_status.setText(
             "Boundary at frame %d removed -- the two segments it separated "
             "are now one, and later segments renumbered." % frame)
-        self._gw_idx = min(self._gw_idx, len(self.boundaries) - 1)
         if self.boundaries:
+            self._gw_idx = self._first_uncalled_idx(after=i - 1 if i > 0 else None)
             self._gw_load()
 
     def _gw_back(self):
@@ -1159,6 +1236,7 @@ automatic.
             self.status.setText("Frame %d is already a cut." % f)
             return
         self.boundaries = sorted(self.boundaries + [f])
+        self._call(f, "added")
         self.status.setText("Added a cut at frame %d." % f)
         self._refresh_candidates(); self._refresh_segments()
 
@@ -1173,6 +1251,7 @@ automatic.
             return
         for b in near:
             self.boundaries.remove(b)
+            self._uncall(b)
         self.status.setText("Removed the cut near frame %d." % f)
         self._refresh_candidates(); self._refresh_segments()
 
@@ -1185,13 +1264,19 @@ automatic.
             self.status.setText("There is already a cut at frame %d." % f)
             return
         self.boundaries = sorted(self.boundaries + [f])
+        self._call(f, "added")
         self.status.setText("Added a cut at frame %d (not one the algorithm "
                             "proposed)." % f)
         self._refresh_candidates(); self._refresh_segments()
 
     def _reset(self):
         self.boundaries = list(self.original_boundaries)
-        self.status.setText("Back to the algorithm's cuts.")
+        # Back to the algorithm's cuts: no cut is a person's call any more.
+        self._calls = {}
+        self._removed_calls = []
+        self._gw_idx = 0
+        self._gw_load()
+        self.status.setText("Back to the algorithm's cuts. Walk every boundary again.")
         self._refresh_candidates(); self._refresh_segments()
 
     def _save(self):
@@ -1211,6 +1296,20 @@ automatic.
         if len(self.boundaries) < 2:
             QMessageBox.warning(self, "Too few cuts",
                                 "At least two cuts are needed to make a segment.")
+            return
+        # Every boundary must be explicitly accepted or moved first (owner
+        # decision MRR-08d, 2026-11-19): saving stamps the cuts as a person's,
+        # and a cut nobody looked at is not a person's call.
+        left = self._uncalled()
+        if left:
+            shown = ", ".join(str(f) for f in left[:10]) + (" ..." if len(left) > 10 else "")
+            QMessageBox.warning(
+                self, "Not every boundary checked",
+                "%d of %d boundaries have not been accepted or moved yet (frames %s).\n\n"
+                "Walk each one: press Confirm if it is right, or move it, or remove "
+                "it. Nothing was saved." % (len(left), len(self.boundaries), shown))
+            self._gw_idx = self._first_uncalled_idx()
+            self._gw_load()
             return
 
         uncut = not Path(self.seg_path).is_file()
@@ -1251,11 +1350,16 @@ automatic.
             except Exception:
                 why = ""
             seg["needs_human_resolved"] = [why or "no segments file"]
-        # The guided walk's per-segment answers: which identities/boundaries
-        # the human confirmed vs corrected, with the algo's original numbers.
-        if self._gw_records:
-            seg["guided_walk"] = [self._gw_records[k]
-                                  for k in sorted(self._gw_records)]
+        # What the person did with every cut, keyed by frame
+        # (hand_cuts.BOUNDARY_CALLS_KEY): the proof, read by
+        # resegmented_since_entry and release_after_hand_cuts, that every
+        # boundary was explicitly accepted, moved or added. The older
+        # position-keyed "guided_walk" record of an earlier save describes
+        # other cuts; the archived copy keeps it.
+        seg[BOUNDARY_CALLS_KEY] = ([self._calls[f] for f in sorted(self._calls)
+                                    if f in self.boundaries]
+                                   + list(self._removed_calls))
+        seg.pop("guided_walk", None)
 
         # Archive the original, then archive and remove every output computed
         # from the old cuts (a boundary change voids them), then replace the

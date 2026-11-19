@@ -12,7 +12,13 @@ on the same cuts.
 Where a person's boundary calls are recorded: ``{stem}_segments.json`` saved
 by the segmentation fixer, with ``boundary_source == "human"`` and
 ``corrected_at``. The fixer saves the whole list of cuts the person accepted,
-and that file is the one the pipeline cuts the video by on the re-run.
+and that file is the one the pipeline cuts the video by on the re-run. Since
+2026-11-19 (owner decision MRR-08d) a save counts only when EVERY cut in it is
+a person's explicit call -- accepted as placed, moved, or added -- by the
+``boundary_calls`` record the fixer writes beside the cuts
+(hand_cuts.BOUNDARY_CALLS_KEY). The fixer refuses to save otherwise; a save
+made before that rule, with boundaries left unwalked, keeps the video in the
+queue until a person walks the rest.
 
 A ground-truth file is NOT proof of re-segmentation (it used to be, when every
 one of its boundaries was determined). WHY: nothing writes ground-truth
@@ -136,6 +142,17 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
     seg = _read(bundle / f"{stem}_segments.json")
     if seg and seg.get("boundary_source") == "human":
         if after_entry(seg.get("corrected_at")):
+            # Saved after it arrived -- but every boundary must be a
+            # person's explicit accept or move (owner decision MRR-08d,
+            # hand_cuts.BOUNDARY_CALLS_KEY). A save that left boundaries
+            # unwalked does not let the video leave; the fixer lists it
+            # again and carries the calls already made (carried_calls).
+            from .hand_cuts import uncalled_reason
+            left = uncalled_reason(seg)
+            if left:
+                return False, ("not re-segmented: %s. Open it in the segmentation "
+                               "fixer, accept or move each remaining boundary and "
+                               "save; it leaves the queue after that." % left)
             return True, "cuts saved by %s at %s" % (seg.get("corrected_by"),
                                                       seg.get("corrected_at"))
         stale = ("its cuts were last set by hand at %s, before it was sent "
@@ -146,6 +163,48 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
     return False, ("not re-segmented: %s. Open it in the segmentation fixer, "
                    "set or confirm every cut and save; it leaves the queue "
                    "after that." % stale)
+
+
+def carried_calls(bundle: Path, stem: str, seg: Optional[dict] = None) -> dict:
+    """{cut frame: call record} of the explicit boundary calls the segmentation
+    fixer keeps when it opens this bundle, so the person walks only the
+    boundaries nobody called yet. Empty when none may be kept.
+
+    Kept only when the cuts on file are a person's AND either they were saved
+    after the video entered this queue (an earlier save on this visit that
+    left boundaries unwalked) or the video was sent here for exactly that
+    reason (hand_cuts.RECUT_REMAINING_REASON). WHY not otherwise: a video sent
+    here for any other reason after an earlier hand save is here because those
+    cuts were found wrong, so none of their calls stand (module docstring)."""
+    from .hand_cuts import BOUNDARY_CALLS_KEY, RECUT_REMAINING_REASON, called_frames
+    bundle = Path(bundle)
+    if seg is None:
+        seg = _read(bundle / f"{stem}_segments.json")
+    if not seg or seg.get("boundary_source") != "human":
+        return {}
+    entered = entered_deep_review_at(bundle, stem)
+    saved, came = _epoch(seg.get("corrected_at")), _epoch(entered)
+    this_visit = saved is not None and came is not None and saved >= came
+    routing = _read(bundle / f"{stem}_routing.json") or {}
+    for_remaining = RECUT_REMAINING_REASON in str(routing.get("routed_reason") or "")
+    if not (this_visit or for_remaining):
+        return {}
+    out = {}
+    recs = seg.get(BOUNDARY_CALLS_KEY)
+    if isinstance(recs, list):
+        for r in recs:
+            if isinstance(r, dict) and r.get("action") != "removed" and r.get("frame") is not None:
+                try:
+                    out[int(r["frame"])] = dict(r, carried_from=seg.get("corrected_at"))
+                except (TypeError, ValueError):
+                    pass
+        return out
+    for f in called_frames(seg):
+        out[int(f)] = {"frame": int(f), "action": "accepted", "shown_frame": int(f),
+                       "by": seg.get("corrected_by"), "at": seg.get("corrected_at"),
+                       "carried_from": seg.get("corrected_at"),
+                       "note": "from the older guided-walk record"}
+    return out
 
 
 def needs_recut(bundle: Path, stem: str) -> Tuple[bool, str]:

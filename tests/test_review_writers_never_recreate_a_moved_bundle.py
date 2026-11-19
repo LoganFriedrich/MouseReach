@@ -110,12 +110,17 @@ def _fixer_bundle(tmp_path):
 
 
 def _fixer(bundle):
-    return SimpleNamespace(
+    stub = SimpleNamespace(
         seg_path=bundle / f"{STEM}_segments.json",
         seg=json.loads((bundle / f"{STEM}_segments.json").read_text(encoding="utf-8")),
         video_stem=STEM, boundaries=[120, 900, 1700], original_boundaries=[100, 900, 1700],
-        n_frames=2400, _gw_records={}, _pose_frames=2400, status=_Label(),
-        _next_video=lambda: None)
+        n_frames=2400, _pose_frames=2400, status=_Label(),
+        _next_video=lambda: None,
+        # Every cut walked (hand_cuts.BOUNDARY_CALLS_KEY, owner decision MRR-08d).
+        _calls={f: {"frame": f, "action": "accepted"} for f in (120, 900, 1700)},
+        _removed_calls=[])
+    stub._uncalled = lambda: fsw.FixSegmentationWidget._uncalled(stub)
+    return stub
 
 
 def test_fixer_release_does_not_recreate_a_bundle_moved_during_the_save(

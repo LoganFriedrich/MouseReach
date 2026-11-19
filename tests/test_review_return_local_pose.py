@@ -47,7 +47,11 @@ def _hand_cuts(bundle):
     (review/resegmented.py)."""
     (bundle / f"{STEM}_segments.json").write_text(
         json.dumps({"boundary_source": "human", "corrected_at": "2099-01-01T00:00:00",
-                    "boundaries": [10, 20]}), encoding="utf-8")
+                    "boundaries": [10, 20],
+                    # every cut walked (hand_cuts.BOUNDARY_CALLS_KEY, MRR-08d)
+                    "boundary_calls": [{"frame": 10, "action": "accepted"},
+                                       {"frame": 20, "action": "accepted"}]}),
+        encoding="utf-8")
 
 
 def _split_bundle(deep, proc):

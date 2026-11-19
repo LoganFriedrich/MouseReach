@@ -1386,6 +1386,23 @@ class BoundaryReviewWidget(QWidget):
         })
         seg = mark_as_hand_cuts(existing_data, self.boundaries,
                                 original_boundaries, username)
+        # Which cuts the person explicitly accepted or moved, keyed by frame
+        # (hand_cuts.BOUNDARY_CALLS_KEY). A video in the re-segmentation queue
+        # leaves it only when EVERY cut is such a call (owner decision MRR-08d,
+        # 2026-11-19); a cut this screen never had accepted or set is not one.
+        from mousereach.review.hand_cuts import BOUNDARY_CALLS_KEY
+        reviewed = list(getattr(self, "boundaries_reviewed", None) or [])
+        if not isinstance(reviewed, list):
+            reviewed = []
+        calls = []
+        for i, f in enumerate(self.boundaries):
+            if i < len(reviewed) and reviewed[i] is True:
+                orig = original_boundaries[i] if i < len(original_boundaries) else None
+                calls.append({"frame": int(f),
+                              "action": "accepted" if orig == f else "moved",
+                              "shown_frame": orig, "by": username, "at": timestamp})
+        seg[BOUNDARY_CALLS_KEY] = calls
+        seg.pop("guided_walk", None)
         try:
             removed = commit_hand_cuts(segments_path, video_id, seg,
                                        archive_dir_for(segments_path))

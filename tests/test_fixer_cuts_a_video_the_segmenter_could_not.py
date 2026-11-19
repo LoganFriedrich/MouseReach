@@ -81,8 +81,13 @@ def _save(bundle, boundaries, n_frames, pose_frames=None):
     stub = SimpleNamespace(
         seg_path=bundle / f"{STEM}_segments.json", seg={}, video_stem=STEM,
         boundaries=list(boundaries), original_boundaries=[], n_frames=n_frames,
-        _gw_records={}, _pose_frames=pose_frames, status=_Label(),
-        _next_video=lambda: None)
+        _pose_frames=pose_frames, status=_Label(),
+        _next_video=lambda: None,
+        # Every cut added by hand (the only way to cut such a video) is a
+        # person's call (hand_cuts.BOUNDARY_CALLS_KEY).
+        _calls={int(f): {"frame": int(f), "action": "added"} for f in boundaries},
+        _removed_calls=[])
+    stub._uncalled = lambda: FixSegmentationWidget._uncalled(stub)
     FixSegmentationWidget._save(stub)
     return stub
 

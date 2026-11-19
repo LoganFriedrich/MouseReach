@@ -34,6 +34,11 @@ def _bundle(root, stem=STEM, reason="reviewer escalated from triage: bad segment
         json.dumps({"routed_at": ROUTED, "routed_reason": reason}), encoding="utf-8")
     seg = {"boundaries": [100, 200, 300]}
     seg.update(seg_extra or {})
+    # A fixer save records every cut as a person's explicit call
+    # (hand_cuts.BOUNDARY_CALLS_KEY, owner decision MRR-08d).
+    if seg.get("boundary_source") == "human":
+        seg.setdefault("boundary_calls", [{"frame": f, "action": "accepted"}
+                                          for f in seg["boundaries"]])
     (b / f"{stem}_segments.json").write_text(json.dumps(seg), encoding="utf-8")
     if review is not None:
         (b / f"{stem}_causal_review.json").write_text(

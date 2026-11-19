@@ -63,6 +63,104 @@ DOWNSTREAM_SUFFIXES = ("_reaches.json", "_pellet_outcomes.json",
                        "_reach_assignments.json", "_features.json")
 
 
+# ---------------------------------------------------------------------------
+# Every boundary is a person's explicit call (owner decision MRR-08d,
+# 2026-11-19: "Force a human to at least look at every single boundary ...
+# can't save and can't send the video out of resegmentation until they have
+# explicitly accepted that a boundary is already correctly placed or have
+# corrected it.")
+# ---------------------------------------------------------------------------
+
+# The record, in the saved segments file, of what a person did with each cut.
+# One entry per cut, keyed by the cut's FRAME (never by its position in the
+# list, which shifts when a cut is moved past another, removed or added --
+# the old "guided_walk" record was keyed by position, so a later answer
+# overwrote an earlier one and a walk could not be checked):
+#   {"frame": <the cut's frame now>, "action": "accepted" | "moved" | "added"
+#    | "removed", "shown_frame": <frame the person was shown, for moved and
+#    accepted>, "by": <user>, "at": <ISO time>}
+BOUNDARY_CALLS_KEY = "boundary_calls"
+# The actions that make a cut a person's call. "removed" is a call too, but
+# about a cut that is no longer there.
+CALLED_ACTIONS = ("accepted", "moved", "added")
+
+# The routing reason that sends a video back to the re-segmentation queue
+# because cuts were saved without every boundary being explicitly accepted or
+# moved. It names segmentation, so saving the cuts releases the video
+# (release_after_hand_cuts); and the calls a person already made on the cuts
+# it holds are kept for it (carried_calls), so only the remaining boundaries
+# are walked.
+RECUT_REMAINING_REASON = ("segmentation: boundaries not all explicitly "
+                          "accepted/corrected")
+
+
+def _cut_list(seg: dict) -> List[int]:
+    out = []
+    for b in (seg or {}).get("boundaries") or []:
+        try:
+            out.append(int(b.get("frame", b.get("index", 0))) if isinstance(b, dict) else int(b))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return sorted(out)
+
+
+def called_frames(seg: dict) -> set:
+    """The cut frames a person explicitly accepted, moved to, or added, by
+    the record in ``seg``. ``boundary_calls`` when present; else the older
+    position-keyed ``guided_walk`` record read for what survived of it (an
+    answer's ``corrected_frame``, else its ``algo_frame`` when confirmed --
+    the frame the person was shown, so the shifting position does not matter;
+    an answer a later one overwrote is lost, and its cut counts as not
+    called), plus every cut that is not one of the algorithm's
+    (``algo_boundaries``): the old fixer recorded no walk answer for a cut
+    added with the manual controls, but a cut the algorithm never proposed
+    can only have been placed by the person; else nothing."""
+    seg = seg or {}
+    calls = seg.get(BOUNDARY_CALLS_KEY)
+    out = set()
+    if isinstance(calls, list):
+        for c in calls:
+            if isinstance(c, dict) and c.get("action") in CALLED_ACTIONS:
+                try:
+                    out.add(int(c["frame"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+        return out
+    algo = seg.get("algo_boundaries")
+    if isinstance(algo, list) and algo:
+        algo_set = set(_cut_list({"boundaries": algo}))
+        out |= {b for b in _cut_list(seg) if b not in algo_set}
+    for r in seg.get("guided_walk") or []:
+        if not isinstance(r, dict) or r.get("removed"):
+            continue
+        try:
+            if r.get("corrected_frame") is not None:
+                out.add(int(r["corrected_frame"]))
+            elif r.get("confirmed"):
+                out.add(int(r["algo_frame"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return out
+
+
+def uncalled_boundaries(seg: dict) -> List[int]:
+    """The cut frames of ``seg`` no person explicitly accepted, moved or
+    added (called_frames). Empty means every boundary is a person's call."""
+    called = called_frames(seg)
+    return [b for b in _cut_list(seg) if b not in called]
+
+
+def uncalled_reason(seg: dict) -> str:
+    """Words for a person when ``seg`` has cuts nobody called, '' otherwise."""
+    left = uncalled_boundaries(seg)
+    if not left:
+        return ""
+    n = len(_cut_list(seg))
+    shown = ", ".join(str(f) for f in left[:10]) + (" ..." if len(left) > 10 else "")
+    return ("%d of %d boundaries were saved without being explicitly accepted or "
+            "moved (frames %s)" % (len(left), n, shown))
+
+
 class HandCutsNotSaved(RuntimeError):
     """The cuts were not saved; ``stage`` says which step refused
     ('archive' or 'invalidate') and the message says why."""
@@ -245,6 +343,18 @@ def release_after_hand_cuts(bundle, stem: str) -> str:
         routing = bundle / f"{stem}_routing.json"
         if not routing.is_file() or marker.exists():
             return ""
+        # Every boundary must be a person's explicit call before the video
+        # leaves re-segmentation (owner decision MRR-08d, comment at
+        # BOUNDARY_CALLS_KEY). The segmentation fixer refuses such a save; this
+        # catches any other cut editor that saved into the queue.
+        try:
+            seg = json.loads((bundle / f"{stem}_segments.json").read_text(encoding="utf-8"))
+        except Exception:
+            seg = {}
+        left = uncalled_reason(seg)
+        if left:
+            return ("  NOT released: %s. Open it in the segmentation fixer, accept "
+                    "or move each remaining boundary and save." % left)
         from .release_cli import _names_segmentation, _routing_reason
         reason_txt = _routing_reason(bundle, stem)
         if not _names_segmentation(reason_txt):
