@@ -68,6 +68,10 @@ def rig(tmp_path, monkeypatch):
     processing manifest, every algorithm and check replaced by a recorder.
     The gate holds the video (so a gate that runs is visible); the queues are
     under tmp_path."""
+    # The pose stand-in is an empty file; the pose test is not what is tested
+    # (an unusable pose of a video not filed starts it over, 2026-11-19).
+    import mousereach.pipeline.pose_check as _pc
+    monkeypatch.setattr(_pc, "check_pose", lambda *a, **k: (True, ""))
     import mousereach.segmentation.core.batch as segb
     import mousereach.reach.core.batch as reachb
     import mousereach.outcomes.core.batch as outb

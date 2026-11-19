@@ -71,6 +71,10 @@ def held(tmp_path, monkeypatch):
     pose = folder / f"{VID}{SCORER}.h5"
     pose.write_bytes(b"")
     monkeypatch.setattr(o, "resolve_pose_input", lambda *a, **k: pose)
+    # The pose stand-in is an empty file; the pose test is not what is tested
+    # (an unusable pose of a video not filed starts it over, 2026-11-19).
+    import mousereach.pipeline.pose_check as _pc
+    monkeypatch.setattr(_pc, "check_pose", lambda *a, **k: (True, ""))
 
     db = WatcherDB(tmp_path / "local.db")
     db.register_video(video_id=VID, source_path="x")

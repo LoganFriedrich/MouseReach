@@ -1928,3 +1928,13 @@ made, measured over the frames the person gave, and credited with the pellet
 Two exceptions: a typed reach longer than 300 frames is not added
 (`MAX_TYPED_REACH_FRAMES`), and none is added where ground truth marks its
 reach list complete (logged). See "A reach the list does not have" above.
+
+## Update 2026-11-19 (findings no review can fix no longer reach a queue)
+
+An unusable pose (will not load, or SABL/SABR missing) and a missing or unreadable step output are no
+longer held in re-segmentation for a person: nothing in a review window can fix them. A video not
+filed is started over from a new cut of its multi-animal recording instead, and listed red only if
+that cannot work (same error 5 restarts in a row, the recording unreadable, or the recording not
+found). An unexpected boundary count and an uncertain outcome still come to you as before. See
+docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (a finding no person can fix starts the video over
+from a new cut)".

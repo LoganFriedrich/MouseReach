@@ -7291,3 +7291,63 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+---
+
+## Update 2026-11-19 (a finding no person can fix starts the video over from a new cut)
+
+**Lab decisions 2026-11-19 (D2-10, D2-7, D2-11, with both corrections).** Two kinds of critical
+quality finding are not questions anyone can answer in a review window, so they no longer hold a
+video for a person:
+
+1. **the pose cannot be used** -- it will not load, or points every tray needs (SABL/SABR among
+   them) are missing (`pipeline/pose_check.py` before segmentation, or the quality triage's
+   POSE_UNUSABLE findings);
+2. **a step's output is missing or cannot be read** (the quality triage's "Missing <step> file" /
+   "Could not read segments file").
+
+For either, a video that is **not filed** is started completely over
+(`watcher/restart_from_recrop.py`, `ProcessingOrchestrator._restart_from_recrop`):
+
+- its single-animal video is **cut again** out of its multi-animal recording (the same ffmpeg crop
+  the graphics-card PCs use; the position is the animal's place in the recording's name);
+- everything MouseReach made for the failed attempt -- the old single, its pose, every step output,
+  in this server's processing folder and in the shared posed folder -- is **deleted** (not archived:
+  "no garbage sits around gathering dust"). **Never** deleted: the multi-animal recording, and
+  anything a person made (a review, ground truth, hand-set cuts, a clear marker, or a step file a
+  review tool wrote a person's mark into; `review_routing.is_person_file` decides, and a file that
+  cannot be read counts as a person's);
+- the new cut goes into the processing folder and to `<NAS>/Processing/Repose_Queue/_parked/<video>/`,
+  a pose request naming it goes into the shared Repose_Queue, and the row is parked
+  `outdated` / scope `full` with `mark_reason` "restart from re-crop: <error>". The existing
+  re-pose round trip then takes over: a graphics-card PC poses it, the server adopts the pose and
+  runs every step after posing;
+- every restart is one line in `<NAS>/Processing/Restarts/<video>.json` (time, machine, error,
+  outcome).
+
+**Restarts are unlimited, except** (each listed red on `<NAS>/attention/<host>_restart_stopped.json`
+and the row marked failed with no retries left, so the failed-video retry does not walk into it
+again):
+- the **same error has ended 5 restarts in a row** (numbers and paths do not make errors different):
+  restarting stops -- a person must find why;
+- the **multi-animal recording cannot be read** (the cut fails): a recording problem, at once;
+- the **multi-animal recording cannot be found** (Unanalyzed/Multi-Animal, any Multi-Animal folder
+  in Analyzed or Archive, the watcher database's collage rows): recordings are never deleted, so a
+  person must find it.
+
+An empty box in a recording (a blank position) is intentional: it has no single at all and is never
+a problem. **Unchanged:** an unexpected boundary count and an uncertain or low-confidence outcome are
+questions a person answers -- they hold the video in review exactly as before. A FILED video is
+never started over automatically (filed is final); its own-model unusable pose goes on as before,
+and an old-model one goes through the re-pose round trip as before.
+
+**What an operator sees:** a restarted video shows as `outdated` with the reason above in
+`mousereach-watch-status`; a stopped one as `failed` with the red-panel line saying which of the
+three it was and what to do.
+
+**Not built yet:** videos already held in a review queue for one of these two findings before this
+change are not started over by themselves -- they reach the watcher again only when a person clears
+them. The dry run of 2026-11-19 (work record) lists them.
+
+Tests: `tests/test_restart_from_recrop.py` (the module does not exist on master a534f3c);
+`tests/test_unusable_pose_is_never_sent_to_review.py` (the two not-filed cases now start over).
