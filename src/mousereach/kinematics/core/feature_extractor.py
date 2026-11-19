@@ -1051,11 +1051,30 @@ class FeatureExtractor:
         if causal_reach_id is not None and causal_reach_id == reach_id:
             features.causal_reach = True
             features.outcome = outcome_data['outcome']
-            features.interaction_frame = outcome_data.get('interaction_frame')
+            # The contact frame is attached to the causal reach only when it
+            # lies inside that reach's frames (owner decision D5-3, 2026-11-19:
+            # "contact frame doesn't matter. it's an artifact"; nothing may
+            # depend on it for a reach a person picked). WHY: the frame comes
+            # from the outcome algorithm, and when a person names a different
+            # causal reach (or gives that reach's frames) the algorithm's
+            # contact frame stays behind on the pellet -- it was attached to
+            # the person's reach anyway, so the export carried a contact frame
+            # outside the reach it is exported with and every at-contact
+            # measure of that reach was empty. Now such a frame is simply not
+            # this reach's: interaction_frame None, at-contact measures empty
+            # by rule, the reach and its causal credit unaffected. A reach the
+            # algorithm picked always holds its frame (reach assignment picks
+            # the reach containing it), so nothing changes there.
+            _ifr = outcome_data.get('interaction_frame')
+            try:
+                _inside = _ifr is not None and int(start_frame) <= int(_ifr) <= int(end_frame)
+            except (TypeError, ValueError):
+                _inside = False
+            features.interaction_frame = _ifr if _inside else None
 
             # Get reach features from outcome data
             reach_features_dict = outcome_data.get('reach_features', {})
-            if reach_features_dict:
+            if reach_features_dict and _inside:
                 features.distance_to_interaction = reach_features_dict.get('distance_to_interaction')
 
         # Convert extent to mm

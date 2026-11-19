@@ -7313,3 +7313,13 @@ newest determination; a folder in the filed tree; a video locked for a publicati
 applied when the segmenter fails on the video. A video returning from a review queue starts at
 segmentation when its ground truth has cuts its segments file does not hold
 (`watcher/resume_point.current_start`).
+
+**The contact frame is never attached to a reach it is not in (owner decision D5-3).** "Contact frame
+doesn't matter. It's an artifact": nothing may depend on it for a reach a person picked. The features
+step puts the pellet's `interaction_frame` on the causal reach only when the frame lies inside that
+reach; otherwise the reach's `interaction_frame` and `distance_to_interaction` are null and its
+`*_at_contact_*` measures are empty. Before, the algorithm's contact frame stayed on the pellet when a
+person picked a different reach, and was exported with that reach although it lay outside it. A reach
+the algorithm picked always holds its frame (reach assignment picks the reach containing it), so
+nothing changes there. No extractor version change: filed videos keep their files until a kinematics
+re-run happens for another reason.
