@@ -27,8 +27,9 @@ class Window:
         return getattr(CausalReviewWidget, name).__get__(self)
 
 
-ANSWERED, UNANSWERED, RECHECKED, HAS_GT = (
-    "20990101_ABC9901_P1", "20990101_ABC9902_P1", "20990101_ABC9903_P1", "20990101_ABC9904_P1")
+ANSWERED, UNANSWERED, RECHECKED, HAS_GT, GT_OPEN = (
+    "20990101_ABC9901_P1", "20990101_ABC9902_P1", "20990101_ABC9903_P1", "20990101_ABC9904_P1",
+    "20990101_ABC9905_P1")
 
 
 def _answer(n, start):
@@ -78,8 +79,19 @@ def queue(tmp_path, monkeypatch):
          "answers": {"reviewed": False, "recheck": {"asked_at": "2099-01-05T10:00:00",
                                                     "question": "sure?"}}}]}),
         encoding="utf-8")
+    # Ground truth that answers the flagged pellet: nothing for a person, the
+    # return scan releases it (MRR-03d, 2026-11-19).
     b = _bundle(q, HAS_GT, [_placeholder(1, 100), _placeholder(2, 200)])
-    (b / f"{HAS_GT}_unified_ground_truth.json").write_text("{}", encoding="utf-8")
+    (b / f"{HAS_GT}_unified_ground_truth.json").write_text(json.dumps({
+        "segmentation": {"boundaries": [{"index": i, "frame": f}
+                                        for i, f in enumerate((100, 200, 300))]},
+        "outcomes": {"segments": [{"segment_num": 2, "outcome": "untouched",
+                                   "determined": True}]}}), encoding="utf-8")
+    # Ground truth that answers nothing: the flagged pellet is still a
+    # question, so the window offers it (it used to hide every bundle with
+    # ground truth, and this one was neither shown nor released).
+    b = _bundle(q, GT_OPEN, [_placeholder(1, 100), _placeholder(2, 200)])
+    (b / f"{GT_OPEN}_unified_ground_truth.json").write_text("{}", encoding="utf-8")
     return q
 
 
@@ -92,14 +104,14 @@ def test_each_bundle_is_judged_on_every_copy(queue):
     w = _window()
     root = queue.parent
     eligible = {b.name for b in w._review_pool_paths(queue, root) if w._bundle_eligible(b, root)}
-    assert eligible == {UNANSWERED, RECHECKED}
+    assert eligible == {UNANSWERED, RECHECKED, GT_OPEN}
 
 
 def test_the_next_video_is_always_one_that_needs_a_person(queue):
     w = _window()
     root = queue.parent
     pool = w._review_pool_paths(queue, root)
-    assert len(pool) == 4
+    assert len(pool) == 5
     picked = set()
     while True:
         b, _ = w._pick_eligible(pool, root)
@@ -107,4 +119,4 @@ def test_the_next_video_is_always_one_that_needs_a_person(queue):
             break
         picked.add(b.name)
         pool = [x for x in pool if x != b]
-    assert picked == {UNANSWERED, RECHECKED}
+    assert picked == {UNANSWERED, RECHECKED, GT_OPEN}

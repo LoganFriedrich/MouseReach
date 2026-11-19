@@ -213,6 +213,19 @@ def bundle_review_complete(bundle_dir, stem, dirs, triage_only: bool) -> bool:
     return bool(wanted) and wanted.issubset(resolved)
 
 
+def ground_truth_answered(stem, dirs, current_segments, human: bool) -> set:
+    """Current pellet numbers ground truth has answered on unchanged frames
+    (triage_status.gt_resolved_segments, ground truth in ``dirs`` first, then
+    the corpus index). Empty when there is none or it cannot be read."""
+    try:
+        from .triage_status import gt_resolved_segments
+        return set(gt_resolved_segments(stem, extra_dirs=tuple(dirs or ()),
+                                        current_segments=current_segments or None,
+                                        human_segmentation=human)[1])
+    except Exception:
+        return set()
+
+
 def open_triaged_indices(indices, segments, records) -> list:
     """The triaged segments a person has NOT already answered -- the only ones
     triage walks (answered pellets kept being shown when a video came back
@@ -1529,6 +1542,19 @@ The notes box travels with the video.
                              self._video_stem,
                              len(self._triaged_indices) - len(still_open))
             self._triaged_indices = still_open
+        # ...and never a pellet ground truth already answered on these same
+        # frames (owner rule 2026-11-19: a person's answer about the correct
+        # pellet is never asked again; triage_status.gt_resolved_segments, the
+        # rule the release check applies). A bundle with ground truth is shown
+        # at all only when some flagged pellet is still open
+        # (_bundle_needs_review), and only those are walked.
+        if self._triage_only and self._triaged_indices:
+            gt_done = ground_truth_answered(self._video_stem, candidates, current,
+                                            human)
+            if gt_done:
+                self._triaged_indices = [
+                    i for i in self._triaged_indices
+                    if self._segment_list[i]["segment_num"] not in gt_done]
 
         idx = self._first_visible_idx()
         for i in self._visible_indices():
@@ -3306,7 +3332,23 @@ The notes box travels with the video.
         stem = bundle_dir.name
         if (not getattr(self, "_deep_review", False)
                 and has_gt(stem, extra_dirs=[bundle_dir])):
-            return False  # already ground-truthed -> GT is the correct answer
+            # Ground truth is a person's answer. Hidden only when it (with the
+            # review) leaves no flagged pellet open -- the return scan then
+            # releases the bundle (triage_status reads ground truth inside the
+            # bundle, owner decision MRR-03d 2026-11-19). A pellet the ground
+            # truth does not answer on unchanged frames is still a question,
+            # so such a bundle is shown and only those pellets are walked.
+            # (Hiding every bundle with ground truth left one with an open
+            # pellet neither shown nor released, for ever.)
+            try:
+                from .triage_status import triage_status
+                if triage_status(bundle_dir, stem).fully_resolved:
+                    return False
+            except Exception as err:
+                logger.warning("Skipped %s: could not read its triage status (%s)",
+                               stem, err)
+                return False
+            return True
         if self._bundle_reviewed(bundle_dir):
             return False
         return True

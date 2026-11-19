@@ -1,16 +1,16 @@
-"""A triage bundle that nothing can move is listed for a person, not left unseen.
+"""A triage bundle held only by its own ground truth is released, not stuck.
 
 A triage bundle whose segmentation failed and whose ground truth INSIDE the
 bundle certifies the whole video is not diverted to re-segmentation (the gate
-would pass it clean). But the release check counts only ground truth it finds
-through the ground-truth index, not ground truth inside a bundle -- whether it
-may is an open decision about moving queue items -- so its triaged pellets
-stay open and it is not released; and the review window does not offer it,
-because it has ground truth. It sat in the queue with nothing logged.
+would pass it clean). Before 2026-11-19 the release check counted only ground
+truth it found through the ground-truth index, not ground truth inside a
+bundle, so its triaged pellets stayed open, the window hid it (it has ground
+truth) and the return scan could only list it for a person.
 
-Now the return scan lists it for a person (the attention list the Pipeline
-Dashboard and the Review Queues tab show), with the reason, and takes it off
-once it no longer applies. It does NOT release it.
+Owner decision MRR-03d (2026-11-19): a person's answer about the correct
+pellet is always true. The release check now reads ground truth inside the
+bundle, so such a bundle is RELEASED by the ordinary rule, and a listing an
+older scan wrote is taken off.
 
 Built under tmp_path with invented ids.
 """
@@ -98,29 +98,19 @@ def scan(tmp_path, monkeypatch):
     return triage, run
 
 
-def test_a_bundle_nothing_can_move_is_listed_with_its_reason(scan):
+def test_a_bundle_its_own_ground_truth_certifies_is_released(scan):
     triage, run = scan
     _bundle(triage)
     listed, moved = run()
-    assert [i["video_id"] for i in listed] == [PILLAR]
-    says = listed[0]["says"]
-    assert "ground truth" in says and "3" in says and "triage" in says
-    # Visibility only: nothing is released, returned or diverted.
-    assert moved == {"routed": [], "returned": []}
-    assert (triage / PILLAR).is_dir()
+    assert listed == []
+    assert [a[1] for a in moved["returned"]] == [PILLAR]
+    assert moved["routed"] == []
 
 
-def test_it_is_listed_once_and_taken_off_when_it_no_longer_applies(scan):
+def test_a_listing_written_by_older_code_is_taken_off(scan):
     triage, run = scan
     b = _bundle(triage)
-    run()
-    listed, _ = run()
-    assert len(listed) == 1
-    # A person's answer for pellet 3 is found: the bundle is released by the
-    # ordinary rule and no longer listed.
-    (b / f"{PILLAR}_causal_review.json").write_text(json.dumps({"segments": [
-        {"segment_num": 3, "human": {"outcome": "untouched"},
-         "answers": {"reviewed": True}}]}), encoding="utf-8")
+    rrt.note_for_a_person(rr.GT_NOT_COUNTED_KIND, PILLAR, b, "older listing")
     listed, moved = run()
     assert listed == []
 

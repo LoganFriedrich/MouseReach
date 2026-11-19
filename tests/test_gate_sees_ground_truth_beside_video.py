@@ -87,11 +87,12 @@ def test_route_to_queue_sees_it_too(tmp_path, empty_gt_index):
     assert 2 in answered_segments_of(VID, tmp_path)
 
 
-def test_the_release_check_does_not_yet_read_ground_truth_inside_a_bundle(tmp_path, empty_gt_index):
-    """Held back on purpose until the queue hold is lifted (see the comment in
-    triage_status.triage_status): reading it would release bundles on the
-    next scan."""
+def test_the_release_check_reads_ground_truth_inside_a_bundle(tmp_path, empty_gt_index):
+    """Owner decision MRR-03d (2026-11-19): a person's answer about the
+    correct pellet is always true, so ground truth inside a bundle answers
+    its flagged pellets on the release side too (see the comment in
+    triage_status.triage_status)."""
     from mousereach.review.triage_status import triage_status
     _flagged_video(tmp_path, flagged=(2,))
     _gt(tmp_path, [2])
-    assert triage_status(tmp_path, VID).unresolved == {2}
+    assert triage_status(tmp_path, VID).unresolved == set()

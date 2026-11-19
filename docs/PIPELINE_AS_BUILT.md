@@ -408,7 +408,7 @@ For each bundle in the triage queue the scan recomputes the picture from the bun
 [SUPERSEDED: a returned video now resumes just after the step that sent it -- triage at reach assignment or at the checks, deep review at reach detection -- and every later step and check runs; see "Update: a returned video resumes just after the step that sent it".] The returned video then re-runs the whole sequence from segmentation. The human's review file came back with it, so the gate sees the answers and lets it through, and feature extraction loads that same file and applies the reviewer's corrections before computing kinematics (orchestrator.py:2066-2078). Deep-review bundles come back the same way (now: resuming at reach detection, the person's cuts kept), but the release signal is different: either a {video}_deep_review_cleared.json marker written by the deep tools, or a {video}_unified_ground_truth.json produced by the ground-truth tool (review_return.py:108-115, :252-259).
 
 TWO EDGES WORTH KNOWING
-- The gate treats a segment as resolved if ground truth determined it, or if a review file found in any of several locations answers it. The return scan is stricter: it only reads {video}_causal_review.json inside the bundle and does not consider ground truth. A video whose flagged segments include ground-truth-determined ones can therefore sit in the queue after the reviewer has answered everything actually asked of them (review_gate.py:91-100 vs review_return.py:244-249).
+- [SUPERSEDED 2026-11-19: the return scan reads ground truth too, in the bundle and in the index; see "Update 2026-11-19 (triage release reads ground truth inside the bundle)".] The gate treats a segment as resolved if ground truth determined it, or if a review file found in any of several locations answers it. The return scan is stricter: it only reads {video}_causal_review.json inside the bundle and does not consider ground truth. A video whose flagged segments include ground-truth-determined ones can therefore sit in the queue after the reviewer has answered everything actually asked of them (review_gate.py:91-100 vs review_return.py:244-249).
 - The server's scan step returns immediately if no DeepLabCut staging directory is configured (orchestrator.py:1364-1366), and that staging path only exists when nas_root is set. With nas_root missing, the review-return scan never runs at all.
 
 ---
@@ -6712,6 +6712,8 @@ the Clear button recreated the folder and overwrote another person's marker).
 
 ## Update: a triage bundle its own ground truth holds is listed for a person
 
+(SUPERSEDED 2026-11-19: such a bundle is now released -- see "Update 2026-11-19 (triage release reads ground truth inside the bundle)".)
+
 WHY: the release predicates give the gate and the return scan's divert test an in-bundle reading
 of ground truth for whole-video certification, but the release check (`triage_status`) still
 reads only the ground-truth index (an open owner decision: releasing these bundles would
@@ -7291,3 +7293,41 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+## Update 2026-11-19 (triage release reads ground truth inside the bundle)
+
+WHY: owner decision MRR-03d (2026-11-19): "an answer a human gives is always true so long as it was
+given about the correct pellet/segment" -- "respect what humans said; their time is valuable and their
+answers are not wrong". The release check (`triage_status.triage_status`) read ground truth only
+through the corpus index, which covers the machine's processing folder, not the shared review
+queues. A triage bundle carrying the ground-truth tool's `<video>_unified_ground_truth.json` that
+answered every flagged pellet therefore counted as open, while the review window hid it because it
+had ground truth: never shown, never released.
+
+WHAT IS BUILT:
+- `triage_status.triage_status` passes `extra_dirs=(directory,)` to `gt_resolved_segments`, the
+  reading the gate already used: ground truth in the bundle first, then the index. A bundle whose
+  flagged pellets are all answered (by a saved review, by ground truth, or both) is released by the
+  return scan on its next pass, re-enters the pipeline and is filed like any answered bundle.
+- "About the correct pellet": a ground-truth outcome counts for the current pellet its frames match
+  in the ground truth's OWN cuts (`index_gt_outcomes_by_segment` -> `index_review_by_segment`, the
+  matching every review answer goes through). When a re-cut set the current cuts, the re-cut rule
+  applies (`answer_survives_recut`): ground truth determined before the re-cut stands only where the
+  pellet's frames are unchanged; that pellet is otherwise asked again. Each ground-truth outcome now
+  carries its `determined_at` (or the file's `last_modified_at`) into that test, so ground truth
+  made AFTER a re-cut is an answer about the current cuts and stands (before, with no time, it was
+  always treated as given before the re-cut).
+- Review window (`causal_review_widget._bundle_needs_review`): a triage bundle with ground truth is
+  hidden only when ground truth and saved answers leave no flagged pellet open (the scan releases
+  it); otherwise it is shown and the walk skips every pellet ground truth answered
+  (`ground_truth_answered`).
+- `review_return._note_gt_not_counted` no longer lists anything (the stuck case it listed is now
+  released); it only takes off a listing older code wrote.
+
+DATA: on deploy the first return scans release every triage bundle whose in-bundle ground truth
+answers all its flagged pellets (subject to the scan's usual per-scan limit and its hand-score
+re-check). Measured read-only before the change: see the work record of 2026-11-19.
+
+Tests: `tests/test_triage_release_reads_ground_truth_in_bundle.py` (5 of 6 fail on the commit
+before); `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` rewritten (the
+bundle is released, an old listing is taken off).
