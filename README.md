@@ -542,6 +542,7 @@ profiles file (below); the template's are:
 
 | Role | Description | Runs Watcher? |
 |------|-------------|---------------|
+| **Single machine** | The lab's only MouseReach PC: cuts, poses, analyses, takes reviewed videos back, files | Yes (`standalone`) |
 | **Recording + GPU PC** | Records videos; outside recording cuts and poses them on its GPU | Yes (`dlc_pc`) |
 | **GPU PC** | Cuts and poses videos on its GPU | Yes (`dlc_pc`) |
 | **Processing Server** | Analyses posed videos (reach detection, outcomes, kinematics) and files them | Yes (`processing_server`) |

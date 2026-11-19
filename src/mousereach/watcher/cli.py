@@ -273,11 +273,16 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         sys.exit(1)
 
     # Print startup banner
-    # Determine mode label
-    if config.mode == 'processing_server':
-        mode_label = "Processing Server"
-    else:
-        mode_label = "GPU node (DLC)"
+    # Determine mode label. An unknown role is refused here: a typo in
+    # watcher.mode used to start a pose-only node without a word.
+    from mousereach.watcher.standalone import (
+        KNOWN_ROLES, analyses_and_files, poses, role_label)
+    if config.mode not in KNOWN_ROLES:
+        print(f"ERROR: watcher.mode is '{config.mode}', which is not a role the watcher "
+              f"knows ({', '.join(KNOWN_ROLES)}). Run mousereach-setup. Nothing was "
+              f"started.", file=sys.stderr)
+        sys.exit(1)
+    mode_label = role_label(config.mode)
 
     print("=" * 70)
     print(f"MouseReach Watcher - {mode_label} Mode")
@@ -291,11 +296,11 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     print(f"  NAS Root:        {Paths.NAS_ROOT or '(not configured)'}{_origin}")
     print(f"  Poll Interval:   {config.poll_interval_seconds}s")
     print(f"  Stability Wait:  {config.stability_wait_seconds}s")
-    if config.mode == 'processing_server':
+    if analyses_and_files(config.mode):
         print(f"  DLC Staging:     {Paths.DLC_STAGING or '(not configured)'}")
         print(f"  Processing Dir:  {Paths.PROCESSING or '(not configured)'}")
         print(f"  Max Local Pending: {config.max_local_pending}")
-    else:
+    if poses(config.mode):
         print(f"  DLC Config:      {config.dlc_config_path or '(not configured)'}")
         print(f"  DLC GPU:         {config.dlc_gpu_device}")
     print(f"  Quarantine:      {config.get_quarantine_dir()}")
@@ -368,7 +373,9 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         for rel in retired_folders_present(Paths.NAS_ROOT):
             problems.append(f"{Paths.NAS_ROOT / rel}: {UNMIGRATED_MESSAGE}")
 
-    if config.mode == 'processing_server':
+    # A single machine (standalone) needs both lists below: it takes posed
+    # videos in like the processing server AND cuts and poses like a GPU node.
+    if analyses_and_files(config.mode):
         # Processing server needs: DLC_STAGING accessible, Processing/ writable
         if not Paths.DLC_STAGING:
             problems.append("DLC_STAGING not configured (check NAS drive)")
@@ -381,7 +388,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
         if not Paths.PROCESSING:
             problems.append("PROCESSING path not configured")
-    else:
+    if poses(config.mode):
         # A GPU node needs: the shared pipeline root, DLC config, ffmpeg, GPU.
         # NAS_ROOT is what every shared path hangs off; a lab that configured
         # only nas_root (the documented setting) used to be refused here for
@@ -500,12 +507,10 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         sys.exit(1)
 
     try:
-        if config.mode == 'processing_server':
-            orchestrator = ProcessingOrchestrator(config, db)
-            logger.info("ProcessingOrchestrator initialized")
-        else:
-            orchestrator = DLCOrchestrator(config, db)
-            logger.info("DLCOrchestrator initialized")
+        # The one place a role becomes a watcher program (watcher/standalone.py).
+        from mousereach.watcher.standalone import make_orchestrator
+        orchestrator = make_orchestrator(config, db)
+        logger.info(f"{type(orchestrator).__name__} initialized")
     except Exception as e:
         logger.error(f"Failed to initialize orchestrator: {e}")
         sys.exit(1)
@@ -3035,7 +3040,8 @@ Handle DB rows whose video file this node cannot find anywhere.
             print(f"ERROR: could not read this machine's watcher settings: {_ascii(e)}",
                   file=sys.stderr)
             sys.exit(1)
-        server = mode == 'processing_server'
+        from mousereach.watcher.standalone import analyses_and_files
+        server = analyses_and_files(mode)
         moved = kept = 0
         for row in phantoms:
             video_id = row['video_id']
@@ -3111,7 +3117,8 @@ def _retry_unresolvable(db, unresolvable, dry_run: bool) -> int:
         print(f"ERROR: could not read this machine's watcher settings: {_ascii(e)}",
               file=sys.stderr)
         sys.exit(1)
-    if mode == 'processing_server':
+    from mousereach.watcher.standalone import analyses_and_files
+    if analyses_and_files(mode):
         print("This is a processing server: --retry changes nothing here.")
         print("Its watcher takes a video back by itself once the video and its pose")
         print("are in the posed folder (Processing/Posed) again; nothing needs to be")

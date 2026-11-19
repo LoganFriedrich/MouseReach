@@ -1011,7 +1011,11 @@ class WatcherConfig:
             Path(cfg['log_dir']) if cfg.get('log_dir') else None
         )
         self.max_retries: int = cfg.get('max_retries', 3)
-        self.mode: str = cfg.get('mode', 'dlc_pc')  # 'dlc_pc' or 'processing_server'
+        # 'dlc_pc' (cut + pose), 'processing_server' (analyse + file) or
+        # 'standalone' (one machine does both: watcher/standalone.py). The
+        # default stays 'dlc_pc' for machines set up before 2026-11-19;
+        # mousereach-setup and the Setup tab now always write a role.
+        self.mode: str = cfg.get('mode', 'dlc_pc')
         # How many posed videos the processing node keeps on its own disk
         # waiting for the pipeline. Small on purpose: intake is visited before
         # the pipeline, so with a large number the node takes videos in for

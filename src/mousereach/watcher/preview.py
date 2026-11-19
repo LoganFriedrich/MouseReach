@@ -97,7 +97,23 @@ def _next_pick(config, db: ReadOnlyDB) -> str:
 
 
 def preview(config, db_path) -> List[str]:
-    """Lines describing what the watcher would do now. Reads only."""
+    """Lines describing what the watcher would do now. Reads only.
+
+    A single machine (``standalone``) runs two halves (watcher/standalone.py):
+    the posing half, with its own database, and the processing half, with
+    ``db_path``. Each is previewed as the machine it stands in for."""
+    from mousereach.watcher.standalone import STANDALONE, split_config
+    if getattr(config, "mode", None) == STANDALONE:
+        pose_cfg, proc_cfg = split_config(config)
+        return (["SINGLE MACHINE -- posing half (cut + pose):", ""]
+                + _preview_one(pose_cfg, pose_cfg.db_path)
+                + ["", "SINGLE MACHINE -- processing half (analyse, review return, file):", ""]
+                + _preview_one(proc_cfg, db_path))
+    return _preview_one(config, db_path)
+
+
+def _preview_one(config, db_path) -> List[str]:
+    """preview() for one watcher program."""
     from mousereach.config import Paths
     db = ReadOnlyDB(db_path)
     lines = ["DRY RUN -- nothing below was done; the database was opened read-only.", ""]

@@ -28,6 +28,25 @@
 
   "profiles": [
     {
+      "name": "Single machine",
+      "description": "The lab's only MouseReach PC: cuts recordings, poses them on its GPU, analyses them, takes reviewed videos back and files the results (watcher mode standalone).",
+      "match": {
+        "hostname": "<this PC's hostname>"
+      },
+      "defaults": {
+        "nas_root": "<local drive>:\\<path>\\MouseReach_Pipeline_Data",
+        "processing_root": "<local drive>:\\<path>\\MouseReach_Pipeline",
+        "watcher": {
+          "enabled": true,
+          "mode": "standalone",
+          "also_process": false,
+          "db_path": "<local drive>:\\<path>\\MouseReach_Pipeline\\watcher.db",
+          "dlc_config_path": "<local path to the DLC model>\\config.yaml",
+          "dlc_gpu_device": 0
+        }
+      }
+    },
+    {
       "name": "Recording + GPU PC",
       "description": "Records videos and, outside recording, cuts and poses them on its GPU; hands each pose to the shared Posed folder for the processing machine.",
       "match": {

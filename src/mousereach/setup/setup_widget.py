@@ -13,6 +13,17 @@ root" with a pipeline folder as its example, but it saved ``nas_drive``, from
 which the code then guessed a retired folder layout -- so a pipeline folder
 typed here ended up one level too deep, in a folder that does not exist.
 
+THE MACHINE'S ROLE (2026-11-19). The tab also asks what this machine does:
+"Single machine" (the only MouseReach PC in the lab: cut, pose, analyse, take
+reviews back, file -- watcher/standalone.py), "Graphics-card PC" or
+"Processing machine". WHY: the role used to come only from a lab profile and
+defaulted to a pose-only graphics-card PC, so a new one-PC lab got cutting and
+posing and then a hand-off to a machine that does not exist. Saving a single
+machine also builds its pipeline folder (the folder layout and
+pipeline_versions.json, which the watcher needs before it starts) and names
+its watcher database. The settings written are the wizard's own
+(wizard.role_settings, wizard.make_pipeline_folder).
+
 Config is read at import time, so a save takes effect on the NEXT launch; the UI
 says so.
 
@@ -26,7 +37,7 @@ from typing import Callable, Optional
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QGroupBox, QFileDialog,
+    QGroupBox, QFileDialog, QComboBox,
 )
 from napari.utils.notifications import show_info, show_error
 
@@ -63,6 +74,29 @@ class SetupWidget(QWidget):
         self._detected_label.setWordWrap(True)
         root.addWidget(self._detected_label)
 
+        # The machine's role (module docstring).
+        rgrp = QGroupBox("What this machine does")
+        rl = QVBoxLayout(rgrp)
+        self._role = QComboBox()
+        self._role.addItem("Single machine -- the only MouseReach PC in the lab: cuts, "
+                           "poses, analyses, takes reviews back, files (needs a graphics "
+                           "card)", "standalone")
+        self._role.addItem("Graphics-card PC -- cuts and poses, hands each pose on to the "
+                           "processing machine", "dlc_pc")
+        self._role.addItem("Processing machine -- analyses posed videos, takes reviews "
+                           "back, files (no graphics card needed)", "processing_server")
+        rl.addWidget(self._role)
+        dl = QHBoxLayout()
+        dl.addWidget(QLabel("DeepLabCut model config.yaml (machines that pose):"))
+        self._dlc = QLineEdit()
+        self._dlc.setPlaceholderText(r"e.g. C:\MyLab\DLC_model\config.yaml")
+        dbrowse = QPushButton("Browse...")
+        dbrowse.clicked.connect(self._browse_dlc)
+        dl.addWidget(self._dlc)
+        dl.addWidget(dbrowse)
+        rl.addLayout(dl)
+        root.addWidget(rgrp)
+
         # Processing root (required)
         pgrp = QGroupBox("Processing root  (required -- local fast disk for working files)")
         pl = QHBoxLayout(pgrp)
@@ -75,8 +109,9 @@ class SetupWidget(QWidget):
         root.addWidget(pgrp)
 
         # Shared pipeline folder (optional)
-        ngrp = QGroupBox("Shared pipeline folder  (optional -- the folder holding "
-                         "Unanalyzed, Processing, Analyzed and pipeline_versions.json)")
+        ngrp = QGroupBox("Pipeline folder  (the folder holding Unanalyzed, Processing, "
+                         "Analyzed and pipeline_versions.json; required on a single "
+                         "machine, where it is created for you)")
         nl = QHBoxLayout(ngrp)
         self._nas = QLineEdit()
         self._nas.setPlaceholderText(r"e.g. Z:\MouseReach_Pipeline  (leave blank if none)")
@@ -102,6 +137,12 @@ class SetupWidget(QWidget):
             cfg = load_config()
             self._proc.setText(str(cfg.get("processing_root", "") or ""))
             self._nas.setText(str(cfg.get("nas_root", "") or ""))
+            w = cfg.get("watcher") or {}
+            self._dlc.setText(str(w.get("dlc_config_path", "") or ""))
+            # No role yet = a new lab: single machine is the default.
+            i = self._role.findData(w.get("mode") or "standalone")
+            if i >= 0:
+                self._role.setCurrentIndex(i)
         except Exception as e:
             # A damaged settings file is said here, in the panel: the fields
             # stay empty, and Save refuses too (load_config raises), so the
@@ -139,6 +180,12 @@ class SetupWidget(QWidget):
             f"has are kept; the profile fills in only what is missing."
         )
 
+    def _browse_dlc(self):
+        path, _ = QFileDialog.getOpenFileName(self, "DeepLabCut config.yaml",
+                                              self._dlc.text() or "", "YAML (*.yaml *.yml)")
+        if path:
+            self._dlc.setText(path)
+
     def _browse(self, field: QLineEdit):
         path = QFileDialog.getExistingDirectory(self, "Select folder", field.text() or "")
         if path:
@@ -150,13 +197,34 @@ class SetupWidget(QWidget):
             show_error("Processing root is required.")
             return
         nas_root = self._nas.text().strip() or None
+        role = self._role.currentData()
+        if role == "standalone" and not nas_root:
+            show_error("A single machine needs a pipeline folder (any folder with room "
+                       "for the videos and results; it is created for you).")
+            return
+        from mousereach.setup.wizard import same_folder
+        clash = same_folder(proc, nas_root)
+        if clash:
+            show_error(clash)
+            return
+        built = []
         try:
             from mousereach.setup.wizard import (
-                _PROFILE_HANDLED_SECTIONS, load_config, save_config)
+                _PROFILE_HANDLED_SECTIONS, load_config, save_config, role_settings,
+                make_pipeline_folder)
             d = self._detected_defaults or {}
             have = load_config().get("watcher") or {}
             missing = {k: v for k, v in (d.get("watcher") or {}).items()
                        if k not in have}
+            # The role chosen here is a person's explicit choice: it wins
+            # over a profile's (wizard.role_settings).
+            missing.update(role_settings(role, proc, have, d.get("watcher") or {}))
+            if self._dlc.text().strip():
+                missing["dlc_config_path"] = self._dlc.text().strip()
+            if role == "standalone":
+                built = make_pipeline_folder(Path(nas_root))
+                for sub in ("DLC_Queue", "Processing"):
+                    (Path(proc) / sub).mkdir(parents=True, exist_ok=True)
             save_config(processing_root=Path(proc), nas_root=nas_root,
                         watcher=missing or None,
                         sections={k: v for k, v in d.items()
@@ -165,6 +233,10 @@ class SetupWidget(QWidget):
             show_error(f"Could not save configuration: {e}")
             return
         msg = "Saved to ~/.mousereach/config.json. Restart MouseReach for it to take effect."
+        if role == "standalone":
+            msg += (f" Pipeline folder ready ({len(built)} item(s) created). Put "
+                    f"recordings in {Path(nas_root) / 'Unanalyzed' / 'Multi-Animal'}, then "
+                    f"press 'Run the pipeline now' on the Run Pipeline tab.")
         show_info(msg)
         self._status.setText("[OK] " + msg)
         self._status.setStyleSheet("color:#1a5; font-weight:bold;")

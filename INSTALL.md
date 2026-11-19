@@ -134,6 +134,14 @@ MouseReach runs on one machine or several. Each machine has a role (`watcher.mod
 machine** (processing_server) analyzes the posed videos and files the results. All of
 them share one pipeline folder (`nas_root`).
 
+**A lab with ONE PC** uses the single-machine role (`standalone`): that PC does
+everything -- cuts, poses (it needs an NVIDIA graphics card), analyses, takes reviewed
+videos back and files. `mousereach-setup` asks "Is this the only machine that will run
+MouseReach?" first; answer yes and it writes the role, names the watcher database and
+builds the pipeline folder (with `pipeline_versions.json`). The pipeline folder and the
+processing root must be two different folders. The step-by-step walkthrough for a
+one-PC lab is `docs/STANDALONE_LAB.md`.
+
 The shared location you choose here affects the GPU machine:
 
 | Component | Machine | Location |
