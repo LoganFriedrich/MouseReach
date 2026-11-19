@@ -238,13 +238,21 @@ mousereach-unified-review
 
 | Command | Description |
 |---------|-------------|
-| `mousereach-export` | Export to Excel/CSV |
-| `mousereach-summary` | Generate summary statistics |
+| `mousereach-results` | The FILED results at reach, pellet, session, day or animal level (CSV or Excel) -- also the **Export results** tab |
+| `mousereach-export` | Export one folder you name to Excel/CSV |
+| `mousereach-summary` | Generate summary statistics for one folder you name |
 
 ```bash
-mousereach-export -i Processing/ -o results.xlsx
-mousereach-summary -i Processing/
+mousereach-results --level session                 # every filed video, one row per tray
+mousereach-results --level reach --format xlsx     # one row per reach, with a sheet of column meanings
 ```
+
+Filing moves a video's results out of Processing into `Analyzed/<project>/<cohort>/`,
+so the filed results are read from there: `mousereach-results` walks that folder.
+Levels, counting rules (success rate = retrieved / pellets presented; a pellet with
+no reach counts) and every column: `docs/RESULTS_EXPORT.md`.
+`mousereach-export -i <folder>` and `mousereach-summary -i <folder>` still read one
+flat folder you name.
 
 Both read each video's `<video>_features.json` -- the result with every
 person's answer (review, ground truth) applied -- never the algorithm's own

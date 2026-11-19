@@ -48,7 +48,7 @@ walkthroughs of the review tools themselves.
 - [Archive - File by hand a video the watcher has passed](#archive-file-by-hand-a-video-the-watcher-has-passed) -- `mousereach-archive`
 - [Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture](#migration-one-time-migration-from-old-multi-folder-to-v2-3-single-folder-architecture) -- `mousereach-migrate`
 - [Algorithm Evaluation](#algorithm-evaluation) -- `mousereach-eval`, `mousereach-eval-direct`, `mousereach-update-algo-ref`, `mousereach-algo-vs-human`
-- [Export Utilities](#export-utilities) -- `mousereach-quick-summary`, `mousereach-features-csv`
+- [Export Utilities](#export-utilities) -- `mousereach-results`, `mousereach-quick-summary`, `mousereach-features-csv`
 - [Kinematic Analysis Utilities](#kinematic-analysis-utilities) -- `mousereach-reach-export`, `mousereach-real-kinematics`
 - [Performance Tracking](#performance-tracking) -- `mousereach-perf`, `mousereach-perf-eval`, `mousereach-perf-report`
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
@@ -1537,6 +1537,31 @@ options:
 ```
 
 ## Export Utilities
+
+### `mousereach-results`
+
+```
+usage: mousereach-results [-h] [--level LEVEL] [--root ROOT] [--out OUT]
+                          [--format {csv,xlsx}]
+
+Export the FILED results (every video's features file under Analyzed) at one
+level: reach, pellet (= segment), session (= tray = video), day (one animal on
+one date) or animal. Session, day and animal are counted from pellets: success
+rate = retrieved / pellets presented, and a pellet with no reach still counts.
+Needs nothing but MouseReach: no watcher, no hand-score sheet, no database.
+Column meanings: docs/RESULTS_EXPORT.md (and the 'columns' sheet of an xlsx
+file).
+
+options:
+  -h, --help           show this help message and exit
+  --level LEVEL        reach | pellet (or segment) | session | day | animal
+                       (default session)
+  --root ROOT          the filed-results folder (default: Analyzed in the
+                       pipeline folder)
+  --out OUT            file to write (default: <pipeline folder>/Exports/Mouse
+                       Reach_results_<level>_<time>.<format>)
+  --format {csv,xlsx}  csv (default) or xlsx
+```
 
 ### `mousereach-quick-summary`
 

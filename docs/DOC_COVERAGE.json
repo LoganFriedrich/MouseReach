@@ -335,6 +335,14 @@
     "tests/real_root_guard.py",
     "tests/conftest.py"
    ]
+  },
+  {
+   "doc": "docs/RESULTS_EXPORT.md",
+   "what": "Exporting the filed results at reach / pellet / session / day / animal level",
+   "covers": [
+    "src/mousereach/export/results.py",
+    "src/mousereach/export/results_widget.py"
+   ]
   }
  ]
 }
