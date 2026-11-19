@@ -7291,3 +7291,24 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+## Update 2026-11-19 (review windows claim the video they show)
+
+WHY: MRR-02d -- two review windows could be handed the same video (each picks by priority and a
+random draw, with nothing saying another window had it open): work done twice, and on a pellet both
+answered the later save won. The lab owner approved (2026-11-19) a claims folder
+`REVIEW_ROOT/.review_claims` with one marker per open review window.
+
+WHAT IS BUILT: `review/review_claims.py` -- `claim`, `release`, `touch`, `holder`, `release_all`
+(at exit). Marker `<REVIEW_ROOT>/.review_claims/<video>.review`, created by
+`watcher/claim_marker.take` (exclusive create; holder `<host>/<user>`, per process). The triage /
+re-segmentation review window claims in `_pick_eligible` (a bundle another window holds is skipped)
+and in `load_from_manifest` (a deliberate open of a held video warns and opens); the claim is let go
+on the next pick, Browse, a failed load and `closeEvent`; every saved answer touches it. A claim of
+the same login whose process ended is taken over; any claim untouched for `IDLE_AFTER_S` (1 hour, by
+the file server's clock) is broken. The segmentation fixer claims in `_load_bundle` and skips a held
+video. The folder is created by the first window that claims (nothing creates it at install); the
+return scan does not read it.
+
+Tests: `tests/test_review_window_claims_its_video.py`.
+

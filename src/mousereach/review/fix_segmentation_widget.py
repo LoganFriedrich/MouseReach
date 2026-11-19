@@ -619,6 +619,23 @@ automatic.
 
     def _load_bundle(self, bundle: Path):
         stem = bundle.name
+        # One review window per video (review_claims, MRR-02d): two people
+        # re-cutting the same video at once would each save over the other's
+        # cuts. The video left is let go; one another window holds is skipped.
+        from . import review_claims
+        prev = self.seg_path.parent if getattr(self, "seg_path", None) else None
+        if prev is not None and Path(prev) != Path(bundle):
+            review_claims.release(prev)
+        if not review_claims.claim(bundle):
+            self._queue = [b for b in self._queue if Path(b) != Path(bundle)]
+            self.status.setText("Skipped %s: another review window has it open (%s)."
+                                % (stem, review_claims.holder(bundle) or "unknown"))
+            if self._queue:
+                self._load_bundle(self._queue[0])
+            else:
+                self.header.setText("Queue finished (the rest is open in other "
+                                    "review windows).")
+            return
         self.video_stem = stem
         self.seg_path = bundle / ("%s_segments.json" % stem)
         # No segments file (the segmenter could not run): start from no cuts;
@@ -669,6 +686,13 @@ automatic.
         self._gw_idx = 0
         self._gw_records = {}
         self._gw_load()
+
+    def closeEvent(self, event):
+        """Closing the window lets its video go (review_claims)."""
+        if getattr(self, "seg_path", None):
+            from . import review_claims
+            review_claims.release(Path(self.seg_path).parent)
+        super().closeEvent(event)
 
     # ------------------------------------------------------------ guided walk
 

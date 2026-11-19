@@ -63,6 +63,27 @@ A picked video is shown when all of these hold (`_bundle_eligible`; `_bundle_nee
 
 With `--worklist`, only the manifest and the deep-review rule are checked: the videos a worklist names are offered even when they are already answered or have ground truth.
 
+**One review window per video (since 2026-11-19).** A picked video must also not be open in another
+review window. Each window claims the video it shows: a small marker file
+`Processing/Review/.review_claims/<video>.review` (the folder beside the queues, approved by the lab
+owner 2026-11-19; it holds one marker per open review window and nothing else). The marker says
+which machine and login has the video open. Two windows racing for the same video: exactly one gets
+it (the same exclusive create the watcher's own claims use). What a reviewer sees:
+- the next-video pick quietly skips a video another window has open (the window's log names it);
+- moving to the next video, opening a video by hand (Browse), a video that fails to load, and
+  closing the window all let the video go;
+- a window that crashed: the same login reopening the tool takes its old claims over at once;
+  for anyone else a claim nobody has touched (no load, no saved answer) for an hour is broken and
+  the video can be handed out again;
+- opening a video another window has open on purpose (from the dashboard or a worklist) still
+  opens it, with a warning naming who has it open: answers saved in both windows are merged, the
+  later one winning on a pellet both answered.
+The Segmentation Fixer claims the same way: a video open in another window is skipped and the
+status line says so. Deleting the `.review_claims` folder loses nothing but the claims (the code
+is `review/review_claims.py`). The watcher's return scan does not look at these claims: it moves a
+video out of a queue only once every question in it is answered, and a review window never
+recreates a bundle that left its queue while open.
+
 The failed-segmentation skip (`_bundle_eligible`) runs in **both** modes, including re-segmentation. That is a problem for the Re-segmentation Review tool: see [Re-segmentation Review](#re-segmentation).
 
 ### What counts as a triaged element
