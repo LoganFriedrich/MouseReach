@@ -60,7 +60,8 @@ def cannot(reason="neither ffprobe nor ffmpeg is installed on this machine"):
 
 
 def make_sender(env, now=SATURDAY_NOON, clock=None, assess=None, open_check=None,
-                recorder_running=None, should_stop=None, chunk_size=8192, **settings):
+                recorder_running=None, should_stop=None, chunk_size=8192,
+                claim_lookup=lambda name: None, **settings):
     s = ro.OutboxSettings(outbox=env.outbox, stable_minutes=5, warn_after_failures=3,
                           pass_minutes=30,
                           recording_hours="08:00-18:00", recording_days="Mon-Fri")
@@ -74,7 +75,7 @@ def make_sender(env, now=SATURDAY_NOON, clock=None, assess=None, open_check=None
         open_check=open_check or (lambda p: False),
         recorder_running=recorder_running or (lambda: False),
         should_stop=should_stop or (lambda: False),
-        chunk_size=chunk_size)
+        chunk_size=chunk_size, claim_lookup=claim_lookup)
 
 
 def two_passes(sender, clock):
@@ -736,16 +737,61 @@ def test_without_an_index_a_new_file_is_still_sent_and_verified(env):
     assert "sent" in log_events(env)
 
 
-def test_a_claim_lookup_that_fails_does_not_stop_a_new_send(env):
+def _broken(name):
+    raise RuntimeError("database is locked")
+
+
+def test_claim_table_unreadable_but_index_read_still_sends(env):
+    """The index was read and does not list the name: that is an answer."""
+    write_index(env)
     p = put(env.outbox, NAMED)
     clock = Clock()
-    sender = make_sender(env, clock=clock)
-
-    def broken(name):
-        raise RuntimeError("database is locked")
-    sender._claim_lookup = broken
-    two_passes(sender, clock)
+    two_passes(make_sender(env, clock=clock, claim_lookup=_broken), clock)
     assert not p.exists() and (env.intake / NAMED).read_bytes() == CONTENT
+
+
+@pytest.mark.parametrize("index_state", ["missing", "unreadable"])
+@pytest.mark.parametrize("lookup", [_broken, None], ids=["lookup-fails", "no-lookup"])
+def test_nothing_can_answer_so_nothing_is_sent_and_it_turns_red(env, index_state, lookup):
+    """Index missing or unreadable AND the claim table unreachable: a new
+    recording cannot be told from one already cut and filed, so it is not
+    sent (and certainly not deleted); red after the usual failures."""
+    if index_state == "unreadable":
+        (env.nas / "Processing").mkdir()
+        ci.index_path(env.nas).write_text("{half a file")
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    sender = make_sender(env, clock=clock, claim_lookup=lookup, warn_after_failures=3)
+    rep = two_passes(sender, clock)
+    assert p.read_bytes() == CONTENT and not (env.intake / NAMED).exists()
+    assert not (env.intake / (NAMED + ".partial")).exists()
+    assert "cannot tell whether it was sent before" in rep["waiting"][0]["reason"]
+    assert rep["collage_index"]["status"] == index_state
+    for _ in range(2):
+        clock.advance(1)
+        rep = sender.run_pass()
+    assert [h["name"] for h in rep["held"]] == [NAMED]
+    assert p.exists() and not (env.intake / NAMED).exists()
+    assert "collage index is " + index_state in ro.summary_line(rep)
+
+
+def test_preview_says_it_cannot_tell(env):
+    put(env.outbox, NAMED)
+    rep = make_sender(env, claim_lookup=None).run_pass(preview=True)
+    assert "would NOT be sent" in rep["waiting"][0]["reason"]
+
+
+def test_watcher_without_coordinator_counts_as_no_answer(env, monkeypatch):
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import orchestrator
+    monkeypatch.setattr(orchestrator.Paths, "NAS_ROOT", env.nas)
+    cfg = WatcherConfig({"recording_outbox": str(env.outbox), "recording_hours": "08:00-18:00",
+                         "recording_days": "Mon-Fri"})
+    stub, turn = _watcher_stub(cfg)
+    stub.coordinator = None
+    turn()
+    answered, row, why = stub._outbox_sender._pipeline_record(NAMED)
+    assert answered is False and row is None and "no shared claim table" in why
 
 
 def test_a_name_found_by_name_never_asks_the_claim_table(env):

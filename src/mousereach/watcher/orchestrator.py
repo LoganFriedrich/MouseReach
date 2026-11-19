@@ -2131,9 +2131,12 @@ class BaseOrchestrator:
                     log_path = None
                 # One row of the shared claim table, asked only for a name
                 # that cannot be found by name (recording_outbox._send_one).
+                # No coordinator is "no answer", never "no row".
                 def claim_lookup(name, _self=self):
                     coordinator = getattr(_self, 'coordinator', None)
-                    return coordinator.get_collage_claim(name) if coordinator else None
+                    if coordinator is None:
+                        raise RuntimeError("this watcher has no shared claim table")
+                    return coordinator.get_collage_claim(name)
                 sender = self._outbox_sender = ro.RecordingSender(
                     settings, Paths.NAS_ROOT, state_path=state_path,
                     transfer_log=log_path, should_stop=self._stop_requested,

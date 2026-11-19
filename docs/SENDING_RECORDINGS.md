@@ -138,7 +138,8 @@ What happens in each case:
 | Not found anywhere, but the pipeline's database already has a record of this recording | **Waits** the same way. It is never sent twice: a second copy would be cut twice. |
 | Still not found after a newer list | **Held, in red**: a person must find where it went. Nothing was sent or deleted. |
 | Not found, and unknown to the pipeline | Sent, verified, then deleted here (a new recording). |
-| The list is missing or cannot be read (for example the processing server's watcher is not running) | New recordings are still sent and verified as usual. The status shows the list as missing. |
+| The list is missing or cannot be read (for example the processing server's watcher is not running) | New recordings are still sent and verified as usual, as long as the pipeline's database answers that it has no record of them. The status line says the list is missing. |
+| The list is missing or cannot be read, AND the pipeline's database cannot be asked | **Not sent**: nothing can tell a new recording from one already cut and filed. Tried again every pass; shown in red after 3 passes. Nothing is deleted. It goes by itself once either can be read. |
 
 ## What red means, and what to do
 

@@ -74,9 +74,12 @@ HOW A FILE IS SENT (the order is what makes the delete safe)
    the index lists a path that is no longer there, or the shared claim table
    (one row, asked only when nothing was found) already has the name. It is
    held in red once an index built after it was first noticed still does
-   not show it. With the index missing or unreadable, a name found nowhere
-   and unknown to the claim table is sent as usual -- copied and verified --
-   and the report says the index is missing.
+   not show it. A name found nowhere is sent only when at least one source
+   ANSWERED "not known": the claim table said "no row", or the index was read
+   and does not list it. With the index missing or unreadable AND the claim
+   table unreachable, nothing can tell a new recording from one already cut,
+   so it is not sent that pass (a failure; red after the usual number). The
+   report says when the index is missing or unreadable.
 2. Copy to ``<intake>/<name>.partial`` in blocks, hashing the source as it is
    read, at low disk priority. Every picker ignores ``.partial`` files.
 3. Check the source did not change during the copy, then read the
@@ -628,18 +631,20 @@ class RecordingSender:
                 gone.append(p)
         return found, gone
 
-    def _pipeline_record(self, name: str) -> Optional[dict]:
-        """The shared claim row for ``name`` (one row), or None when there is
-        none or it cannot be read. A lookup that fails does not stop a send:
-        the cutting step refuses a collage another machine has already cut."""
+    def _pipeline_record(self, name: str) -> Tuple[bool, Optional[dict], Optional[str]]:
+        """(answered, row, why_not) for ``name`` from the shared claim table.
+
+        ``answered`` is False when there is no lookup or it failed (database
+        locked, share unreachable, no coordinator): then the table said
+        nothing, which is NOT the same as "no row" (see _send_one)."""
         if self._claim_lookup is None:
-            return None
+            return False, None, "no connection to the shared claim table"
         try:
             row = self._claim_lookup(name)
         except Exception as e:
-            logger.debug("could not ask the coordination table about %s: %s", name, e)
-            return None
-        return row if isinstance(row, dict) and row else None
+            return False, None, _ascii("the shared claim table could not be read (%s: %s)"
+                                       % (type(e).__name__, e))
+        return True, (row if isinstance(row, dict) and row else None), None
 
     def _unlocated(self, name: str, why: str) -> Tuple[str, str]:
         """Sent before, but not found by name now: never sent again, never
@@ -708,12 +713,24 @@ class RecordingSender:
                 return self._unlocated(name, (
                     "the server's collage index lists it at %s, but it is not there now "
                     "(moved since the index was built)" % gone[0]))
-            record = self._pipeline_record(name)
+            answered, record, why_not = self._pipeline_record(name)
             if record:
                 return self._unlocated(name, (
                     "the pipeline already has this recording (claimed by %s, %s), but it "
                     "is not in the intake and the collage index does not list it"
                     % (record.get("hostname"), record.get("state"))))
+            # A NEW recording is sent only when at least one source has said
+            # "not known": the claim table answered "no row", or the server's
+            # index was read and does not list it. With neither (index missing
+            # or unreadable AND the table unreachable) nothing can tell a new
+            # recording from one already cut and filed, so nothing is sent this
+            # pass -- counted as a failure, red after the usual number in a row.
+            if not answered and not self._index().usable:
+                why = ("cannot tell whether it was sent before: the server's collage index "
+                       "is %s (%s) and %s; not sent this pass"
+                       % (self._index().status, self._index().problem or "", why_not))
+                self._fail(name, why)
+                return "failed", _ascii(why)
             self.state["unlocated"].pop(name.lower(), None)
 
             # An unfinished copy left by an earlier pass that stopped. Removed
@@ -826,11 +843,15 @@ class RecordingSender:
             return ("the server's collage index lists it at %s, but it is not there now: would "
                     "WAIT (neither sent nor deleted) until the next index shows where it is"
                     % gone[0])
-        record = self._pipeline_record(name)
+        answered, record, why_not = self._pipeline_record(name)
         if record:
             return ("the pipeline already has this recording (claimed by %s, %s) but it cannot "
                     "be found by name: would WAIT (neither sent nor deleted)"
                     % (record.get("hostname"), record.get("state")))
+        if not answered and not self._index().usable:
+            return ("cannot tell whether it was sent before (the server's collage index is %s "
+                    "and %s): would NOT be sent until one of them can be read"
+                    % (self._index().status, why_not))
         return "ready: would be copied, verified, then deleted here"
 
     # ---------------------------------------------------------------- one pass
@@ -987,6 +1008,9 @@ def summary_line(report: Optional[dict]) -> str:
     line = "recordings: " + ", ".join(parts)
     if report.get("not_sending"):
         line += " (%s)" % report["not_sending"]
+    idx = report.get("collage_index")
+    if isinstance(idx, dict) and idx.get("status") not in (None, "ok"):
+        line += "; the server's collage index is %s" % idx.get("status")
     return _ascii(line)
 
 

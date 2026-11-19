@@ -7116,10 +7116,17 @@ it for every machine. Rule: a graphics-card or recording PC never walks the shar
   it was first noticed (`state.unlocated`) still does not show it, it is held in red for a person.
   WHY not send: a second copy of a collage that was already cut would be cut again. WHY not delete:
   nothing confirmed a copy.
-* **Index missing or unreadable, or the claim lookup failing:** a name found nowhere and unknown to
-  the claim table is sent as before (copy to `.partial`, read back from the share, SHA-256 compared,
-  rename without overwrite, THEN the local delete). The cutting step's claim
-  (`try_claim_collage`) still refuses a collage another machine has cut.
+* **Sent only on an answer.** A name found nowhere is sent only when at least one source ANSWERED
+  "not known": the claim table returned no row, or the index was read (`ok`) and does not list it.
+  Then it goes as before (copy to `.partial`, read back from the share, SHA-256 compared, rename
+  without overwrite, THEN the local delete). With the index `missing`/`unreadable` AND the claim
+  table not answering (lookup raised, or the watcher has no coordinator -- the orchestrator's
+  lookup raises then, so "no coordinator" is never read as "no row"), it is not sent: `_fail`
+  counts it, red from `recording_outbox_warn_after_failures` passes. WHY: those are the degraded-
+  share conditions; sending then could copy an already-filed collage back into the intake.
+  `summary_line` adds "the server's collage index is missing/unreadable" when it is.
+  Checked on the live share 2026-11-18: the index answers exactly as the old walk did for one
+  recording PC's 217 named recordings (173 found, the same 44 not found).
 * **Why not the coordination database alone:** `pipeline_collages` has a row only once a machine has
   claimed a collage for cutting, and holds no path and no hash; where a filed collage went is kept
   only in the filing machine's local database. It can say "known", not "here, with this content".
@@ -7131,5 +7138,6 @@ Tests: `tests/test_recording_outbox.py`. `test_a_pass_never_lists_a_folder_on_th
 and `test_a_preview_never_lists_a_folder_on_the_shared_drive` patch `os.walk`, `os.scandir`,
 `os.listdir`, `glob.glob`/`iglob` and `Path.iterdir`/`glob`/`rglob` and count every call on the fake
 share; the index, the pointer-not-proof rules, the wait and held rules, the missing-index send and
-the server-only build each have their own test. Nine of them fail on ac01d37's
-`recording_outbox.py`.
+the server-only build and the send-only-on-an-answer rule each have their own test. Run
+against ac01d37's `recording_outbox.py` (before the constructor took `claim_lookup`), the two
+no-listing tests failed on the walk itself, and so did the index, gone-path and wait tests.
