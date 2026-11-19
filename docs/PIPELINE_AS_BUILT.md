@@ -7319,8 +7319,12 @@ segment's first frame):
   MouseReach's database sync (`sync/database.sync_features_file`) take such a reach out of segment 1
   when they read a features file filed before this; the filed file is not changed.
 * A kinematics-only re-run of a filed video does not count the reach leaving segment 1 as a change of
-  a filed decision (`kinematics/core/filed_decisions.decisions_of_features`); none of them was ever a
-  causal reach.
+  a filed decision (`kinematics/core/filed_decisions.decisions_of_features`).
+* One exception, because what a person said is correct: a reach a PERSON credited as pellet 1's causal
+  reach stays pellet 1's (`before_first_cut.person_credited`). Read-only check of the filed tree on
+  2026-11-19: a few filed videos have a reviewer's causal pick that starts one to a few frames before
+  the first cut. In the kinematics step the person's pick, matched by its frames, is added back to
+  pellet 1 as the person's reach, so the answer is kept there as well.
 
 No version number changes: no algorithm's call changes (outcomes get the same input; the assignment's
 only difference is that such a reach is `unassigned` instead of a `miss`/`triaged` of pellet 1).

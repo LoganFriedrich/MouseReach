@@ -192,3 +192,21 @@ def test_kinematics_measures_it_for_no_pellet_and_lists_it(proc):
     assert [r.reach_id for r in seg1.reaches] == [2] and seg1.n_reaches == 1
     assert seg1.reaches[0].is_first_reach
     assert [r["reach_id"] for r in vf.reaches_before_first_cut] == [1]
+
+
+def test_a_reach_a_person_credited_stays_with_its_pellet():
+    """What a person said is correct: a person who named a reach starting just
+    before the first cut as pellet 1's causal reach said it is pellet 1's."""
+    from mousereach.reach.core.before_first_cut import split_before_first_cut
+    feats = {"segments": [{"segment_num": 1, "start_frame": CUT1, "outcome": "retrieved",
+                           "reaches": [dict(_reach(1, 95, 110), causal_reach=True,
+                                            outcome_source="human_review"),
+                                       _reach(2, 120, 130, 2)]}]}
+    out = split_before_first_cut(feats)
+    assert [r["reach_id"] for r in out["segments"][0]["reaches"]] == [1, 2]
+    algo = {"segments": [{"segment_num": 1, "start_frame": CUT1, "outcome": "retrieved",
+                          "reaches": [dict(_reach(1, 95, 110), causal_reach=True,
+                                           causal_reach_source="reach_assignment"),
+                                      _reach(2, 120, 130, 2)]}]}
+    assert [r["reach_id"] for r in split_before_first_cut(algo)["segments"][0]["reaches"]] == [2]
+

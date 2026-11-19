@@ -63,14 +63,38 @@ def starts_before(reach: Dict[str, Any], cut: Optional[int]) -> bool:
         return False
 
 
+_PERSON = ("human_review", "ground_truth")
+
+
+def person_credited(reach: Dict[str, Any]) -> bool:
+    """True for a features-file reach a PERSON credited as its pellet's causal
+    reach (causal_reach set, and the credit is a person's: causal_reach_source
+    human_review / ground_truth, or -- older files, which have no
+    causal_reach_source -- the pellet's outcome_source is a person's).
+
+    WHY it stays with its pellet: what a person said is correct (owner
+    decision 2026-11-19). A person who named a reach starting a few frames
+    before the first cut as pellet 1's causal reach has said that reach is
+    pellet 1's. The kinematics step keeps that answer too: the person's pick
+    is matched by its frames, and with the reach out of segment 1 it is added
+    back as the person's reach (truth_resolver, a reach the detector missed)."""
+    if not reach.get("causal_reach"):
+        return False
+    src = reach.get("causal_reach_source")
+    if src is not None:
+        return src in _PERSON
+    return reach.get("outcome_source") in _PERSON
+
+
 def split_before_first_cut(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """A copy of a reaches file in which every reach that starts before the
     first cut sits in the top-level ``reaches_before_first_cut`` list and in
     no segment (module docstring says why). A file that already has no such
     reach inside a segment is returned as it is (not copied).
 
-    The moved reaches keep their ids and frames and lose their reach number
-    and segment; the segment they leave is renumbered 1..n and its count
+    A reach a person credited as its pellet's causal reach stays where it is
+    (person_credited says why). The moved reaches keep their ids and frames
+    and lose their reach number and segment; the segment they leave is renumbered 1..n and its count
     updated, and the old flag for them is taken off it when nothing else
     flagged it."""
     if not doc:
@@ -78,15 +102,15 @@ def split_before_first_cut(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     cut = first_cut(doc)
     if cut is None:
         return doc
-    if not any(starts_before(r, cut) for seg in doc.get("segments") or []
-               for r in (seg.get("reaches") or [])):
+    if not any(starts_before(r, cut) and not person_credited(r)
+               for seg in doc.get("segments") or [] for r in (seg.get("reaches") or [])):
         return doc
     out = copy.deepcopy(doc)
     moved: List[Dict[str, Any]] = list(out.get(BEFORE_FIRST_CUT_KEY) or [])
     for seg in out.get("segments") or []:
         keep = []
         for r in seg.get("reaches") or []:
-            if starts_before(r, cut):
+            if starts_before(r, cut) and not person_credited(r):
                 r = dict(r)
                 r.pop("reach_num", None)
                 r.pop("segment_num", None)
