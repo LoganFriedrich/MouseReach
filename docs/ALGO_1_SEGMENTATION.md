@@ -61,7 +61,7 @@ Seven call sites, in three groups.
 
 Before anything else, `process_single` checks the tray type: an Easy or Flat tray video (`is_outcome_free_tray`) gets the whole-video span file (`boundaries` `[0]`, see section 1) and no segmenter runs. This check comes before the human-cuts check, so a hand-set cut on such a video is not kept either. (Update 2026-11-18.)
 
-A person's cuts (a segments file marked `boundary_source: "human"`) survive every one of these: `process_single` keeps such a file when it finds one in its output folder, bring-current copies it from beside the filed video into its work folder first, and the stager (7) keeps it as it is and does not segment.
+Since 2026-11-19 a person's cuts can also come from the ground-truth tool: when every cut in the video's `<video>_unified_ground_truth.json` is determined, `process_single` writes them over the segmenter's file (or over an older fixer save) as a person's cuts (`review/hand_cuts.apply_ground_truth_cuts`; also when the segmenter itself fails), never in the filed tree. A person's cuts (a segments file marked `boundary_source: "human"`) survive every one of these: `process_single` keeps such a file when it finds one in its output folder, bring-current copies it from beside the filed video into its work folder first, and the stager (7) keeps it as it is and does not segment.
 
 **Bypassing `process_single` entirely:**
 

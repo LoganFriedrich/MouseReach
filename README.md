@@ -67,7 +67,7 @@ Launch with `mousereach` command. Available tabs:
 | **2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. A box puts one animal's videos first (the watcher's own priority, kept until cleared); the old "Select Specific Files..." / "Reprocess All..." buttons are shown switched off until the lab decides what they should do |
 | **Review Queues** | Buttons: Open Triage Review, Open Re-segmentation Review, Open Re-segmentation, Release finished videos -> back into pipeline, Show and resolve..., Refresh counts |
 | **4 - View Features** | Visualize kinematic features |
-| **GT Tool** | Create ground truth files for evaluation |
+| **GT Tool** | Create ground truth files (for evaluation; cuts, reaches and outcomes you determine there are also used as the video's results) |
 | **Watcher Control** | Run, monitor and configure this machine's watcher |
 | **Quarantine** | See files held because their names could not be read, correct a name and release the file back to the intake |
 | **Setup** | Set this machine's processing folder and the shared pipeline folder |

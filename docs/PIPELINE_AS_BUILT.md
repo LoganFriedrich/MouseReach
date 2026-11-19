@@ -4070,7 +4070,8 @@ kinematics over the ground truth's frames (`reach_source` = `ground_truth`). Rea
 not read ground truth at all, so starting the re-run there would recompute the same algorithm reaches
 and add nothing -- while turning a filed video's re-run into a full one with every check. Ground
 truth's pellet outcomes are layered the same way. Ground-truth SEGMENT boundaries are not applied by
-the kinematics step (or by any step of the pipeline): a re-cut is done in the re-segmentation tools.
+the kinematics step: since 2026-11-19 the segmentation step applies them to an unfiled video (see
+"Update 2026-11-19 (human answers feed every later step)"); a filed video's cuts are final.
 
 **For an operator.** Nothing to do: ground truth saved beside a filed video reaches its features at
 the next version scan (about every half hour). If the re-run cannot apply it, the video is offered
@@ -7291,3 +7292,24 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+## Update 2026-11-19 (human answers feed every later step)
+
+Owner decision: what a person said is the correct result, and every step after it -- reach detection,
+outcomes, reach assignment, kinematics and the database -- uses it; nothing downstream works out again
+what a person decided. A filed video is final: none of this changes a filed video's results.
+
+**Ground-truth cuts are a person's cuts.** When every cut in a video's `<video>_unified_ground_truth.json`
+is determined, the segmentation step (`segmentation/core/batch.process_single`) writes those cuts as the
+video's cuts through the segmentation fixer's own save (`review/hand_cuts.apply_ground_truth_cuts`):
+`boundary_source: "human"`, `cuts_source: "ground_truth"`, `corrected_by` (who determined them),
+`corrected_at` (when they were written), `algo_boundaries` (the cuts they replaced), `ground_truth_file`
+and `ground_truth_determined_at`. The replaced segments file and every output of the old cuts are archived
+to `_archived/segmentation_before_human_fix_<time>/` and removed, so reach detection, outcomes, reach
+assignment and kinematics run again on the person's cuts; answers given on pellets whose frames moved are
+asked again (the re-cut rule). Not applied: a file with any undetermined cut (the tool seeds its list with
+the algorithm's cuts); cuts identical to the segments file's; a fixer save newer than the ground truth's
+newest determination; a folder in the filed tree; a video locked for a publication; Easy/Flat trays. Also
+applied when the segmenter fails on the video. A video returning from a review queue starts at
+segmentation when its ground truth has cuts its segments file does not hold
+(`watcher/resume_point.current_start`).
