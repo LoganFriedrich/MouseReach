@@ -705,7 +705,7 @@ class RecordingSender:
             if outcome == "conflict":
                 return "held", detail
             if outcome == "same":
-                return self._already_there(path, st, sig, detail)
+                return self._already_there(path, st, sig, detail, src_hash)
             # Not found by name. Two things still mean "sent before, moved
             # since", and then the file is neither sent again (that would cut
             # it twice) nor deleted (nothing confirmed a copy):
@@ -786,7 +786,7 @@ class RecordingSender:
                 except FileExistsError:
                     outcome, detail, _ = self._match_existing(path, st, [final], src_hash)
                     if outcome == "same":
-                        return self._already_there(path, st, sig, str(final))
+                        return self._already_there(path, st, sig, str(final), src_hash)
                     return "held", detail or "a file of this name appeared on the shared drive"
             fst = final.stat()
             if fst.st_size != st.st_size:
@@ -813,12 +813,17 @@ class RecordingSender:
                 except OSError:
                     pass
 
-    def _already_there(self, path: Path, st, sig, where: str) -> Tuple[str, str]:
-        """An identical file is on the shared drive: delete the local copy only."""
+    def _already_there(self, path: Path, st, sig, where: str,
+                       sha256: Optional[str]) -> Tuple[str, str]:
+        """An identical file is on the shared drive: delete the local copy only.
+
+        ``sha256`` is the hash both copies were found to have; it goes on the
+        log line so the record of every delete shows what was compared."""
         problem = self._delete_local(path, sig)
         if problem:
             return "waiting", problem
-        self._log("deleted_local_already_on_share", path.name, on_share=where, bytes=st.st_size)
+        self._log("deleted_local_already_on_share", path.name, on_share=where, bytes=st.st_size,
+                  sha256=sha256)
         self._record_sent(path.name, st.st_size, "was already on the shared drive")
         return "already", where
 

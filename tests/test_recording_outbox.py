@@ -912,3 +912,19 @@ def test_only_the_processing_server_builds_the_index(env, monkeypatch):
     assert "collage_index" not in inspect.getsource(orchestrator.DLCOrchestrator)
     assert "build_index" not in inspect.getsource(ro), "the PC-side walk is gone"
     assert "os.walk" not in inspect.getsource(ro)
+
+
+# The delete of a local copy that is already on the shared drive records the
+# SHA-256 both copies were found to have.
+
+def test_already_on_share_delete_logs_the_compared_sha256(env):
+    import hashlib
+    put(env.intake, NAMED)
+    put(env.outbox, NAMED)
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert rep["sent_this_pass"][0]["how"].startswith("already")
+    lines = [json.loads(l) for l in
+             (env.tmp / "logs" / ro.TRANSFER_LOG_NAME).read_text().splitlines() if l.strip()]
+    rec = [r for r in lines if r["event"] == "deleted_local_already_on_share"][0]
+    assert rec["sha256"] == hashlib.sha256(CONTENT).hexdigest()

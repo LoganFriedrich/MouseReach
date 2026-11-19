@@ -7229,3 +7229,13 @@ failed itself) while a real failure with the drive up is still recorded; DLC kee
 the last copy, and with none waits instead of the setting error; startup waits, stops waiting on the
 flag, and still refuses a missing folder. Run against the previous code with only the new module
 added: 12 fail and 5 error (all of the above); the 16 tests of the module's own pieces pass.
+
+## Update 2026-11-19: the recording outbox's already-sent delete records the hash it compared
+
+When a named recording is found on the shared drive with the same size and SHA-256
+(`RecordingSender._match_existing` -> `_already_there`), only the local copy is deleted. The
+`deleted_local_already_on_share` line in `recording_sends.jsonl` now carries `sha256`: the hash
+both copies were found to have (before, it held only the place and the size, so the record of a
+delete could not show what it was based on). `sent` lines already carried it.
+
+Tests: `test_already_on_share_delete_logs_the_compared_sha256` (fails on aaeaca4: no `sha256` key).

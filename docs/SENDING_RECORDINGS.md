@@ -264,7 +264,10 @@ Changes to the recording days and hours apply at once.
 
 * Every send, skip, stopped copy and delete:
   `recording_sends.jsonl` in the watcher's log folder (`watcher_logs` in this PC's
-  processing folder), one line each, with the SHA-256 of every copy.
+  processing folder), one line each, with the SHA-256 of every copy. A recording
+  deleted here because an identical copy was already on the shared drive
+  (`deleted_local_already_on_share`) carries the SHA-256 both copies were found
+  to have, so every delete shows what it was based on.
 * What the sender remembers between passes (sizes seen, failures, conflicts):
   `recording_outbox_state.json` in this PC's processing folder. Deleting it is
   safe: the sender then waits 5 minutes before sending anything.
