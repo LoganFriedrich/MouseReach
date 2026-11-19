@@ -56,15 +56,20 @@ def test_route_without_recheck_never_sends_an_answered_pellet_back(tmp_path, mon
     monkeypatch.setattr(Paths, "REVIEW_ROOT", tmp_path / "Review", raising=False)
     routed = []
     import mousereach.watcher.review_gate as rg
-    # The stand-in route leaves the files where they are and names that folder
-    # as the bundle, so the question is written there.
-    monkeypatch.setattr(rg, "route_to_queue",
-                        lambda vid, src, *a, **k: routed.append(src) or src)
+    # The stand-in route copies what it is handed into a bundle folder in the
+    # queue and names it as the bundle, so the question is written there. (A
+    # route of a filed video hands it a COPY of the filed folder; the filed
+    # folder itself stays as it is -- filed is final, 2026-11-19.)
+    import shutil
+    queue = tmp_path / "Review" / "triage"
+    monkeypatch.setattr(Paths, "TRIAGE_REVIEW", queue, raising=False)
+    monkeypatch.setattr(rg, "route_to_queue", lambda vid, src, *a, **k: (
+        routed.append(src), shutil.copytree(src, queue / vid))[1])
     r = rc.route_video(VID, "triage", "test", [1])
     assert r["answered"] == [1] and not r["routed"] and not routed
     r = rc.route_video(VID, "triage", "test", [1], recheck=True,
                        segment_details={1: "are you sure?"})
     assert r["reopened"] == [1] and r["flagged"] == [1] and r["routed"]
-    seg = json.loads((tmp_path / "Analyzed" / "Project_A" / "ABC02" /
+    seg = json.loads((tmp_path / "Review" / "triage" / VID /
                       f"{VID}_pellet_outcomes.json").read_text())["segments"][0]
     assert seg["flagged_for_review"] and seg["flag_reason"] == "test: are you sure?"

@@ -322,3 +322,12 @@ kinematics extractor (2.1.0) now consumes the reach-assignment file, so the
 per-reach `causal_reach` field it emits is populated by the algorithm rather
 than only by human review -- see KINEMATICS_FIELDS.md. Watcher failure logging
 around extraction and sync is now countable.
+
+## Update 2026-11-19 (filed is final)
+
+A new version of this algorithm is used only for videos that are not filed yet. A filed video's
+result from this step is final: the version scan never marks a filed video to run this step again,
+and a filed video's kinematics-only re-run never recomputes it (if the filed output is missing, that
+re-run is given up and the filed results stand). To see how a new version would do on filed videos,
+use the evaluation tools (or bring-current without finalize); they write outside Analyzed and never
+replace a filed file. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".

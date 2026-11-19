@@ -157,12 +157,12 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
     is how filed videos came back to a queue when only the kinematic extractor
     changed.
 
-    What it still does: the review gate. The gate asks a person only about a
-    segment NO person has answered: a segment whose boundaries, causal reach
-    and outcome have all already been reviewed by a human never requires a
-    human to look at it again. Whether a filed video with a segment no person ever
-    answered should be held at all is an open decision; until it is made the
-    gate behaves as it always has for such a segment.
+    Nor the review gate (lab decision 2026-11-19, 'triage has nothing to do
+    with kinematics'): a kinematics recalculation never holds the video and
+    never asks a person anything; a segment no person answered stays as it
+    was filed. If the kinematics cannot be made without changing what was
+    filed, the re-run is given up and the filed results stand
+    (_extract_features_and_finish).
 
     Everything else is a full run with every check:
       * a new video (no reprocess_start_stage);
@@ -763,6 +763,11 @@ class BaseOrchestrator:
             # never held as failed to be retried into the same refusal.
             self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(voided),
                              duration=time.time() - step_start)
+            if keep_filed_decisions:
+                # A kinematics recalculation of a filed video never asks a
+                # person anything (lab decision 2026-11-19): the reason goes
+                # back, and the caller lets the filed results stand.
+                return f"feature extraction refused ({voided})"
             from mousereach.watcher.review_gate import (AlreadyInQueueError,
                                                         route_recut_voided_to_triage)
             try:
@@ -8769,6 +8774,62 @@ class ProcessingOrchestrator(BaseOrchestrator):
     # PIPELINE: Run seg -> reach -> outcomes
     # =========================================================================
 
+    def _filed_kinematics_only_run(self, video_id: str, video_data: dict) -> bool:
+        """True when this run is a FILED video's kinematics-only re-run: the
+        start stage handed in (or, with none, the one kept on the row --
+        kept_rerun_start_stage, the same reading _run_pipeline does) is
+        'kinematics', the video has been filed, and it is not a review
+        return resuming. Never raises (False on any doubt: the run then goes
+        on as an ordinary run with every check)."""
+        try:
+            row = self.db.get_video(video_id) or {}
+            start = (video_data or {}).get("reprocess_start_stage")
+            if start:
+                return start == "kinematics" and bool(row.get("archived_at"))
+            held = self._held_for_hand_scores(video_id)
+            restored = held and bool(
+                (getattr(self, "_score_waits", {}).get(video_id) or {}).get("restored"))
+            if row.get("resume_stage") and (not held or restored):
+                return False            # a review return: every check runs
+            return kept_rerun_start_stage(row, held_for_hand_scores=held) == "kinematics"
+        except Exception as e:
+            logger.debug(f"{video_id}: could not tell whether this is a kinematics-only "
+                         f"re-run ({e})")
+            return False
+
+    def _filed_kinematics_refusal(self, video_id: str, dlc_path) -> Optional[str]:
+        """Why a filed video's kinematics-only re-run cannot be done WITHOUT
+        re-running an algorithm or asking for a new pose, or None when it can.
+
+        FILED IS FINAL (lab rule 2026-11-19): the four algorithms are never
+        re-run onto a filed video and nothing automatic reopens one; only its
+        kinematics may be recalculated. So such a run needs, in the processing
+        folder, the filed outputs it measures -- cuts, reaches and (Pillar
+        trays) pellet outcomes -- and a usable pose. When one is missing or
+        the pose is unusable, the run is not done and the filed results stand
+        (the caller puts the row back to 'archived' with this reason,
+        _restore_filed_after_failed_rerun); before this rule the missing
+        output was recomputed (re-running an algorithm on a filed video) and
+        an unusable old-model pose was sent for a new pose."""
+        proc = Path(self.processing_dir)
+        names = ["segments", "reaches"]
+        if parse_tray_type(f"{video_id}.mp4").get("tray_type", "P") not in ("E", "F"):
+            names.append("pellet_outcomes")
+        missing = [f"{video_id}_{n}.json" for n in names
+                   if not (proc / f"{video_id}_{n}.json").is_file()]
+        if missing:
+            return ("its filed " + ", ".join(missing) + " could not be found, and a "
+                    "filed video's algorithms are never re-run to make it")
+        try:
+            from mousereach.pipeline.pose_check import check_pose
+            usable, why = check_pose(dlc_path, video_id)
+        except Exception as e:
+            usable, why = None, str(e)
+        if usable is False:
+            return (f"its pose is unusable ({why}); a filed video is never sent for "
+                    f"a new pose automatically")
+        return None
+
     def _run_pipeline(self, work: dict):
         """Run segmentation, reach detection, and outcome detection on a video.
 
@@ -8818,9 +8879,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
             dlc_path = local
 
         logger.info(f"Running pipeline on {video_id}")
+        # A filed video's kinematics-only re-run never recomputes an algorithm
+        # and is never sent for a new pose (filed is final, 2026-11-19):
+        # anything it would need for that ends the re-run and the filed
+        # results stand (_filed_kinematics_refusal says what is checked).
+        if self._filed_kinematics_only_run(video_id, video_data):
+            why = self._filed_kinematics_refusal(video_id, dlc_path)
+            if why:
+                logger.warning(f"{video_id}: kinematics-only re-run of a filed video "
+                               f"not done -- {why}; its filed results stand")
+                self._restore_filed_after_failed_rerun(
+                    video_id, f"kinematics-only re-run not done: {why}")
+                return
         # The pose must be usable before any step runs on it; a pose that is
         # not goes for a new pose, never to a review queue.
-        if not self._pose_check_before_segmentation(video_id, dlc_path, video_data):
+        elif not self._pose_check_before_segmentation(video_id, dlc_path, video_data):
             return
         pipeline_start = time.time()
 
@@ -9143,7 +9216,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 f"{video_id}: filed video, re-run for "
                 f"'{_start_stage}' only; the four "
                 f"algorithms' outputs reused -- no quality triage, no hand-score "
-                f"check; the gate asks only about segments no person answered")
+                f"check, no review gate (a kinematics recalculation never holds)")
             self.db.log_step(
                 video_id, 'triage', 'skipped',
                 message="filed video re-run for a downstream calculation only; "
@@ -9244,14 +9317,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
         gate) and the run must stop before kinematics.
 
         ``rerun_triage_and_hand_scores`` False (a filed video whose re-run
-        recomputed no algorithm, filed_rerun_reuses_analysis): the quality
-        triage and the hand-score comparison are skipped and only the gate
-        runs (item 3 of the gate, the quality verdict, then does not apply)."""
+        recomputed no algorithm, filed_rerun_reuses_analysis): nothing is
+        run and nothing holds -- no quality triage, no hand-score comparison,
+        no gate (lab decision 2026-11-19: a kinematics recalculation never
+        holds or re-asks)."""
         # --- Unified QC triage (DLC coherence / structural / cross-step / outliers) ---
         qc_verdict = 'auto_approved'
         if not rerun_triage_and_hand_scores:
-            return self._gate_held(video_id, run_gate, DECISION_CLEAN, qc_verdict,
-                                   pipeline_duration)
+            # A kinematics recalculation of a filed video: no quality triage,
+            # no hand-score comparison and NO review gate. Lab rule 2026-11-19
+            # ('triage has nothing to do with kinematics'; filed is final): it
+            # never holds the video and never asks a person anything. A
+            # segment no person answered stays as it was filed.
+            return False
         # Fails closed: a triage that cannot run holds the video for a person
         # (_run_quality_triage says why).
         qc_verdict = self._run_quality_triage(video_id, self.processing_dir,
@@ -9334,6 +9412,17 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # --- Step 4/5: Feature Extraction (CLEAN videos ONLY) ---
         why = self._make_features(video_id, self.processing_dir, dlc_path, skip_outcomes,
                                   keep_filed_decisions=keep_filed_decisions)
+        if why and keep_filed_decisions:
+            # A filed video's kinematics recalculation that could not be made
+            # (the filed decisions would change, a person's answer could not
+            # be applied, a file was unreadable ...): never held, never sent to
+            # a queue, never retried into the same refusal. The filed results
+            # stand; the row goes back to 'archived' with the reason, on this
+            # machine's failed re-runs list for a person
+            # (_restore_filed_after_failed_rerun). Lab decision 2026-11-19.
+            self._restore_filed_after_failed_rerun(
+                video_id, f"kinematics recalculation not made: {why}")
+            return
         if isinstance(why, RoutedToReview):
             # Sent to triage (_make_features): held for a person, not failed.
             logger.info(f"Pipeline held: {video_id} -> triage from the kinematics step ({why})")

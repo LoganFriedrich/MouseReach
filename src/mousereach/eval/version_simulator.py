@@ -413,56 +413,27 @@ def simulate_version(
         segment["reaches"] = filtered_reaches
         segment["n_reaches"] = len(filtered_reaches)
 
-    # Temporarily save simulated output for evaluation
-    temp_path = reaches_path.parent / f"_temp_sim_{version.version}_{reaches_path.name}"
-    try:
-        with open(temp_path, 'w') as f:
+    # Evaluated from a temporary folder of its own, never beside the real
+    # reaches file. WHY: this used to rename the simulated file over
+    # <video>_reaches.json in the reaches file's own folder and write the
+    # original back afterwards -- run on filed results, an evaluation
+    # overwrote (and, if it stopped half-way, lost) a filed file. Lab rule
+    # 2026-11-19: evaluation re-runs write outside Analyzed and never
+    # overwrite.
+    import tempfile
+    video_id = evaluator.extract_video_id(reaches_path)
+    original_algo_dir = evaluator.algo_dir
+    with tempfile.TemporaryDirectory(prefix="mousereach_sim_") as tmp:
+        with open(Path(tmp) / f"{video_id}_reaches.json", 'w') as f:
             json.dump(simulated_output, f)
-
-        # Extract video ID
-        video_id = evaluator.extract_video_id(reaches_path)
-
-        # Evaluate using standard evaluator
-        original_algo_dir = evaluator.algo_dir
-        evaluator.algo_dir = temp_path.parent
-
-        # Rename temp file to expected name
-        expected_name = f"{video_id}_reaches.json"
-        expected_path = temp_path.parent / expected_name
-
-        # If expected file already exists, save it
-        needs_restore = expected_path.exists()
-        original_content = None
-        if needs_restore:
-            with open(expected_path) as f:
-                original_content = json.load(f)
-
-        # Move temp to expected location
-        if expected_path.exists():
-            expected_path.unlink()
-        temp_path.rename(expected_path)
-
+        evaluator.algo_dir = Path(tmp)
         try:
             result = evaluator.compare(video_id)
-            # Add simulation metadata to result
             if result:
                 result.notes = f"Simulated {version.version}: kept {total_filtered}/{total_original} reaches"
         finally:
-            # Restore original file
-            if needs_restore and original_content:
-                with open(expected_path, 'w') as f:
-                    json.dump(original_content, f)
-            elif expected_path.exists():
-                expected_path.unlink()
-
             evaluator.algo_dir = original_algo_dir
-
         return result
-
-    finally:
-        # Clean up temp file if it exists
-        if temp_path.exists():
-            temp_path.unlink()
 
 
 def evaluate_version_on_dataset(

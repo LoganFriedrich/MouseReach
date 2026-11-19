@@ -1002,9 +1002,9 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
         copies that pose AND the archived results folder down and re-runs
         every post-DLC stage. Rows already narrowed for another reason
         (a kinematics-only bump, say) are left exactly as they are.
-      * row 'archived' whose archived manifest names another model -> the
-        same, via the legal archived -> outdated transition. New pose
-        information is worth a re-run whether or not the scan has caught up.
+      * row 'archived' (filed) -> left as it is: filed is final (lab rule
+        2026-11-19), and a filed video is re-posed only on a person's
+        command, which parks its row 'outdated' / 'full' first.
       * row 'failed' -> named once; a person decides.
 
     Closes the request. Returns the adopted video ids. Never raises."""
@@ -1034,8 +1034,14 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
                                f"(mousereach-watch-reprocess) to take the pose")
             continue
         if state == "archived":
-            if _archived_scorer(video_id) == declared:
-                continue                            # already current on this pose
+            # FILED IS FINAL (lab rule 2026-11-19): a pose that turns up for a
+            # filed video nobody asked to re-pose never re-runs its
+            # algorithms. Before the rule a filed video whose manifest named
+            # another model was narrowed to a re-run here, automatically.
+            # Re-posing a filed video is a person's command
+            # (mousereach-repose-videos), which marks the row 'outdated' with
+            # scope 'full' first -- that row is adopted below.
+            continue
         elif state == "outdated":
             if row.get("reprocess_scope") != "full":
                 continue                            # narrowed already, or another reason

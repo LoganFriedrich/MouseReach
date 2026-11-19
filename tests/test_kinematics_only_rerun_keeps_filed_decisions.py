@@ -314,6 +314,9 @@ def rig(tmp_path, monkeypatch):
     orch.hostname = "HOST"
     orch._score_waits = {}
     orch._hand_score_precheck = lambda video_id, folder_: False
+    # The pose stand-in is not a real pose; the pose test is not what is tested.
+    import mousereach.pipeline.pose_check as pc
+    monkeypatch.setattr(pc, "check_pose", lambda *a, **k: (True, ""))
 
     def run(start_stage=None, filed_before=True):
         if filed_before:

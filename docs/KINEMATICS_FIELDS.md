@@ -663,3 +663,13 @@ On every person-owned segment the assignment's pick is still recorded as
 change: the result differs only for a video whose legacy outcome file sits
 beside a reach assignment file, and such a video is re-run by hand if one is
 found.
+
+## Update 2026-11-19 (filed is final)
+
+Kinematics are the one result a filed video may have recalculated (a newer extractor, or a person's
+review or ground truth the filed kinematics have not applied yet). That recalculation re-runs no
+algorithm, no quality check, no hand-score comparison and no review gate: it never holds the video
+or asks anyone anything. If the kinematics cannot be made from the filed cuts, reaches and outcomes
+without changing them, the recalculation is given up and the filed features file stays as it was
+(the video is listed on the machine's failed re-runs list with the reason). See
+docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".

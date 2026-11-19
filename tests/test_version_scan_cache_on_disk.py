@@ -84,8 +84,10 @@ def test_a_changed_manifest_is_read_again_after_a_restart(tmp_path, monkeypatch)
     summary, db = _scan(tmp_path)
 
     assert len(opened) == 2
-    assert summary["outdated"] == 1
-    assert (STEM, "outdated", "full") in db.forced
+    # The re-read manifest's older pose model is seen (counted as kept: a
+    # filed video is never re-posed for a new model, filed is final).
+    assert summary["filed_final_kept_videos"] == [{"video_id": STEM, "components": ["dlc"]}]
+    assert summary["outdated"] == 0
 
 
 def test_a_damaged_cache_file_only_means_a_cold_scan(tmp_path, monkeypatch):

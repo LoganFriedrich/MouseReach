@@ -359,3 +359,12 @@ anyone noticed. Both watcher paths now write a `db_sync` `failed` row to the
 step audit table and log a warning naming the video. The GPU node's local
 path, which never even checked the return value, checks it now. Feature
 extraction failures on that path also write a `failed` audit row.
+
+## Update 2026-11-19 (filed is final)
+
+A filed video's results in Analyzed are not re-made by newer algorithm versions any more, so what a
+database integrator pulled for a filed video stays the answer, except for kinematics (which may be
+recalculated, without changing the filed decisions). When a person reopens a filed video, its filed
+files stay in Analyzed until the new run is filed and replaces them; an integrator that leaves out a
+filed video whose newer run waits in a review queue keeps doing so. See docs/PIPELINE_AS_BUILT.md,
+"Update 2026-11-19 (filed is final)".

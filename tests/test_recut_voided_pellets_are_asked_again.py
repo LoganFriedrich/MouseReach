@@ -201,12 +201,12 @@ REAL_RUN_GATE = rg.run_gate
 from test_filed_rerun_skips_checks import VID as FILED_VID, rig  # noqa: E402,F401
 
 
-def test_a_filed_rerun_asks_the_voided_pellet_again_instead_of_filing_it(
+def test_a_filed_kinematics_rerun_never_asks_the_voided_pellet_and_files_nothing(
         rig, tmp_path, monkeypatch):
-    """A filed video re-run when only a downstream calculation changed passes
-    only the gate (orchestrator.filed_rerun_reuses_analysis). Its review holds
-    an answer given before a person re-cut it: the run must stop at triage
-    with that pellet flagged, not go on to kinematics and filing."""
+    """A filed video re-run when only a downstream calculation changed runs no
+    gate and asks nobody anything (lab decision 2026-11-19: a kinematics
+    recalculation never holds or re-asks). Its review holds an answer given
+    before a person re-cut it: nothing is routed to triage."""
     monkeypatch.setattr(rg, "run_gate", REAL_RUN_GATE)
     monkeypatch.setattr(io, "durable_review_dir", lambda: None)
     routed = {}
@@ -229,11 +229,16 @@ def test_a_filed_rerun_asks_the_voided_pellet_again_instead_of_filing_it(
     (f / f"{FILED_VID}_causal_review.json").write_text(json.dumps({
         "video_name": FILED_VID, "reviewed_at": BEFORE,
         "segments": [_rec((950, 1990), BEFORE, outcome="displaced_sa")]}), encoding="utf-8")
+    import mousereach.pipeline.pose_check as pc
+    monkeypatch.setattr(pc, "check_pose", lambda *a, **k: (True, ""))
     rig.file_it()
-    calls = rig.run("kinematics")
-    assert "kinematics" not in calls, calls
-    assert routed.get("queue") == tmp_path / "triage"
-    assert triaged_segments(routed["outcomes"]) == {1}
+    rig.run("kinematics")
+    # Nothing was routed: no gate ran. (What the extractor does with the
+    # voided answer -- refuse, so the re-run is given up and the filed results
+    # stand -- is tested in test_filed_is_final.py; this rig's extractor is a
+    # stand-in.)
+    assert routed == {}
+    assert rig.orch.db.get_video(FILED_VID)["state"] not in ("triage", "deep_review")
 
 
 # ---------------------------------------------------------------------------

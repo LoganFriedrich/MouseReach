@@ -480,14 +480,15 @@ def test_adopt_ignores_an_old_model_pose_and_current_archived_rows(env):
     assert env.db.get_video(VID2)["state"] == "archived"
 
 
-def test_adopt_takes_an_archived_row_whose_manifest_names_the_old_model(env):
+def test_adopt_never_takes_an_archived_row_whose_manifest_names_the_old_model(env):
+    """Filed is final (2026-11-19): a pose turning up for a filed video nobody
+    asked to re-pose re-runs nothing."""
     _row(env.db, VID, "archived")
     (env.archive / f"{VID}_processing_manifest.json").write_text(
         json.dumps({"dlc_model": {"dlc_scorer": OLD}}))
     (env.staging / f"{VID}{NEW}.h5").write_bytes(b"new")
-    assert _adopt(env) == [VID]
-    row = env.db.get_video(VID)
-    assert row["state"] == "outdated" and row["reprocess_scope"] == "segmentation"
+    assert _adopt(env) == []
+    assert env.db.get_video(VID)["state"] == "archived"
 
 
 def test_adopt_names_a_failed_row_once_and_leaves_it(env):
@@ -863,8 +864,10 @@ def test_scan_full_only_marks_only_rows_that_need_a_new_pose(tmp_path, monkeypat
     sc._manifest_cache = {}
     summary = sc.scan(mark_outdated=True, adopt_orphans=False, full_only=True)
     assert summary["adopted"] == 0
-    assert [f for f in sc.db.forced if f[1] == "outdated"] == [(b, "outdated", "full")]
-    assert summary["outdated_partial_unmarked"] == 1
+    # Filed is final (2026-11-19): neither the stale segmenter (a) nor the
+    # old pose (b) marks a filed video at all.
+    assert [f for f in sc.db.forced if f[1] == "outdated"] == []
+    assert summary["filed_final_kept"] == 2
 
 
 # ---------------------------------------------------------------- retry budget
