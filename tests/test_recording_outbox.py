@@ -819,7 +819,7 @@ def test_index_rebuilt_at_most_every_interval(env, monkeypatch):
     t = {"now": 0.0}
     writes = []
     monkeypatch.setattr(ci, "write", lambda root: writes.append(root))
-    r = ci.Rebuilder(every_s=600, clock=lambda: t["now"])
+    r = ci.Rebuilder(every_s=600, clock=lambda: t["now"], background=False)
     assert r.maybe_write(env.nas) is True
     t["now"] = 599
     assert r.maybe_write(env.nas) is False
@@ -830,8 +830,27 @@ def test_index_rebuilt_at_most_every_interval(env, monkeypatch):
 
 
 def test_rebuilder_never_raises(env):
-    r = ci.Rebuilder()
+    r = ci.Rebuilder(background=False)
     assert r.maybe_write(env.nas) is False        # no Processing folder: logged, not raised
+
+
+def test_rebuilder_builds_off_the_loop_thread_and_never_doubles(env, monkeypatch):
+    import threading
+    gate = threading.Event()
+    ran = []
+
+    def slow_write(root):
+        ran.append(threading.current_thread().name)
+        gate.wait(5)
+    monkeypatch.setattr(ci, "write", slow_write)
+    t = {"now": 0.0}
+    r = ci.Rebuilder(every_s=600, clock=lambda: t["now"])
+    assert r.maybe_write(env.nas) is True          # returns at once, build still running
+    t["now"] = 10_000
+    assert r.maybe_write(env.nas) is False         # due, but one is still running
+    gate.set()
+    r._thread.join(5)
+    assert ran == ["collage-index"]
 
 
 def test_problematic_folder_name_in_step_with_recording_issue():

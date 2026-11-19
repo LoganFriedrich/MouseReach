@@ -7090,8 +7090,9 @@ it for every machine. Rule: a graphics-card or recording PC never walks the shar
 **Now** (`watcher/collage_index.py`, `watcher/recording_outbox.py`):
 
 * **The processing server writes one file.** `ProcessingOrchestrator._scan_phase`, step
-  `scan/collage index`, only when `watcher.mode` is `processing_server`, at most every 10 minutes
-  (`collage_index.Rebuilder`, `REBUILD_EVERY_S`): `resting_places` (moved here unchanged) is walked
+  `scan/collage index`, only when `watcher.mode` is `processing_server`, at most every 10 minutes,
+  on its own thread (`collage_index.Rebuilder`, `REBUILD_EVERY_S`; one build at a time; measured
+  on the live share 2026-11-18: 16 s for 6002 names): `resting_places` (moved here unchanged) is walked
   and every file directly in each resting place is written to
   `<nas_root>/Processing/.collage_index.json` -- `{format, built_at, built_at_epoch, built_by,
   seconds_to_build, entries: {lower-case name: [{path: relative to nas_root with forward slashes,

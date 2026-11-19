@@ -55,7 +55,9 @@ be found), but not where the file is, so it cannot confirm a copy.
 WHO BUILDS IT, AND HOW OFTEN
 ----------------------------
 The processing server's watcher, during its scan, at most every
-``REBUILD_EVERY_S`` (10 minutes); by hand with
+``REBUILD_EVERY_S`` (10 minutes), on its own thread so the loop never waits
+for it (a build of a few thousand collages takes tens of seconds); by hand
+with
 ``python -m mousereach.watcher.collage_index``. Written whole through a
 temporary file swapped in, so a reader sees the old file or the new one,
 never half of one.
@@ -174,27 +176,50 @@ def write(nas_root: Path) -> Path:
 
 
 class Rebuilder:
-    """Rebuilds the index at most every ``every_s`` seconds. Never raises."""
+    """Rebuilds the index at most every ``every_s`` seconds, on its own thread.
 
-    def __init__(self, every_s: float = REBUILD_EVERY_S, clock=time.monotonic):
+    WHY a thread: on a share of a few thousand collages one build takes
+    tens of seconds, and the processing server's loop must not stop for it.
+    At most one build runs at a time; a build still running when the next
+    one is due is not doubled. ``background=False`` builds in the caller's
+    thread (tests, the command line). Never raises.
+    """
+
+    def __init__(self, every_s: float = REBUILD_EVERY_S, clock=time.monotonic,
+                 background: bool = True):
         self.every_s = every_s
         self._clock = clock
+        self._background = background
         self._last = None
+        self._thread = None
 
-    def maybe_write(self, nas_root) -> bool:
-        if not nas_root:
-            return False
-        now = self._clock()
-        if self._last is not None and now - self._last < self.every_s:
-            return False
-        self._last = now
+    @staticmethod
+    def _write_logged(nas_root: Path) -> bool:
         try:
-            write(Path(nas_root))
+            write(nas_root)
             return True
         except Exception as e:
             logger.warning("Could not rewrite the collage index (the recording PCs keep "
                            "using the previous one): %s", e)
             return False
+
+    def maybe_write(self, nas_root) -> bool:
+        """True when a build was started (or, in the foreground, succeeded)."""
+        if not nas_root:
+            return False
+        if self._thread is not None and self._thread.is_alive():
+            return False
+        now = self._clock()
+        if self._last is not None and now - self._last < self.every_s:
+            return False
+        self._last = now
+        if not self._background:
+            return self._write_logged(Path(nas_root))
+        import threading
+        self._thread = threading.Thread(target=self._write_logged, args=(Path(nas_root),),
+                                        name="collage-index", daemon=True)
+        self._thread.start()
+        return True
 
 
 # =============================================================================
