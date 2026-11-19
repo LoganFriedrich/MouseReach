@@ -71,8 +71,10 @@ whole-video Review Tool, which saved corrections into the algorithm's own files,
 where the next run erased them. It now prints a note and opens the usual tabs.
 
 The per-step review screens below are still there and still save, each opened
-on its own: `mousereach-segment-review` (Step 2b), `mousereach-review-pellet-outcomes`
-(Step 3b) and `mousereach-review-reaches` (Step 4b). Saving one marks
+on its own: `mousereach-segment-review`, `mousereach-review-pellet-outcomes`
+and `mousereach-review-reaches` (the "Step 2b/3b/4b" names below are what these
+screens were called as tabs of the retired Review Tool; the launcher no longer
+has those tabs). Saving one marks
 that step "validated"; when you run the steps by hand, without the watcher,
 that is how you sign off a step that triage flagged for review. Saving in
 `mousereach-segment-review` also marks the cuts as a person's (a re-run of
