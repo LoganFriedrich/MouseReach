@@ -15,9 +15,9 @@ conda activate mousereach
 # Install
 cd /path/to/MouseReach
 pip install -e .
-# On any PC that runs the watcher or mousereach-sync, install the sync extra too:
+# sqlalchemy (the watcher's coordination database) is part of the plain install
+# since 2026-11-19. The sync extra adds only the file watcher used by mousereach-sync:
 #   pip install -e ".[sync]"
-# (without its sqlalchemy the watcher cannot reach the shared coordination database and crops no collage)
 
 # Configure
 mousereach-setup

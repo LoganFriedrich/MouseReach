@@ -340,7 +340,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 `watcher.py:89-90` and `watcher.py:113-114` log sync failures at error level, which is the one path that says anything useful.
 
-`sqlalchemy` and `watchdog` are optional dependencies, declared under the `sync` extra in `pyproject.toml:56-58`. Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it.
+`watchdog` is an optional dependency, declared under the `sync` extra in `pyproject.toml`; `sqlalchemy` is a core dependency since 2026-11-19 (it was in the `sync` extra before, and a plain install could not reach the watcher's coordination database). Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it.
 
 ---
 
