@@ -113,7 +113,7 @@ Other watcher settings (all under "watcher" in the same file; the default applie
   - watcher.quarantine_dir - where misnamed files are moved. Unset = <nas_root>\Processing\Quarantine.
   - watcher.work_priority - which work is taken first (docs/WORK_PRIORITY.md). Unset = the default order.
   - watcher.notify_safe_to_record - default true: show on this machine's screen when its work has stopped for a recording program. Only used when pause_while_running lists programs.
-  - watcher.recording_outbox - unset by default. Set on a recording PC to the folder where people save and rename recordings: the watcher then sends every correctly named recording to Unanalyzed\Multi-Animal outside recording time (docs/SENDING_RECORDINGS.md). Its companions: recording_outbox_stable_minutes (default 5, how long a file must stay unchanged), recording_outbox_warn_after_failures (default 3 failed copies in a row before the file is shown in red), recording_outbox_pass_minutes (default 30, how long one sending pass may take).
+  - watcher.recording_outbox - unset by default. Set on a recording PC to the folder where people save and rename recordings: the watcher then sends every correctly named recording to Unanalyzed\Multi-Animal outside recording time (docs/SENDING_RECORDINGS.md). Its companions: recording_outbox_stable_minutes (default 5, how long a file must stay unchanged), recording_outbox_warn_after_failures (default 3 failed copies in a row before the file is shown in red), recording_outbox_cycle_seconds (default 120, how long the running watcher may spend starting sends each cycle before its work item; since 2026-11-19) and recording_outbox_pass_minutes (default 30, how long a hand-started `mousereach-send-recordings --once` pass may take).
   - watcher.recording_min_minutes (default 5), watcher.recording_min_frames (default 3000), watcher.recording_min_kb_per_second (default 5) - the recording check: a collage shorter, with fewer frames, or smaller per second than these is a failed recording, set aside in Processing/Review/_Problematic with a reason file and never cut (docs/RECORDING_ISSUES.md).
 
 ---
@@ -6262,6 +6262,9 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
 - **Every turn of the watcher's loop** (not while it is paused, at most once a minute), before the
   scan: `BaseOrchestrator._maybe_send_recordings` runs one pass of `RecordingSender`. One pass may
   copy for at most `recording_outbox_pass_minutes` (30); the rest waits for the next pass.
+  (Superseded 2026-11-19: the watcher's pass is a slice of `recording_outbox_cycle_seconds`, 120;
+  `pass_minutes` is the hand-started pass only. See "Update 2026-11-19: the recording outbox
+  sends in slices".)
 - **Only outside recording time** (`recording_days`, `recording_hours`, read fresh each pass). With
   neither set, nothing is ever sent (`send_window_reason`). Recording time and a stop request
   (`watcher_stop.flag`) are checked between every 8 MB block; a copy that is stopped removes its own
@@ -7239,3 +7242,52 @@ both copies were found to have (before, it held only the place and the size, so 
 delete could not show what it was based on). `sent` lines already carried it.
 
 Tests: `test_already_on_share_delete_logs_the_compared_sha256` (fails on aaeaca4: no `sha256` key).
+
+## Update 2026-11-19: the recording outbox sends in slices, so it never starves posing
+
+WHY. Found 2026-11-18 on a recording PC with about 700 recordings to clear: the send step runs at
+the start of EVERY watcher cycle (`_maybe_send_recordings`, before the scan and the work item), and
+each pass ran up to its 30-minute cap (`recording_outbox_pass_minutes`). The cycle then did one work
+item, so the PC's graphics card posed about one video per 30-45 minutes instead of about four an
+hour (no pose at all for over an hour that evening). Worse, the deadline was checked only right
+before a copy, AFTER the per-file recording check: once it passed, ffmpeg still ran on every
+remaining file, which added about 14 minutes (one pass took 2640 s).
+
+WHAT IS BUILT (`watcher/recording_outbox.py`, `RecordingSender.run_pass(preview, budget_seconds)`).
+- **A slice per cycle.** The watcher calls `run_pass(budget_seconds=settings.cycle_seconds)`; new
+  setting `watcher.recording_outbox_cycle_seconds`, default 120, at least 10
+  (`OutboxSettings.cycle_seconds`). A hand-started pass (`mousereach-send-recordings --once`)
+  passes no budget and uses `recording_outbox_pass_minutes` (30), its only remaining use.
+  `_OUTBOX_MIN_INTERVAL_S` (60 s between looks) is unchanged.
+- **The limit is checked before a file is begun, and once reached nothing more starts.** The check
+  sits right after the local stat and the unchanged-time bookkeeping (`_stable`) and BEFORE the
+  open test, the conflict stat on the share, the recording check (`_verdict` -> ffmpeg), the
+  lookups and every SHA-256. A recording-time start or a stop request seen there stops the pass the
+  same way. Files not reached are reported from what is already known only (`_known_hold(...,
+  look_at_share=False)`: a remembered conflict while the local file is unchanged, a remembered
+  "cannot check", repeated failures) or as waiting ("not reached in this pass's 120 s; sent on a
+  later pass"). The local stat and `_stable` still run for them so the unchanged-for-5-minutes clock
+  keeps running and `on_this_pc` stays exact.
+- **A begun file is finished** (lookup, hash, copy, read-back, rename, delete), so a slice can run
+  over by one file's work. WHY: stopping mid-copy throws the copy away, and a file whose copy takes
+  longer than the slice would then never be sent. Recording time and the stop flag still stop a copy
+  between 8 MB blocks, as before.
+- **Next slice carries on where this one stopped.** The first file not reached is saved as
+  `resume_at` in `recording_outbox_state.json`; the next sending pass goes round the folder from it
+  (`_in_turn`). A pass that reaches every file clears it (next pass starts from the oldest). WHY: in a
+  fixed oldest-first order a file that is slow or fails every time would be begun first in every
+  slice and the rest never reached.
+- **Unchanged:** a local delete only after size + SHA-256 of the copy read back from (or already on)
+  the share match; never an overwrite; nothing sent inside `recording_days`/`recording_hours`; the
+  index-and-named-paths lookup with no listing of the share; no outbox work in a turn where the
+  shared drive does not answer (aaeaca4).
+
+Tests (`tests/test_recording_outbox.py`; all fail on 263e17b's sender):
+`test_a_watcher_slice_stops_at_its_budget_with_a_large_backlog` (12 files, 50 s of recording
+check each, 120 s: 3 begun and sent, the clock does not run past one file's overrun),
+`test_no_recording_check_and_no_hashing_after_the_deadline`,
+`test_the_next_slice_carries_on_where_the_last_one_stopped` (a file that fails after a whole
+budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cycle_budget_not_the_pass_cap`,
+`test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
+sends before a work item), `test_cycle_budget_config_key_and_default`; plus
+`test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.

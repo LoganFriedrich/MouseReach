@@ -62,6 +62,25 @@ recording PC, with the reason (see "What red means" below).
 The watcher looks at the recording folder at most once a minute, between its other
 jobs: while it is posing a video, the next look comes after that video is done.
 
+**Sending never holds up posing for long.** Each look may spend at most 2 minutes
+(`recording_outbox_cycle_seconds`, 120) starting to send recordings; then the
+watcher does its next job (a pose, a cut ...), then sends for up to 2 more
+minutes, and so on. A PC with hundreds of recordings waiting therefore sends them
+a few at a time between poses, over several hours, instead of stopping its work
+for half an hour at a time. Each look carries on where the last one stopped, so
+a recording that fails every time does not block the ones after it.
+
+The 2 minutes decide when a recording may be *started*. A recording whose copy
+has begun is finished (copied, read back, checked, then deleted here), even if
+that takes longer: stopping it half way would throw the copy away. Once the time
+is up, nothing more is done to any other recording in that look -- no recording
+check, no fingerprint, no look at the shared drive -- they just wait for the
+next look.
+
+When you send by hand (`mousereach-send-recordings --once`), the one pass may take
+up to 30 minutes (`recording_outbox_pass_minutes`), because there is no other work
+to make room for. Run it again to carry on.
+
 
 Only **outside recording hours**: the days and hours already set for this PC
 (`watcher.recording_days`, `watcher.recording_hours`; in the Watcher Control panel
@@ -242,7 +261,8 @@ after the pipeline.
 | `recording_outbox_stable_minutes` | 5 | How long a file must be seen unchanged before it counts as finished. |
 | `recording_min_minutes`, `recording_min_frames`, `recording_min_kb_per_second` | 5, 3000, 5 | The recording check, shared with the intake: a recording below any of these is a recording issue (see RECORDING_ISSUES.md). It is still sent. |
 | `recording_outbox_warn_after_failures` | 3 | Failed copies in a row before a file is shown in red. |
-| `recording_outbox_pass_minutes` | 30 | How long one pass may spend copying before the watcher does its other work. |
+| `recording_outbox_cycle_seconds` | 120 (at least 10) | How long the running watcher may spend starting to send, each time it looks, before it goes back to its other work (posing, cutting). A recording already being copied is finished first. |
+| `recording_outbox_pass_minutes` | 30 | How long one pass started by hand (`mousereach-send-recordings --once`) may spend starting to send. The running watcher does not use it. |
 | `recording_days`, `recording_hours` | (already exist) | Recording time. Nothing is sent inside it, and nothing at all is sent if both are unset. |
 | `pause_while_running` | (already exists) | While a listed recording program runs, the newest file in the folder is taken as its current recording and left alone. If the recording program is left open after the last recording of the day has been renamed, that last recording waits until the program is closed or a new recording starts. |
 
@@ -268,7 +288,8 @@ Changes to the recording days and hours apply at once.
   deleted here because an identical copy was already on the shared drive
   (`deleted_local_already_on_share`) carries the SHA-256 both copies were found
   to have, so every delete shows what it was based on.
-* What the sender remembers between passes (sizes seen, failures, conflicts):
+* What the sender remembers between passes (sizes seen, failures, conflicts, and
+  `resume_at`, the first recording the last look did not reach):
   `recording_outbox_state.json` in this PC's processing folder. Deleting it is
   safe: the sender then waits 5 minutes before sending anything.
 * The latest pass: the `recording_outbox` part of this PC's status file,

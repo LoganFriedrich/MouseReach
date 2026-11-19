@@ -2104,8 +2104,8 @@ class BaseOrchestrator:
         return value
 
     # Seconds between two looks at the recording folder. A look is a listing
-    # of a local folder; the copies themselves are bounded by
-    # watcher.recording_outbox_pass_minutes.
+    # of a local folder; the sending in one look is bounded by
+    # watcher.recording_outbox_cycle_seconds (see _maybe_send_recordings).
     _OUTBOX_MIN_INTERVAL_S = 60.0
 
     def _maybe_send_recordings(self) -> None:
@@ -2152,7 +2152,14 @@ class BaseOrchestrator:
                     claim_lookup=claim_lookup)
             # Fresh settings every pass, so edited recording hours apply at once.
             sender.settings = settings
-            report = sender.run_pass()
+            # One SLICE, not a whole pass: this runs at the start of every
+            # cycle, before the cycle's work item, so a long pass here holds
+            # up posing. A PC with hundreds of recordings to clear once spent
+            # 30-45 minutes here every cycle (the hand-started pass's limit,
+            # recording_outbox_pass_minutes) and posed one video per cycle
+            # instead of about four an hour. The next slice carries on where this
+            # one stopped (recording_outbox.RecordingSender._in_turn).
+            report = sender.run_pass(budget_seconds=settings.cycle_seconds)
             self._outbox_report = report
             if report.get("held"):
                 held = ro.held_lines(report)

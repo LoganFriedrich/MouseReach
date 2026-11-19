@@ -103,6 +103,32 @@ between two passes (nothing is still writing it) removes it and copies again.
 A crash after the rename but before the delete leaves an identical file on the
 shared drive; the next pass finds it in step 1 and deletes the local copy then.
 
+HOW LONG A PASS MAY TAKE (sending never starves the watcher's other work)
+------------------------------------------------------------------------
+The running watcher sends in SLICES: one pass at the start of a watcher cycle,
+limited to ``recording_outbox_cycle_seconds`` (default 120), then the cycle's
+work item (a pose, a cut ...), then the next slice. WHY: a recording PC with
+hundreds of recordings to clear once spent its whole 30-minute pass at the
+start of every cycle, so its graphics card posed one video per 30-45 minutes
+instead of about four an hour. A hand-started pass
+(``mousereach-send-recordings --once``) has no other work to make room for and
+uses ``recording_outbox_pass_minutes`` (default 30) instead.
+
+The limit is checked before each file is BEGUN. Once it is reached, no further
+file is begun in that pass: no recording check (ffmpeg), no SHA-256, no look
+at the shared drive. What still happens for the remaining files is local and
+cheap -- the name check, one look at the size and time (so the
+unchanged-for-N-minutes clock keeps running and the counts stay exact), and
+reporting what is already known to be held. A file begun before the limit is
+finished (copy, read-back check, rename, delete): stopping it part-way would
+throw the copy away, and a file whose copy takes longer than the limit would
+then never be sent. So a slice can run over its limit by one file's work.
+
+The next pass starts where the last one stopped (the first file it did not
+reach, remembered in the state file as ``resume_at``) and goes round the folder
+from there, so a file that fails or is slow every time cannot take every
+slice. A pass that reaches every file starts the next one from the oldest.
+
 REPORTING
 ---------
 Every pass returns a report that the watcher puts in its status file
@@ -164,7 +190,11 @@ class OutboxSettings:
     # the two never disagree (watcher/recording_issue.py).
     check: recording_issue.CheckSettings = field(default_factory=recording_issue.CheckSettings)
     warn_after_failures: int = 3
+    # How long one pass may spend: a hand-started pass (pass_minutes) and one
+    # slice inside the running watcher (cycle_seconds). See "HOW LONG A PASS
+    # MAY TAKE" in the module docstring.
     pass_minutes: float = 30.0
+    cycle_seconds: float = 120.0
     recording_hours: Optional[str] = None
     recording_days: Optional[str] = None
     recorder_names: List[str] = field(default_factory=list)
@@ -179,6 +209,7 @@ class OutboxSettings:
             check=recording_issue.CheckSettings.from_config(cfg),
             warn_after_failures=int(getattr(cfg, "recording_outbox_warn_after_failures", 3)),
             pass_minutes=float(getattr(cfg, "recording_outbox_pass_minutes", 30)),
+            cycle_seconds=float(getattr(cfg, "recording_outbox_cycle_seconds", 120)),
             recording_hours=getattr(cfg, "recording_hours", None),
             recording_days=getattr(cfg, "recording_days", None),
             recorder_names=list(getattr(cfg, "pause_while_running", None) or []),
@@ -515,11 +546,19 @@ class RecordingSender:
             return None
         return rec.get("reason")
 
-    def _known_hold(self, path: Path, st) -> Optional[str]:
+    def _known_hold(self, path: Path, st, look_at_share: bool = True) -> Optional[str]:
         """Why this file is held, from what is already known, or None.
 
-        Used while sending is not allowed: reads no file, runs no probe."""
-        held = self._held_conflict(path, st)
+        Used while sending is not allowed, and for the files a pass did not
+        reach before its time limit: reads no file, runs no probe. With
+        ``look_at_share`` False it does not even stat the conflicting copy on
+        the shared drive; a remembered conflict is reported while the local
+        file is unchanged (the next pass that reaches it looks again)."""
+        if look_at_share:
+            held = self._held_conflict(path, st)
+        else:
+            rec = self.state["conflicts"].get(path.name.lower()) or {}
+            held = rec.get("reason") if rec.get("sig") == [st.st_size, st.st_mtime] else None
         if held:
             return held
         rec = self.state["probes"].get(path.name.lower())
@@ -860,8 +899,28 @@ class RecordingSender:
         return "ready: would be copied, verified, then deleted here"
 
     # ---------------------------------------------------------------- one pass
-    def run_pass(self, preview: bool = False) -> dict:
-        """One look at the outbox; sends what may be sent unless ``preview``."""
+    def _in_turn(self, files: List[Path]) -> List[Path]:
+        """``files`` (oldest first) starting at the first file the last pass
+        did not reach, then round to the ones before it. WHY: with a fixed
+        oldest-first order, a file that is slow or fails every time would be
+        begun first in every slice and the rest would never be reached."""
+        at = self.state.get("resume_at")
+        keys = [p.name.lower() for p in files]
+        if isinstance(at, str) and at in keys:
+            i = keys.index(at)
+            return files[i:] + files[:i]
+        return files
+
+    def run_pass(self, preview: bool = False,
+                 budget_seconds: Optional[float] = None) -> dict:
+        """One look at the outbox; sends what may be sent unless ``preview``.
+
+        ``budget_seconds`` limits how long the pass may begin new files: the
+        running watcher passes ``settings.cycle_seconds`` so a backlog is sent
+        a slice at a time between its work items; unset (a hand-started pass)
+        it is ``settings.pass_minutes``. Once it is used up, nothing more is
+        read, probed, hashed or looked up for any file in this pass; a file
+        already begun is finished. See "HOW LONG A PASS MAY TAKE" above."""
         s = self.settings
         report = {"at": datetime.now().isoformat(timespec="seconds"),
                   "outbox": str(s.outbox) if s.outbox else None,
@@ -883,13 +942,19 @@ class RecordingSender:
         files = self._candidates()
         recorder_on = bool(files) and (gate is None or preview) and self._recorder_running()
         newest = files[-1] if files else None
-        deadline = self._clock() + s.pass_minutes * 60.0
+        budget = (float(budget_seconds) if budget_seconds is not None
+                  else s.pass_minutes * 60.0)
+        deadline = self._clock() + budget
+        # Set once the time is used up (or recording time begins, or a stop
+        # is asked for): from then on no file is begun -- see below.
+        stopped_why: Optional[str] = None
+        sending = not gate and not preview
         present = set()
         # The server's collage index is read at most once per pass, and only
         # when a file is ready to be looked up (one file; never a listing).
         self._pass_index = None
 
-        for path in files:
+        for path in (self._in_turn(files) if sending else files):
             name = path.name
             present.add(name.lower())
             if RAW_RECORDER_NAME.match(name):
@@ -918,6 +983,33 @@ class RecordingSender:
             # A preview has no history of earlier looks, so it cannot apply the
             # unchanged-for-N-minutes rule; it says so in its heading instead.
             why = None if preview else self._stable(path, st)
+            if sending and stopped_why is None:
+                # The limit is checked before a file is BEGUN. Everything
+                # below (the open test, the conflict stat on the shared drive,
+                # the recording check, the lookups, the hashes, the copy) is
+                # per-file work that a pass whose time is up must not start.
+                if self._clock() >= deadline:
+                    stopped_why = "time"
+                else:
+                    stopped_why = self._abort_reason()
+                if stopped_why is not None:
+                    self.state["resume_at"] = name.lower()
+            if stopped_why is not None:
+                # Not reached this pass. Only what is already known is
+                # reported (local stat and remembered state; nothing read
+                # from the file, nothing looked up on the shared drive).
+                held = self._known_hold(path, st, look_at_share=False)
+                if held:
+                    report["held"].append({"name": name, "reason": held})
+                elif why:
+                    report["waiting"].append({"name": name, "reason": why})
+                elif stopped_why == "time":
+                    report["waiting"].append({"name": name, "reason": (
+                        "not reached in this pass's %d s; sent on a later pass" % int(budget))})
+                else:
+                    report["waiting"].append({"name": name, "reason": _ascii(
+                        "not sent now (%s); sent on a later pass" % stopped_why)})
+                continue
             if why is None and recorder_on and path == newest:
                 why = "may be the recording program's current file (it is running)"
             if why is None and self._open_check(path):
@@ -941,9 +1033,6 @@ class RecordingSender:
                              "aside as a recording issue" % issue)
                 report["waiting"].append({"name": name, "reason": text})
                 continue
-            if self._clock() >= deadline or self._abort_reason():
-                report["waiting"].append({"name": name, "reason": "ready; sent on a later pass"})
-                continue
             outcome, text = self._send_one(path, st)
             if outcome in ("sent", "already"):
                 how = "copied and verified" if outcome == "sent" else "already on the shared drive"
@@ -964,6 +1053,9 @@ class RecordingSender:
                 else:
                     report["waiting"].append(entry)
 
+        if sending and stopped_why is None:
+            # Every file was reached: the next pass starts from the oldest.
+            self.state.pop("resume_at", None)
         # Forget files that are no longer in the folder.
         for k in ("seen", "failures", "conflicts", "probes", "unlocated"):
             for key in [x for x in self.state[k] if x not in present]:

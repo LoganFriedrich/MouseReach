@@ -1105,15 +1105,23 @@ class WatcherConfig:
             Path(outbox) if isinstance(outbox, str) and outbox.strip() else None)
         # How long a file's size and time must stay unchanged before it counts
         # as finished; after how many failed copies in a row a file is shown in
-        # red; and how long one pass may spend sending before the watcher goes
-        # back to its other work. (What counts as a real recording is the
-        # recording check's three settings below, shared with the intake.)
+        # red. (What counts as a real recording is the recording check's three
+        # settings below, shared with the intake.)
         self.recording_outbox_stable_minutes: float = _num(
             cfg.get('recording_outbox_stable_minutes'), 5.0, 0.0)
         self.recording_outbox_warn_after_failures: int = int(_num(
             cfg.get('recording_outbox_warn_after_failures'), 3, 1))
+        # How long sending may take. The running watcher sends in slices of at
+        # most recording_outbox_cycle_seconds at the start of each cycle, then
+        # does the cycle's work item (WHY: one long pass per cycle once held a
+        # recording PC's posing to one video per 30-45 minutes). A pass started
+        # by hand (mousereach-send-recordings --once), which has no other work
+        # to make room for, may take recording_outbox_pass_minutes. Both limit
+        # when a file may be BEGUN; a begun file is finished.
         self.recording_outbox_pass_minutes: float = _num(
             cfg.get('recording_outbox_pass_minutes'), 30.0, 1.0)
+        self.recording_outbox_cycle_seconds: float = _num(
+            cfg.get('recording_outbox_cycle_seconds'), 120.0, 10.0)
         # The recording check (mousereach.watcher.recording_issue): a
         # multi-animal recording shorter than this many minutes, with fewer
         # frames than this, or smaller than this many kilobytes per second of
@@ -1188,6 +1196,7 @@ class WatcherConfig:
         for key, default in (('recording_outbox_stable_minutes', 5.0),
                              ('recording_outbox_warn_after_failures', 3),
                              ('recording_outbox_pass_minutes', 30.0),
+                             ('recording_outbox_cycle_seconds', 120.0),
                              ('recording_min_minutes', 5.0),
                              ('recording_min_frames', 3000),
                              ('recording_min_kb_per_second', 5.0)):

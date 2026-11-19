@@ -534,7 +534,7 @@ def test_watcher_turn_survives_a_failing_pass(env, monkeypatch):
     from mousereach.watcher import orchestrator
     monkeypatch.setattr(orchestrator.Paths, "NAS_ROOT", env.nas)
 
-    def boom(self, preview=False):
+    def boom(self, preview=False, budget_seconds=None):
         raise RuntimeError("disk gone")
     monkeypatch.setattr(ro.RecordingSender, "run_pass", boom)
     stub, turn = _watcher_stub(WatcherConfig({"recording_outbox": str(env.outbox)}))
@@ -928,3 +928,214 @@ def test_already_on_share_delete_logs_the_compared_sha256(env):
              (env.tmp / "logs" / ro.TRANSFER_LOG_NAME).read_text().splitlines() if l.strip()]
     rec = [r for r in lines if r["event"] == "deleted_local_already_on_share"][0]
     assert rec["sha256"] == hashlib.sha256(CONTENT).hexdigest()
+
+
+# ------------------------------------------- sending never starves the watcher's work
+# Found on a recording PC with hundreds of recordings to clear: the send step ran
+# at the start of every watcher cycle and each pass used its whole 30-minute cap,
+# so the PC did one work item per 30-45 minutes; and after the pass deadline the
+# recording check (ffmpeg) still ran on every remaining file.
+
+def _named(i):
+    """A distinct valid session name for the i-th file (4 trays a day)."""
+    return ("2024010%d_TST0101,TST0102,TST0103,TST0104,TST0105,TST0106,TST0107,TST0108_P%d.mkv"
+            % (1 + i // 4, 1 + i % 4))
+
+
+def _backlog(env, n):
+    names = [_named(i) for i in range(n)]
+    for k, name in enumerate(names):
+        p = put(env.outbox, name)
+        os.utime(p, (1_000_000 + k, 1_000_000 + k))     # oldest first, in this order
+    return names
+
+
+class SlowCheck:
+    """A recording check that takes ``seconds`` of the sender's clock per file."""
+    def __init__(self, clock, seconds):
+        self.clock, self.seconds, self.checked = clock, seconds, []
+
+    def __call__(self, path):
+        self.checked.append(path.name)
+        self.clock.t += self.seconds
+        return OK
+
+
+def test_a_watcher_slice_stops_at_its_budget_with_a_large_backlog(env):
+    _backlog(env, 12)
+    clock = Clock()
+    check = SlowCheck(clock, 50)
+    sender = make_sender(env, clock=clock, assess=check, pass_minutes=2)
+    sender.run_pass()                 # first look: all may still be written
+    clock.advance(6)
+    start = clock.t
+    rep = sender.run_pass()
+    sent = [s["name"] for s in rep["sent_this_pass"]]
+    # Files are begun only while the budget lasts (t=0, 50, 100 s); a begun file is finished.
+    assert len(sent) == 3, sent
+    assert clock.t - start <= 120 + 50
+    assert rep["on_this_pc"] == 12 - 3
+    later = [w for w in rep["waiting"] if "later pass" in w["reason"]]
+    assert len(later) == rep["waiting_count"] == 9
+
+
+def test_no_recording_check_and_no_hashing_after_the_deadline(env, monkeypatch):
+    names = _backlog(env, 6)
+    clock = Clock()
+    check = SlowCheck(clock, 200)            # the first check alone uses the whole budget
+    sender = make_sender(env, clock=clock, assess=check, pass_minutes=2)
+    sender.run_pass()
+    clock.advance(6)
+    check.checked.clear()
+    hashed = []
+    real = ro.sha256_file
+
+    def spy(p, abort=None):
+        hashed.append(Path(p).name)
+        return real(p, abort)
+    monkeypatch.setattr(ro, "sha256_file", spy)
+    rep = sender.run_pass()
+    assert check.checked == [names[0]], "the recording check ran after the deadline"
+    assert all(h.startswith(names[0]) for h in hashed), hashed
+    assert [s["name"] for s in rep["sent_this_pass"]] == [names[0]]
+
+
+def test_the_next_slice_carries_on_where_the_last_one_stopped(env, monkeypatch):
+    names = _backlog(env, 6)
+    clock = Clock()
+    check = SlowCheck(clock, 200)
+    sender = make_sender(env, clock=clock, assess=check, pass_minutes=2)
+    sender.run_pass()
+    clock.advance(6)
+    # The oldest file fails every time, after a whole budget of copying:
+    # it must not take every slice.
+    real_send = ro.RecordingSender._send_one
+
+    def send(self, path, st):
+        if path.name == names[0]:
+            clock.t += 200          # and uses a whole budget doing so
+            self._fail(path.name, "copy failed")
+            return "failed", "copy failed"
+        return real_send(self, path, st)
+    monkeypatch.setattr(ro.RecordingSender, "_send_one", send)
+    done = []
+    for _ in range(8):
+        rep = sender.run_pass()
+        done += [s["name"] for s in rep["sent_this_pass"]]
+    assert sorted(done) == sorted(names[1:]), done
+
+
+def test_the_watcher_turn_uses_the_cycle_budget_not_the_pass_cap(env, monkeypatch):
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import orchestrator
+    monkeypatch.setattr(orchestrator.Paths, "NAS_ROOT", env.nas)
+    _backlog(env, 12)
+    cfg = WatcherConfig({"recording_outbox": str(env.outbox), "recording_hours": "08:00-18:00",
+                         "recording_days": "Mon-Fri", "recording_outbox_cycle_seconds": 120})
+    clock = Clock()
+    check = SlowCheck(clock, 50)
+    stub, turn = _watcher_stub(cfg)
+    stub._outbox_sender = make_sender(env, clock=clock, assess=check)
+    stub._outbox_sender.run_pass()
+    clock.advance(6)
+    turn()
+    assert len(stub._outbox_report["sent_this_pass"]) == 3
+
+
+def test_work_items_run_between_send_slices(env, monkeypatch):
+    """The real watcher loop: a large backlog is sent a slice at a time, with a
+    work item after every slice -- never the whole backlog before any work."""
+    import threading
+    from mousereach.config import WatcherConfig
+    from mousereach.watcher import orchestrator as orch
+    monkeypatch.setattr(orch.Paths, "NAS_ROOT", env.nas)
+    monkeypatch.setattr(orch, "require_processing_root", lambda: env.tmp)
+    names = _backlog(env, 9)
+    clock = Clock()
+    events = []
+    sender = make_sender(env, clock=clock, assess=SlowCheck(clock, 50))
+    sender.run_pass()
+    clock.advance(6)
+    real_send = ro.RecordingSender._send_one
+
+    def send(self, path, st):
+        events.append("send")
+        return real_send(self, path, st)
+    monkeypatch.setattr(ro.RecordingSender, "_send_one", send)
+
+    o = object.__new__(orch.DLCOrchestrator)
+    o.config = WatcherConfig({"recording_outbox": str(env.outbox),
+                              "recording_hours": "08:00-18:00", "recording_days": "Mon-Fri",
+                              "recording_outbox_cycle_seconds": 120})
+    o.config.poll_interval_seconds = 0.01
+    o.db = types.SimpleNamespace(clear_errors_on_archived=lambda: 0)
+    o.hostname = "node"
+    o._outbox_sender = sender
+    o._OUTBOX_MIN_INTERVAL_S = 0.0
+    o._share_available = lambda: True
+    o._is_paused = lambda: False
+    o._report_node_status = lambda *a, **k: None
+    o._start_stop_watchdog = lambda: None
+    o._reclaim_orphaned_work = lambda: {}
+    o._maybe_review_reprocess_scan = lambda *a, **k: None
+    o._scan_phase = lambda: None
+    o._begin_work = lambda w: None
+    o._end_work = lambda w, a: None
+    o.shutdown = lambda: None
+    o._stop_requested = lambda: False
+    stop = threading.Event()
+    work_done = []
+
+    def dispatch(work):
+        events.append("work")
+        work_done.append(work["id"])
+        if not any((env.outbox / n).exists() for n in names) or len(work_done) > 20:
+            stop.set()
+        return True
+    o._get_next_work_item = lambda: {"type": "pose", "id": "v%d" % len(work_done)}
+    o._dispatch_guarded = dispatch
+    t = threading.Thread(target=o.run, args=(stop,), daemon=True)
+    t.start()
+    t.join(30)
+    stop.set()
+    assert not t.is_alive()
+    assert all((env.intake / n).exists() for n in names), events
+    assert events[0] == "send" and events[-1] == "work"
+    # Never more than one slice (3 files at 50 s against 120 s) before a work item.
+    run = 0
+    for e in events:
+        run = run + 1 if e == "send" else 0
+        assert run <= 3, events
+    assert events.count("work") >= 3, events
+
+
+def test_cycle_budget_config_key_and_default():
+    from mousereach.config import WatcherConfig
+    assert WatcherConfig({}).recording_outbox_cycle_seconds == 120.0
+    assert ro.OutboxSettings().cycle_seconds == 120.0
+    on = WatcherConfig({"recording_outbox": "D:/rec", "recording_outbox_cycle_seconds": 300})
+    assert ro.OutboxSettings.from_config(on).cycle_seconds == 300
+    assert on.to_dict()["recording_outbox_cycle_seconds"] == 300
+    assert "recording_outbox_cycle_seconds" not in WatcherConfig({}).to_dict()
+
+
+def test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time(env):
+    names = _backlog(env, 3)
+    put(env.intake, names[2], b"other content")      # a different file of the same name
+    clock = Clock()
+    check = SlowCheck(clock, 10)
+    sender = make_sender(env, clock=clock, assess=check, pass_minutes=2)
+    sender.run_pass()
+    clock.advance(6)
+    rep = sender.run_pass()
+    assert names[2] in {h["name"] for h in rep["held"]}
+    # Next pass: the first file (put back) uses the whole budget, so the
+    # conflicting file is not reached -- it is still reported held, from memory.
+    put(env.outbox, names[0], CONTENT + b"x")
+    sender.run_pass()
+    clock.advance(6)
+    check.seconds = 500
+    sender.state.pop("resume_at", None)
+    rep = sender.run_pass()
+    assert names[2] in {h["name"] for h in rep["held"]}
+    assert names[2] not in check.checked[-1:]
