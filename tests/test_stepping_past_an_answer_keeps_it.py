@@ -40,7 +40,8 @@ def _window(saved):
         _candidate_reach_ids=lambda seg: None, _goto_frame=lambda *a: None,
         _jump_to_selected_reach=lambda *a: None)
     for name in ("_snap_to_detected_reach", "_read_reach_pick",
-                 "_collect_answers_unchecked", "_segmentation_is_human"):
+                 "_collect_answers_unchecked", "_segmentation_is_human",
+                 "_fill_causal_bounds", "_checked_causal_bounds"):
         setattr(w, name, getattr(W, name).__get__(w))
     _KEEP.append(W._make_outcome_picker(w, SEG, require_pick=True))
     _KEEP.append(W._make_reach_picker(w, SEG))
@@ -54,7 +55,9 @@ def _saved(outcome, reach=None, answers=None):
         segment_num=3, pellet_num=3, algo_outcome="triaged", algo_causal_reach=None,
         algo_interaction_frame=None, human_outcome=outcome, human_causal_reach=reach,
         is_phantom=False, agreed=False, answers=answers or {"triage_kind": "both_uncertain"},
-        notes="", segment_span={"start": 1000, "end": 2000})
+        notes="", segment_span={"start": 1000, "end": 2000},
+        # The causal reach's first/last frame as the person checked them.
+        causal_reach_bounds=({"start": reach["start"], "end": reach["end"]} if reach else None))
     rec["reviewer"], rec["reviewed_at"] = "reviewer_a", "2099-01-01T00:00:00"
     return rec
 

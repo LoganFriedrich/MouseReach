@@ -2348,7 +2348,33 @@ The notes box travels with the video.
         jump_row.addStretch()
         layout.addLayout(jump_row)
 
-        self._q_widgets["_reach_picker"] = {
+        # The causal reach's first and last frame, ALWAYS shown and always
+        # checked by the person when a reach is named (owner rule 2026-11-19:
+        # "a causal answer always includes the person checking that reach's
+        # start/end, even if not asked"). Filled with the picked reach's frames;
+        # the person corrects them if needed and ticks Checked. Saved as
+        # human.causal_reach_bounds (causal_review_io.CAUSAL_BOUNDS_KEY); an
+        # answer naming a touched pellet's reach without the tick is not
+        # recorded (answer_problem).
+        bounds_box = QGroupBox("Causal reach: its first and last frames (always check)")
+        bounds_row = QHBoxLayout()
+        bounds_box.setLayout(bounds_row)
+        bounds_row.addWidget(QLabel("First:"))
+        b_start = QSpinBox()
+        b_start.setRange(0, max(0, self.n_frames - 1))
+        b_start.setMaximumWidth(80)
+        bounds_row.addWidget(b_start)
+        bounds_row.addWidget(QLabel("Last:"))
+        b_end = QSpinBox()
+        b_end.setRange(0, max(0, self.n_frames - 1))
+        b_end.setMaximumWidth(80)
+        bounds_row.addWidget(b_end)
+        b_checked = QCheckBox("Checked: these are its first and last frames")
+        bounds_row.addWidget(b_checked)
+        bounds_row.addStretch()
+        layout.addWidget(bounds_box)
+
+        rp = {
             "reach_group": reach_group,
             "none_button": none_rb,
             "reach_radios": [reach_group.button(i) for i in range(len(ordered))],
@@ -2357,9 +2383,49 @@ The notes box travels with the video.
             "manual_button": manual_rb,
             "start_spin": start_spin,
             "end_spin": end_spin,
+            "bounds_start": b_start,
+            "bounds_end": b_end,
+            "bounds_checked": b_checked,
         }
+        self._q_widgets["_reach_picker"] = rp
+        reach_group.buttonClicked.connect(lambda _b: self._fill_causal_bounds(rp))
+        start_spin.valueChanged.connect(
+            lambda _v: manual_rb.isChecked() and self._fill_causal_bounds(rp))
+        end_spin.valueChanged.connect(
+            lambda _v: manual_rb.isChecked() and self._fill_causal_bounds(rp))
+        self._fill_causal_bounds(rp)
 
         return w
+
+    def _fill_causal_bounds(self, rp: Dict, frames=None) -> None:
+        """Put the named reach's first/last frame in the bounds row and clear
+        the Checked tick: a different reach must be checked again. With no
+        reach named the row is greyed out."""
+        if not rp or "bounds_start" not in rp:
+            return
+        if frames is None:
+            pick = self._read_reach_pick(rp)
+            if pick is None:
+                pick = getattr(self, "_pinned_reach", None)
+            if pick is not None:
+                frames = tuple(pick.get("typed") or (pick["start"], pick["end"]))
+        on = frames is not None
+        for key in ("bounds_start", "bounds_end", "bounds_checked"):
+            rp[key].setEnabled(on)
+        rp["bounds_checked"].setChecked(False)
+        if on:
+            rp["bounds_start"].setValue(int(frames[0]))
+            rp["bounds_end"].setValue(int(frames[1]))
+
+    def _checked_causal_bounds(self) -> Optional[Dict[str, int]]:
+        """The causal reach's first/last frame as the person checked them, or
+        None when the Checked tick is not set."""
+        rp = (getattr(self, "_q_widgets", None) or {}).get("_reach_picker") or {}
+        box = rp.get("bounds_checked")
+        if box is None or not box.isChecked() or not box.isEnabled():
+            return None
+        return {"start": int(rp["bounds_start"].value()),
+                "end": int(rp["bounds_end"].value())}
 
     def _sync_reach_picker_to_outcome(self, outcome_text: str = "") -> None:
         """Clear and lock the reach picker when the outcome cannot have a reach.
@@ -2387,6 +2453,11 @@ The notes box travels with the video.
             widget = rp.get(key)
             if widget is not None:
                 widget.setEnabled(not impossible)
+        if "bounds_start" in rp and (impossible or not rp["bounds_start"].isEnabled()):
+            # No reach, no bounds to check (an untouched pellet has no reach
+            # whose frames anyone judged); back from that, refill. Any other
+            # outcome change keeps the frames and the tick as they are.
+            self._fill_causal_bounds(rp)
 
     def _goto_frame(self, frame: int) -> None:
         """Move the viewer to a frame, clamped to the video."""
@@ -2790,6 +2861,9 @@ The notes box travels with the video.
 
         notes = self._notes_edit.toPlainText().strip() if hasattr(self, '_notes_edit') else ""
 
+        # The explicit call on every reach of this segment and the causal
+        # reach's checked frames (causal_review_io.REACH_CALLS_KEY).
+        bounds = self._checked_causal_bounds() if human_causal_reach is not None else None
         return build_segment_record(
             segment_num=seg["segment_num"],
             pellet_num=seg["pellet_num"],
@@ -2803,6 +2877,8 @@ The notes box travels with the video.
             answers=answers,
             notes=notes,
             segment_span=_segment_span(seg),
+            segment_reaches=seg.get("all_reaches") or [],
+            causal_reach_bounds=bounds,
         )
 
     def _get_toggle_answer(self, key: str) -> Optional[bool]:
@@ -2876,6 +2952,20 @@ The notes box travels with the video.
                     except Exception as err:
                         logger.warning('Could not restore a saved reach answer %s, so its row is blank: %s', hc, err)
                         pass
+
+        # The causal reach's checked frames: as saved (ticked), else the
+        # restored reach's own frames, unticked.
+        rp = self._q_widgets.get("_reach_picker") or {}
+        if "bounds_start" in rp:
+            saved_b = human.get("causal_reach_bounds")
+            if saved_b and hc:
+                try:
+                    self._fill_causal_bounds(rp, (int(saved_b["start"]), int(saved_b["end"])))
+                    rp["bounds_checked"].setChecked(True)
+                except (KeyError, TypeError, ValueError):
+                    self._fill_causal_bounds(rp)
+            else:
+                self._fill_causal_bounds(rp)
 
         # Restore the ignore windows (abnormal non-reach events).
         abn = self._q_widgets.get("_abnormal_ranges")

@@ -7291,3 +7291,31 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+## Update 2026-11-19 (triage answers record every reach and the causal reach's checked frames)
+
+WHY: owner rules 2026-11-19 -- "the triage tool must EXPLICITLY record every other reach of the
+segment as a miss when a causal reach is named; 'untouched' / 'no reach interacted' => every reach of
+the segment recorded as miss"; "a causal answer includes the person checking that causal reach's
+start/end (always, even if not asked) -> human-declared reach bounds. Untouched segments: no reach
+bounds judged." And: what a person said is the result every later step uses.
+
+WHAT IS BUILT (review side only; making the results step, kinematics and exports read these fields is
+separate work):
+- `causal_review_io.segment_reach_calls` and two new record fields written by `build_segment_record`:
+  `human.reach_calls` (one entry per detected reach in the segment -- `causal` / `miss`, with whose
+  frames they are) and `human.causal_reach_bounds` (`{start, end}` the person checked). Field names
+  are the constants `REACH_CALLS_KEY` and `CAUSAL_BOUNDS_KEY`. `_answer_signature` counts the checked
+  frames as part of the answer.
+- `answer_problem` refuses a touched answer whose causal reach's frames were not checked, or whose
+  checked frames are reversed or outside the segment.
+- Review window: the reach picker always shows "Causal reach: its first and last frames (always
+  check)" (filled from the picked/typed/pinned reach, a Checked tick to set); `_collect_answers_unchecked`
+  passes the segment's reaches and the checked frames; `_restore_answers` puts saved frames back ticked.
+
+Old answers are unchanged: they keep no `reach_calls` / `causal_reach_bounds`, and are still accepted
+as stored; a person changing one must check the frames.
+
+Tests: `tests/test_triage_answer_records_every_reach.py` (8 of 8 fail on the commit before); fixtures
+in four existing test files add the checked frames to complete causal answers.
+
