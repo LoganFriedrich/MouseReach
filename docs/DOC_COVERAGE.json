@@ -316,7 +316,8 @@
    "doc": "docs/SENDING_RECORDINGS.md",
    "what": "Sending recordings from a recording PC",
    "covers": [
-    "src/mousereach/watcher/recording_outbox.py"
+    "src/mousereach/watcher/recording_outbox.py",
+    "src/mousereach/watcher/collage_index.py"
    ]
   },
   {

@@ -55,15 +55,28 @@ sending) and the send log records the reason.
 
 HOW A FILE IS SENT (the order is what makes the delete safe)
 -----------------------------------------------------------
-1. Look for the name on the shared drive first, everywhere a collage rests
-   (the intake, the unsupported-tray, quarantine and recording-issue
-   folders, and every ``Multi-Animal`` folder under Analyzed and Archive). WHY everywhere: a
-   collage leaves the intake once its videos are filed, so "not in the
-   intake" does not mean "never sent"; sending it again would cut it again.
-   Found with the same content (size and SHA-256, both files read in full):
-   it was sent before, so only the local copy is deleted. Found with
-   different content: a CONFLICT -- held for a person, never overwritten,
-   never deleted.
+1. Look for the name on the shared drive first, WITHOUT walking it: the
+   intake and the recording-issue folder by name, and every path the
+   processing server's collage index lists for the name
+   (``Processing/.collage_index.json``, watcher/collage_index.py: the
+   intake, the unsupported-tray, quarantine and recording-issue folders and
+   every ``Multi-Animal`` folder under Analyzed and Archive, rebuilt every
+   10 minutes). WHY everywhere: a collage leaves the intake once its videos
+   are filed, so "not in the intake" does not mean "never sent"; sending it
+   again would cut it again. WHY an index and not a walk: a PC must never
+   list folder trees on the share (see the section "FINDING A NAME" below).
+   Found with the same content (size and SHA-256, both files read in full,
+   the copy on the share opened by its name): it was sent before, so only
+   the local copy is deleted. Found with different content: a CONFLICT --
+   held for a person, never overwritten, never deleted. The index is only a
+   pointer: nothing is deleted on its word alone. Two cases mean "sent
+   before, moved since" and the file then WAITS, neither sent nor deleted:
+   the index lists a path that is no longer there, or the shared claim table
+   (one row, asked only when nothing was found) already has the name. It is
+   held in red once an index built after it was first noticed still does
+   not show it. With the index missing or unreadable, a name found nowhere
+   and unknown to the claim table is sent as usual -- copied and verified --
+   and the report says the index is missing.
 2. Copy to ``<intake>/<name>.partial`` in blocks, hashing the source as it is
    read, at low disk priority. Every picker ignores ``.partial`` files.
 3. Check the source did not change during the copy, then read the
@@ -111,12 +124,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from mousereach.watcher.recording_guard import (
     _ascii, format_days, format_hours, parse_days, parse_hours, within_hours)
 from mousereach.watcher.validator import VIDEO_EXTENSIONS, validate_collage_filename
-from mousereach.watcher import recording_issue
+from mousereach.watcher import collage_index, recording_issue
 
 logger = logging.getLogger(__name__)
 
@@ -285,66 +298,31 @@ class _Aborted(Exception):
 
 
 # =============================================================================
-# WHERE A COLLAGE CAN REST ON THE SHARED DRIVE
+# FINDING A NAME ON THE SHARED DRIVE (without walking it)
 # =============================================================================
-
-def resting_places(nas_root: Path, depth: int = 4) -> List[Path]:
-    """Every folder on the shared drive where a sent collage can be now.
-
-    The intake; the unsupported-tray and quarantine folders (searched all the
-    way down, they keep subfolders); and every folder named ``Multi-Animal``
-    up to ``depth`` levels under Analyzed and Archive, where a collage goes
-    once its videos are filed.
-    """
-    nas_root = Path(nas_root)
-    out: List[Path] = []
-
-    def add(p: Path):
-        if p.is_dir() and p not in out:
-            out.append(p)
-
-    add(nas_root / "Unanalyzed" / "Multi-Animal")
-    # The recording-issue folder too: a failed recording is set aside there
-    # once it arrives, and without looking there the recording PC would send
-    # the same file again after each set-aside.
-    for top in (nas_root / "Unanalyzed" / "Unsupported_Tray_Type",
-                nas_root / "Processing" / "Quarantine",
-                nas_root / "Processing" / "Review" / recording_issue.FOLDER_NAME):
-        if top.is_dir():
-            for d, _dirs, _files in os.walk(top):
-                add(Path(d))
-    for top in (nas_root / "Analyzed", nas_root / "Archive"):
-        frontier = [top] if top.is_dir() else []
-        for _ in range(depth):
-            nxt = []
-            for d in frontier:
-                try:
-                    with os.scandir(d) as it:
-                        for e in it:
-                            if e.is_dir(follow_symlinks=False):
-                                p = Path(e.path)
-                                if e.name == "Multi-Animal":
-                                    add(p)
-                                else:
-                                    nxt.append(p)
-                except OSError:
-                    continue
-            frontier = nxt
-    return out
+# A recording PC never lists folder trees on the shared drive. It reads ONE
+# file the processing server writes (watcher/collage_index.py: where every
+# collage rests, rebuilt every 10 minutes) and opens single named files:
+#
+#   * <intake>/<name>                 -- where this PC puts it; covers everything
+#                                        sent since the index was built
+#   * <recording-issue folder>/<name> -- a failed recording is set aside there,
+#                                        flat, by name (recording_issue.set_aside)
+#   * every path the index lists for the name
+#
+# WHY: one recursive walk of the share from a PC, repeated every pass, turns a
+# degraded network connection into hours of crawling, and the shared
+# coordination database on the same share waits behind it for every machine.
+# A listed path is only a pointer: nothing is deleted until that one file has
+# been opened and its size and SHA-256 match (_match_existing).
 
 
-def build_index(nas_root: Path) -> Dict[str, List[Path]]:
-    """name -> every file of that name in the resting places (one listing each)."""
-    index: Dict[str, List[Path]] = {}
-    for d in resting_places(nas_root):
-        try:
-            with os.scandir(d) as it:
-                for e in it:
-                    if e.is_file(follow_symlinks=False):
-                        index.setdefault(e.name.lower(), []).append(Path(e.path))
-        except OSError:
-            continue
-    return index
+def _named_file_exists(p: Path) -> bool:
+    """True when ``p`` is a file. One stat of one named path; never a listing."""
+    try:
+        return os.stat(str(p)).st_mode & 0o170000 == 0o100000
+    except (OSError, ValueError):
+        return False
 
 
 # =============================================================================
@@ -410,7 +388,9 @@ class RecordingSender:
                  open_check: Callable[[Path], bool] = is_open_for_writing,
                  recorder_running: Optional[Callable[[], bool]] = None,
                  should_stop: Callable[[], bool] = lambda: False,
-                 chunk_size: int = _CHUNK):
+                 chunk_size: int = _CHUNK,
+                 claim_lookup: Optional[Callable[[str], Optional[dict]]] = None,
+                 read_index: Callable[[Path], "collage_index.Index"] = collage_index.read):
         self.settings = settings
         self.nas_root = Path(nas_root) if nas_root else None
         self.state_path = state_path
@@ -422,8 +402,15 @@ class RecordingSender:
         self._recorder_running = recorder_running or self._default_recorder_running
         self._should_stop = should_stop
         self._chunk = max(1, int(chunk_size))
+        # One row of the shared coordination table for one name (or None):
+        # asked only when a name cannot be found by name anywhere, so a
+        # recording the pipeline has already taken is never sent twice just
+        # because the index has not caught up (see _send_one).
+        self._claim_lookup = claim_lookup
+        self._read_index = read_index
+        self._pass_index: Optional["collage_index.Index"] = None
         self.state = _load_json(state_path)
-        for key in ("seen", "failures", "partials", "conflicts", "probes"):
+        for key in ("seen", "failures", "partials", "conflicts", "probes", "unlocated"):
             if not isinstance(self.state.get(key), dict):
                 self.state[key] = {}
         if not isinstance(self.state.get("sent"), list):
@@ -584,7 +571,7 @@ class RecordingSender:
 
     def _record_sent(self, name: str, size: int, how: str) -> None:
         key = name.lower()
-        for k in ("seen", "failures", "partials", "conflicts", "probes"):
+        for k in ("seen", "failures", "partials", "conflicts", "probes", "unlocated"):
             self.state[k].pop(key, None)
         self.state["sent"] = ([{"name": name, "bytes": size, "how": how,
                                 "at": datetime.now().isoformat(timespec="seconds")}]
@@ -604,6 +591,72 @@ class RecordingSender:
             "dest_sig": dest_sig, "reason": reason}
         self._log("conflict_held", path.name, dest=str(other), why=why)
         return reason
+
+    # ------------------------------------------------- where is this name now?
+    def _index(self) -> "collage_index.Index":
+        """The server's collage index, read once per pass (one file)."""
+        if self._pass_index is None:
+            try:
+                self._pass_index = self._read_index(self.nas_root)
+            except Exception as e:      # an injected reader; the real one never raises
+                self._pass_index = collage_index.Index(None, None, None, "unreadable", str(e))
+        return self._pass_index
+
+    def _whereabouts(self, name: str) -> Tuple[List[Path], List[Path]]:
+        """(found, listed_but_gone) for ``name`` on the shared drive.
+
+        ``found``: the named files that exist, from the two fixed places and
+        every path the index lists. ``listed_but_gone``: paths the index lists
+        that are not there now (moved after the index was built). Only single
+        named paths are looked at -- see the section comment above."""
+        fixed = [self.intake / name]
+        problematic = recording_issue.problematic_dir(self.nas_root)
+        if problematic is not None:
+            fixed.append(problematic / name)
+        listed = self._index().paths(self.nas_root, name)
+        found: List[Path] = []
+        gone: List[Path] = []
+        seen = set()
+        for p in fixed + listed:
+            key = os.path.normcase(os.path.normpath(str(p)))
+            if key in seen:
+                continue
+            seen.add(key)
+            if _named_file_exists(p):
+                found.append(p)
+            elif p in listed:
+                gone.append(p)
+        return found, gone
+
+    def _pipeline_record(self, name: str) -> Optional[dict]:
+        """The shared claim row for ``name`` (one row), or None when there is
+        none or it cannot be read. A lookup that fails does not stop a send:
+        the cutting step refuses a collage another machine has already cut."""
+        if self._claim_lookup is None:
+            return None
+        try:
+            row = self._claim_lookup(name)
+        except Exception as e:
+            logger.debug("could not ask the coordination table about %s: %s", name, e)
+            return None
+        return row if isinstance(row, dict) and row else None
+
+    def _unlocated(self, name: str, why: str) -> Tuple[str, str]:
+        """Sent before, but not found by name now: never sent again, never
+        deleted here. Waits for the server's next index; held (red) once an
+        index built AFTER this was first noticed still does not show it, so a
+        person looks instead of the file waiting for ever."""
+        key = name.lower()
+        first = float(self.state["unlocated"].setdefault(key, self._clock()))
+        idx = self._index()
+        if idx.usable and idx.built_at_epoch is not None and idx.built_at_epoch > first:
+            return "held", _ascii(
+                "%s; the server's collage index built since (%s) still does not show it on "
+                "the shared drive, so a person must find where it went. Nothing was sent or "
+                "deleted" % (why, idx.built_at))
+        return "waiting", _ascii(
+            "%s; nothing is sent or deleted until the server's next collage index (rebuilt "
+            "every %d minutes) shows where it is" % (why, int(collage_index.REBUILD_EVERY_S // 60)))
 
     # ---------------------------------------------------------------- one file
     def _match_existing(self, path: Path, st, others: Iterable[Path],
@@ -629,7 +682,7 @@ class RecordingSender:
             return "same", str(other), src_hash
         return "none", None, src_hash
 
-    def _send_one(self, path: Path, st, index: Dict[str, List[Path]]) -> Tuple[str, str]:
+    def _send_one(self, path: Path, st) -> Tuple[str, str]:
         """Send one checked file. Returns (outcome, text):
         'sent' | 'already' | 'held' | 'waiting' | 'failed'."""
         name = path.name
@@ -642,12 +695,26 @@ class RecordingSender:
         created = False      # True once THIS call made the .partial; only then is it ours to remove
         renamed = False
         try:
-            outcome, detail, src_hash = self._match_existing(
-                path, st, index.get(name.lower(), []), None)
+            found, gone = self._whereabouts(name)
+            outcome, detail, src_hash = self._match_existing(path, st, found, None)
             if outcome == "conflict":
                 return "held", detail
             if outcome == "same":
                 return self._already_there(path, st, sig, detail)
+            # Not found by name. Two things still mean "sent before, moved
+            # since", and then the file is neither sent again (that would cut
+            # it twice) nor deleted (nothing confirmed a copy):
+            if gone:
+                return self._unlocated(name, (
+                    "the server's collage index lists it at %s, but it is not there now "
+                    "(moved since the index was built)" % gone[0]))
+            record = self._pipeline_record(name)
+            if record:
+                return self._unlocated(name, (
+                    "the pipeline already has this recording (claimed by %s, %s), but it "
+                    "is not in the intake and the collage index does not list it"
+                    % (record.get("hostname"), record.get("state"))))
+            self.state["unlocated"].pop(name.lower(), None)
 
             # An unfinished copy left by an earlier pass that stopped. Removed
             # only once its size has not changed between two passes, so a copy
@@ -738,6 +805,34 @@ class RecordingSender:
         self._record_sent(path.name, st.st_size, "was already on the shared drive")
         return "already", where
 
+    def _preview_text(self, name: str, st) -> str:
+        """What a real pass would do with this file, from the same lookups
+        (named files and the index; sizes only -- a preview reads no content)."""
+        if self.nas_root is None:
+            return "ready: would be copied, verified, then deleted here"
+        found, gone = self._whereabouts(name)
+        same = []
+        for other in found:
+            try:
+                same.append((other, os.stat(str(other)).st_size == st.st_size))
+            except OSError:
+                continue
+        if any(not ok for _o, ok in same):
+            return "a file of this name but another size is on the shared drive: would be HELD"
+        if same:
+            return ("already on the shared drive with the same size (%s): the local copy "
+                    "would be deleted once a full content check agrees" % same[0][0])
+        if gone:
+            return ("the server's collage index lists it at %s, but it is not there now: would "
+                    "WAIT (neither sent nor deleted) until the next index shows where it is"
+                    % gone[0])
+        record = self._pipeline_record(name)
+        if record:
+            return ("the pipeline already has this recording (claimed by %s, %s) but it cannot "
+                    "be found by name: would WAIT (neither sent nor deleted)"
+                    % (record.get("hostname"), record.get("state")))
+        return "ready: would be copied, verified, then deleted here"
+
     # ---------------------------------------------------------------- one pass
     def run_pass(self, preview: bool = False) -> dict:
         """One look at the outbox; sends what may be sent unless ``preview``."""
@@ -763,8 +858,10 @@ class RecordingSender:
         recorder_on = bool(files) and (gate is None or preview) and self._recorder_running()
         newest = files[-1] if files else None
         deadline = self._clock() + s.pass_minutes * 60.0
-        index = None
         present = set()
+        # The server's collage index is read at most once per pass, and only
+        # when a file is ready to be looked up (one file; never a listing).
+        self._pass_index = None
 
         for path in files:
             name = path.name
@@ -812,21 +909,7 @@ class RecordingSender:
                 continue
             issue = verdict.get("reason") if verdict.get("outcome") == "issue" else None
             if preview:
-                if index is None and self.nas_root is not None:
-                    index = build_index(self.nas_root)
-                same = []
-                for other in (index or {}).get(name.lower(), []):
-                    try:
-                        same.append((other, other.stat().st_size == st.st_size))
-                    except OSError:
-                        continue
-                if any(not ok for _o, ok in same):
-                    text = "a file of this name but another size is on the shared drive: would be HELD"
-                elif same:
-                    text = ("already on the shared drive with the same size (%s): the local copy "
-                            "would be deleted once a full content check agrees" % same[0][0])
-                else:
-                    text = "ready: would be copied, verified, then deleted here"
+                text = self._preview_text(name, st)
                 if issue:
                     text += ("; it fails the recording check (%s), so the intake will set it "
                              "aside as a recording issue" % issue)
@@ -835,9 +918,7 @@ class RecordingSender:
             if self._clock() >= deadline or self._abort_reason():
                 report["waiting"].append({"name": name, "reason": "ready; sent on a later pass"})
                 continue
-            if index is None:
-                index = build_index(self.nas_root)
-            outcome, text = self._send_one(path, st, index)
+            outcome, text = self._send_one(path, st)
             if outcome in ("sent", "already"):
                 how = "copied and verified" if outcome == "sent" else "already on the shared drive"
                 if issue:
@@ -846,7 +927,6 @@ class RecordingSender:
                     self._log("recording_issue", name, reason=issue)
                 report["sent_this_pass"].append({"name": name, "bytes": st.st_size, "how": how})
                 report["on_this_pc"] -= 1
-                index.setdefault(name.lower(), []).append(self.intake / name)
             elif outcome == "held":
                 report["held"].append({"name": name, "reason": text})
             else:
@@ -859,10 +939,15 @@ class RecordingSender:
                     report["waiting"].append(entry)
 
         # Forget files that are no longer in the folder.
-        for k in ("seen", "failures", "conflicts", "probes"):
+        for k in ("seen", "failures", "conflicts", "probes", "unlocated"):
             for key in [x for x in self.state[k] if x not in present]:
                 self.state[k].pop(key, None)
         report["sent_recently"] = list(self.state["sent"][:10])
+        if self._pass_index is not None:
+            # How current the server's index was (status 'missing' or
+            # 'unreadable' is shown to a person: new files are still sent,
+            # but a file sent long ago is only found again through it).
+            report["collage_index"] = self._pass_index.describe()
         # Keep the status file small: a recording folder can hold years of
         # unnamed files. The counts stay exact; the lists are cut. A preview
         # is read by a person at the PC, so it keeps every name.
@@ -923,8 +1008,19 @@ def build_sender_from_config(should_stop: Callable[[], bool] = lambda: False) ->
         log_path = cfg.get_log_dir() / TRANSFER_LOG_NAME
     except Exception:
         log_path = None
+    coordinator = []
+
+    def claim_lookup(name):
+        # Built on first use, so a pass that finds every name never opens the
+        # shared database at all. One row per call.
+        if not coordinator:
+            from mousereach.watcher.coordination import PipelineCoordinator
+            coordinator.append(PipelineCoordinator())
+        return coordinator[0].get_collage_claim(name)
+
     return RecordingSender(settings, Paths.NAS_ROOT, state_path=state_path,
-                           transfer_log=log_path, should_stop=should_stop)
+                           transfer_log=log_path, should_stop=should_stop,
+                           claim_lookup=claim_lookup)
 
 
 def _print_report(report: dict) -> None:

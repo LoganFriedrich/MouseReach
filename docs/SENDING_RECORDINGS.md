@@ -1,6 +1,9 @@
 # Sending recordings from a recording PC to the pipeline
 
-Verified against: 0c36d0d (2026-11-18), with the change that added this page.
+Verified against: 0c36d0d (2026-11-18), with the change that added this page; the lookup on
+the shared drive (step 1 below, and "How the recording PC finds a recording on the shared
+drive") against the change that made the recording PC stop searching the shared drive
+(2026-11-18).
 
 This page is for the people who record and the person who looks after the
 recording PCs. You do not need to read any code to use it.
@@ -73,11 +76,13 @@ The watcher also sends nothing while it is paused by hand (Pause button or
 
 ## How a recording is sent safely
 
-1. The shared drive is searched for the name first: the intake, the
-   unsupported-tray, quarantine and recording-issue (`Processing/Review/_Problematic`)
-   folders, and every `Multi-Animal` folder under
-   `Analyzed` and `Archive`. A recording is not sent twice just because the
-   pipeline has already moved it on.
+1. The name is looked up on the shared drive first -- without searching it (see
+   "How the recording PC finds a recording on the shared drive" below): the intake
+   and the recording-issue folder (`Processing/Review/_Problematic`) by name, and
+   wherever the processing server's list of recordings says it is. A recording is
+   not sent twice just because the pipeline has already moved it on. A copy that
+   is found is opened and compared with the recording on this PC (size and
+   SHA-256 fingerprint) before anything is decided.
 2. The recording is copied to `<name>.partial` in the intake. Nothing in the
    pipeline picks up a `.partial` file. The copy runs at low disk priority.
 3. The copy is read back **from the shared drive** and its SHA-256 fingerprint
@@ -94,6 +99,47 @@ again; a copy that was finished but whose original was not yet deleted is
 recognized on the next pass (same name, same content), and only the original is
 deleted then.
 
+## How the recording PC finds a recording on the shared drive
+
+A recording that was sent may since have been moved on by the pipeline: cut and
+filed under `Analyzed`, put in `Quarantine`, set aside as a recording issue. To
+know whether a recording is already there, something has to know every place a
+recording can rest. **The recording PC never searches the shared drive's folders
+for that.** Searching hundreds of folders over the network on every pass makes a
+recording PC crawl whenever its network connection is slow, and the shared
+pipeline database, which is on the same drive, then waits behind it for every
+machine.
+
+Instead:
+
+* **The processing server writes the list.** Its watcher looks through every
+  place a recording can rest (the intake, `Unanalyzed/Unsupported_Tray_Type`,
+  `Processing/Quarantine`, `Processing/Review/_Problematic`, and every
+  `Multi-Animal` folder under `Analyzed` and `Archive`) at most every 10
+  minutes and writes what it found to one file on the shared drive,
+  `Processing/.collage_index.json` (name, place, size). To rewrite it at once,
+  on the processing server only, in the mousereach environment:
+  `python -m mousereach.watcher.collage_index`.
+* **The recording PC reads that one file**, and opens single files by their
+  name: in the intake, in the recording-issue folder, and at the place the list
+  gives.
+* **The list is only a pointer.** The recording PC deletes its own copy only
+  after opening the copy on the shared drive and finding the same size and the
+  same SHA-256 fingerprint. A list that is out of date can make a recording
+  wait; it can never make a recording be deleted wrongly.
+
+What happens in each case:
+
+| On the shared drive | What the recording PC does |
+|---|---|
+| Found by name, same content | Deletes its own copy (it was sent before). |
+| Found by name, different content | **Held, in red.** Nothing is overwritten or deleted. |
+| The list says it is somewhere, but it is not there now (moved since the list was written) | **Waits**: neither sent again nor deleted, until the next list (at most 10 minutes) shows where it went. |
+| Not found anywhere, but the pipeline's database already has a record of this recording | **Waits** the same way. It is never sent twice: a second copy would be cut twice. |
+| Still not found after a newer list | **Held, in red**: a person must find where it went. Nothing was sent or deleted. |
+| Not found, and unknown to the pipeline | Sent, verified, then deleted here (a new recording). |
+| The list is missing or cannot be read (for example the processing server's watcher is not running) | New recordings are still sent and verified as usual. The status shows the list as missing. |
+
 ## What red means, and what to do
 
 Held recordings appear in red in two places:
@@ -108,6 +154,7 @@ Held recordings appear in red in two places:
 | `the recording check could not run here (...)` | Ask whoever looks after MouseReach to install ffmpeg in the mousereach environment. |
 | `a different file of the same name is already on the shared drive` | Two different recordings carry one name. Look at both. The usual cause is a typing mistake in one of the names: correct the wrong one. Never delete either until you know which is which. |
 | `... (failed N times in a row)` | The copy keeps failing (shared drive unreachable, disk full ...). The rest of the reason says why. When the cause is fixed it goes by itself. |
+| `... still does not show it on the shared drive, so a person must find where it went` | This recording was sent before (the pipeline has a record of it), but it cannot be found on the shared drive now. Look for it there (`Analyzed`, `Processing/Quarantine`, `Processing/Review/_Problematic`). Once a copy with the same content is back where the list sees it, the recording PC deletes its own copy by itself. Never delete the copy on the recording PC by hand until the copy on the shared drive has been found. |
 | `the recording folder does not exist or cannot be read` | `watcher.recording_outbox` points at the wrong folder. Correct it. |
 | `neither ffprobe nor ffmpeg is installed` | Ask whoever looks after MouseReach to install ffmpeg in the mousereach environment. |
 
@@ -221,4 +268,9 @@ Changes to the recording days and hours apply at once.
   `recording_outbox_state.json` in this PC's processing folder. Deleting it is
   safe: the sender then waits 5 minutes before sending anything.
 * The latest pass: the `recording_outbox` part of this PC's status file,
-  `Processing/.node_status/<this PC>.json` on the shared drive.
+  `Processing/.node_status/<this PC>.json` on the shared drive. Its
+  `collage_index` part says how old the processing server's list was when the
+  pass read it (`status` is `ok`, `missing` or `unreadable`; `age_minutes`).
+* The processing server's list of where every recording rests:
+  `Processing/.collage_index.json` on the shared drive (written by the
+  processing server only).

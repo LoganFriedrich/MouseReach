@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from mousereach.watcher import recording_outbox as ro
+from mousereach.watcher import collage_index as ci
 from mousereach.watcher import recording_issue as ri
 from mousereach.watcher import node_status
 
@@ -87,6 +88,12 @@ def put(folder, name, data=CONTENT):
     p = Path(folder) / name
     p.write_bytes(data)
     return p
+
+
+def write_index(env):
+    """What the processing server does every 10 minutes."""
+    (env.nas / "Processing").mkdir(parents=True, exist_ok=True)
+    return ci.write(env.nas)
 
 
 def log_events(env):
@@ -326,12 +333,14 @@ def test_different_size_on_share_is_a_conflict_too(env):
 
 
 def test_already_sent_and_since_filed_is_not_sent_again(env):
-    """A collage leaves the intake once its videos are filed; finding it there
-    with the same content means it was sent: only the local copy goes."""
+    """A collage leaves the intake once its videos are filed; the server's
+    collage index says where, the PC opens that one file, and the same
+    content means it was sent: only the local copy goes."""
     p = put(env.outbox, NAMED)
     filed = env.nas / "Analyzed" / "ProjA" / "Group1" / "Multi-Animal"
     filed.mkdir(parents=True)
     put(filed, NAMED)
+    write_index(env)
     clock = Clock()
     rep = two_passes(make_sender(env, clock=clock), clock)
     assert not p.exists()
@@ -555,3 +564,286 @@ def test_sender_off_when_no_outbox(env):
     rep = ro.RecordingSender(ro.OutboxSettings(), env.nas).run_pass()
     assert "not set" in rep["not_sending"]
     assert ro.summary_line(rep) == "sending recordings: off"
+
+
+# ------------------------------------------- the shared drive is never walked from a PC
+
+def _populate_share(env):
+    """A share with every kind of resting place, several levels deep."""
+    for d in (env.nas / "Unanalyzed" / "Unsupported_Tray_Type" / "sub",
+              env.nas / "Processing" / "Quarantine" / "a" / "b",
+              env.nas / "Processing" / "Review" / "_Problematic",
+              env.nas / "Analyzed" / "ProjA" / "Group1" / "Multi-Animal",
+              env.nas / "Analyzed" / "ProjA" / "Group1" / "Single_Animal",
+              env.nas / "Archive" / "Old" / "Multi-Animal"):
+        d.mkdir(parents=True, exist_ok=True)
+    put(env.nas / "Analyzed" / "ProjA" / "Group1" / "Multi-Animal", NAMED2)
+    put(env.nas / "Processing" / "Quarantine" / "a" / "b", "x.mkv", b"q")
+
+
+@pytest.fixture
+def share_listings(env, monkeypatch):
+    """Every folder listing whose path is on the fake shared drive."""
+    import glob as globmod
+    calls = []
+    nas = os.path.normcase(os.path.abspath(str(env.nas)))
+
+    def on_share(p):
+        try:
+            q = os.path.normcase(os.path.abspath(os.fspath(p)))
+        except TypeError:
+            return False
+        return q == nas or q.startswith(nas + os.sep)
+
+    def wrap(label, fn, arg=lambda a, k: a[0] if a else k.get("path", ".")):
+        def inner(*a, **k):
+            if on_share(arg(a, k)):
+                calls.append((label, str(arg(a, k))))
+            return fn(*a, **k)
+        return inner
+
+    monkeypatch.setattr(os, "walk", wrap("os.walk", os.walk))
+    monkeypatch.setattr(os, "scandir", wrap("os.scandir", os.scandir))
+    monkeypatch.setattr(os, "listdir", wrap("os.listdir", os.listdir))
+    monkeypatch.setattr(globmod, "glob", wrap("glob.glob", globmod.glob))
+    monkeypatch.setattr(globmod, "iglob", wrap("glob.iglob", globmod.iglob))
+    for meth in ("iterdir", "glob", "rglob"):
+        monkeypatch.setattr(Path, meth, wrap("Path." + meth, getattr(Path, meth),
+                                             arg=lambda a, k: a[0]))
+    return calls
+
+
+def test_a_pass_never_lists_a_folder_on_the_shared_drive(env, share_listings):
+    """The defect this guards: every pass walked the share's folder trees
+    from the recording PC. Now a pass reads one index file and opens named
+    files only -- not one listing of any folder on the share."""
+    _populate_share(env)
+    share_listings.clear()
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert not p.exists() and (env.intake / NAMED).read_bytes() == CONTENT
+    assert rep["sent_this_pass"][0]["how"] == "copied and verified"
+    assert share_listings == [], share_listings
+
+
+def test_a_preview_never_lists_a_folder_on_the_shared_drive(env, share_listings):
+    _populate_share(env)
+    share_listings.clear()
+    put(env.outbox, NAMED)
+    put(env.outbox, NAMED2)
+    rep = make_sender(env).run_pass(preview=True)
+    assert len(rep["waiting"]) == 2
+    assert share_listings == [], share_listings
+
+
+def test_already_on_share_found_through_the_index_without_listing(env, share_listings):
+    _populate_share(env)
+    write_index(env)                              # the server's job, before the guard counts
+    share_listings.clear()
+    p = put(env.outbox, NAMED2)                   # filed under Analyzed/.../Multi-Animal
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert not p.exists(), "same name and SHA-256 at the listed path: local copy deleted"
+    assert not (env.intake / NAMED2).exists(), "never sent again"
+    assert rep["sent_this_pass"][0]["how"] == "already on the shared drive"
+    assert share_listings == [], share_listings
+
+
+# ---------------------------------------- the index is a pointer, never proof
+
+def test_index_listing_a_different_file_is_a_conflict_and_nothing_deleted(env):
+    filed = env.nas / "Analyzed" / "ProjA" / "Group1" / "Multi-Animal"
+    filed.mkdir(parents=True)
+    other = CONTENT[:-1] + b"X"
+    put(filed, NAMED, other)
+    write_index(env)
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert p.read_bytes() == CONTENT and (filed / NAMED).read_bytes() == other
+    assert not (env.intake / NAMED).exists()
+    assert [h["name"] for h in rep["held"]] == [NAMED]
+    assert "different file of the same name" in rep["held"][0]["reason"]
+
+
+def test_index_listing_a_path_that_is_gone_waits_neither_sent_nor_deleted(env):
+    """Moved since the index was built: the PC cannot confirm a copy (so it
+    keeps its file) and must not send it again (it would be cut twice)."""
+    filed = env.nas / "Analyzed" / "ProjA" / "Group1" / "Multi-Animal"
+    filed.mkdir(parents=True)
+    put(filed, NAMED)
+    write_index(env)
+    (filed / NAMED).unlink()
+    p = put(env.outbox, NAMED)
+    clock = Clock(t=ci.read(env.nas).built_at_epoch + 60)   # noticed after the index
+    rep = two_passes(make_sender(env, clock=clock), clock)
+    assert p.read_bytes() == CONTENT
+    assert not (env.intake / NAMED).exists()
+    assert rep["held"] == []
+    assert "not there now" in rep["waiting"][0]["reason"]
+    assert "nothing is sent or deleted" in rep["waiting"][0]["reason"]
+
+
+def test_still_not_found_after_a_newer_index_is_held_in_red(env):
+    p = put(env.outbox, NAMED)
+    (env.nas / "Processing").mkdir()
+    built = {"epoch": 0.0}
+
+    def reader(root):
+        return ci.Index({}, built["epoch"], "then", "ok")
+    clock = Clock(t=5000.0)
+    sender = make_sender(env, clock=clock)
+    sender._read_index = reader
+    sender._claim_lookup = lambda name: {"hostname": "nodeA", "state": "archived"}
+    built["epoch"] = 1000.0                       # older than the first notice
+    rep = two_passes(sender, clock)
+    assert "already has this recording" in rep["waiting"][0]["reason"]
+    built["epoch"] = clock() + 1                  # a newer index still does not list it
+    clock.advance(1)
+    rep = sender.run_pass()
+    assert [h["name"] for h in rep["held"]] == [NAMED]
+    assert "a person must find where it went" in rep["held"][0]["reason"]
+    assert p.read_bytes() == CONTENT and not (env.intake / NAMED).exists()
+
+
+def test_without_an_index_a_name_the_pipeline_knows_is_not_sent_again(env):
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    asked = []
+
+    def lookup(name):
+        asked.append(name)
+        return {"hostname": "nodeA", "state": "cropped"}
+    sender = make_sender(env, clock=clock)
+    sender._claim_lookup = lookup
+    rep = two_passes(sender, clock)
+    assert asked == [NAMED], "one row, one name"
+    assert p.exists() and not (env.intake / NAMED).exists()
+    assert "claimed by nodeA, cropped" in rep["waiting"][0]["reason"]
+    assert rep["collage_index"]["status"] == "missing"
+
+
+def test_without_an_index_a_new_file_is_still_sent_and_verified(env):
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    sender = make_sender(env, clock=clock)
+    sender._claim_lookup = lambda name: None
+    rep = two_passes(sender, clock)
+    assert not p.exists() and (env.intake / NAMED).read_bytes() == CONTENT
+    assert rep["sent_this_pass"][0]["how"] == "copied and verified"
+    assert rep["collage_index"]["status"] == "missing"
+    assert "sent" in log_events(env)
+
+
+def test_a_claim_lookup_that_fails_does_not_stop_a_new_send(env):
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    sender = make_sender(env, clock=clock)
+
+    def broken(name):
+        raise RuntimeError("database is locked")
+    sender._claim_lookup = broken
+    two_passes(sender, clock)
+    assert not p.exists() and (env.intake / NAMED).read_bytes() == CONTENT
+
+
+def test_a_name_found_by_name_never_asks_the_claim_table(env):
+    put(env.intake, NAMED)
+    p = put(env.outbox, NAMED)
+    clock = Clock()
+    sender = make_sender(env, clock=clock)
+    sender._claim_lookup = lambda name: pytest.fail("asked the shared table needlessly")
+    two_passes(sender, clock)
+    assert not p.exists()
+
+
+def test_index_is_read_once_per_pass(env):
+    put(env.outbox, NAMED)
+    put(env.outbox, NAMED2)
+    clock = Clock()
+    reads = []
+
+    def reader(root):
+        reads.append(root)
+        return ci.Index(None, None, None, "missing")
+    sender = make_sender(env, clock=clock)
+    sender._read_index = reader
+    sender.run_pass()
+    clock.advance(6)
+    reads.clear()
+    sender.run_pass()
+    assert len(reads) == 1
+
+
+# ------------------------------------------------------------ the server's index
+
+def test_index_lists_every_resting_place_with_relative_paths(env):
+    _populate_share(env)
+    put(env.intake, NAMED)
+    put(env.nas / "Analyzed" / "ProjA" / "Group1" / "Single_Animal", "single.mp4")
+    put(env.nas / "Processing" / "Review" / "_Problematic", "bad.mkv")
+    put(env.nas / "Unanalyzed" / "Unsupported_Tray_Type" / "sub", "u.mkv")
+    put(env.nas / "Archive" / "Old" / "Multi-Animal", "old.mkv")
+    write_index(env)
+    idx = ci.read(env.nas)
+    assert idx.status == "ok" and idx.usable
+    paths = {k: [r["path"] for r in v] for k, v in idx.entries.items()}
+    assert paths[NAMED.lower()] == ["Unanalyzed/Multi-Animal/" + NAMED]
+    assert paths[NAMED2.lower()] == ["Analyzed/ProjA/Group1/Multi-Animal/" + NAMED2]
+    assert paths["x.mkv"] == ["Processing/Quarantine/a/b/x.mkv"]
+    assert paths["bad.mkv"] == ["Processing/Review/_Problematic/bad.mkv"]
+    assert paths["u.mkv"] == ["Unanalyzed/Unsupported_Tray_Type/sub/u.mkv"]
+    assert paths["old.mkv"] == ["Archive/Old/Multi-Animal/old.mkv"]
+    assert "single.mp4" not in paths, "only collage resting places"
+    assert idx.entries[NAMED.lower()][0]["bytes"] == len(CONTENT)
+    assert idx.paths(env.nas, NAMED) == [env.intake / NAMED]
+
+
+def test_index_ignores_a_path_that_leaves_the_shared_root(env):
+    idx = ci.Index({"a.mkv": [{"path": "../elsewhere/a.mkv"}, {"path": "/abs/a.mkv"},
+                              {"path": "Unanalyzed/Multi-Animal/a.mkv"}]}, 1.0, "x", "ok")
+    assert idx.paths(env.nas, "A.MKV") == [env.nas / "Unanalyzed" / "Multi-Animal" / "a.mkv"]
+
+
+def test_index_missing_or_unreadable_is_reported_not_raised(env):
+    assert ci.read(env.nas).status == "missing"
+    (env.nas / "Processing").mkdir()
+    ci.index_path(env.nas).write_text("{not json")
+    idx = ci.read(env.nas)
+    assert idx.status == "unreadable" and not idx.usable
+    assert ci.read(None).status == "missing"
+
+
+def test_index_rebuilt_at_most_every_interval(env, monkeypatch):
+    t = {"now": 0.0}
+    writes = []
+    monkeypatch.setattr(ci, "write", lambda root: writes.append(root))
+    r = ci.Rebuilder(every_s=600, clock=lambda: t["now"])
+    assert r.maybe_write(env.nas) is True
+    t["now"] = 599
+    assert r.maybe_write(env.nas) is False
+    t["now"] = 601
+    assert r.maybe_write(env.nas) is True
+    assert r.maybe_write(None) is False
+    assert len(writes) == 2
+
+
+def test_rebuilder_never_raises(env):
+    r = ci.Rebuilder()
+    assert r.maybe_write(env.nas) is False        # no Processing folder: logged, not raised
+
+
+def test_problematic_folder_name_in_step_with_recording_issue():
+    assert ci._PROBLEMATIC == ri.FOLDER_NAME
+
+
+def test_only_the_processing_server_builds_the_index(env, monkeypatch):
+    """The scan step that writes the index runs only in processing_server mode."""
+    import inspect
+    from mousereach.watcher import orchestrator
+    src = inspect.getsource(orchestrator.ProcessingOrchestrator._scan_phase)
+    assert "collage_index" in src and '"processing_server"' in src
+    assert "collage_index" not in inspect.getsource(orchestrator.DLCOrchestrator)
+    assert "build_index" not in inspect.getsource(ro), "the PC-side walk is gone"
+    assert "os.walk" not in inspect.getsource(ro)

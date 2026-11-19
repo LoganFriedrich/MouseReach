@@ -2129,9 +2129,15 @@ class BaseOrchestrator:
                     log_path = config.get_log_dir() / ro.TRANSFER_LOG_NAME
                 except Exception:
                     log_path = None
+                # One row of the shared claim table, asked only for a name
+                # that cannot be found by name (recording_outbox._send_one).
+                def claim_lookup(name, _self=self):
+                    coordinator = getattr(_self, 'coordinator', None)
+                    return coordinator.get_collage_claim(name) if coordinator else None
                 sender = self._outbox_sender = ro.RecordingSender(
                     settings, Paths.NAS_ROOT, state_path=state_path,
-                    transfer_log=log_path, should_stop=self._stop_requested)
+                    transfer_log=log_path, should_stop=self._stop_requested,
+                    claim_lookup=claim_lookup)
             # Fresh settings every pass, so edited recording hours apply at once.
             sender.settings = settings
             report = sender.run_pass()
@@ -6995,6 +7001,19 @@ class ProcessingOrchestrator(BaseOrchestrator):
             logger.warning(f"Re-pose adoption scan failed (non-fatal): {e}")
         with cycle.step("scan/parked re-pose leftovers"):
             self._maybe_clear_finished_parked()
+        # Where every collage rests on the shared drive, written as ONE file the
+        # recording PCs read instead of walking the share themselves
+        # (watcher/collage_index.py says why). At most every 10 minutes, and
+        # only on the processing server: no other machine may walk the share.
+        if getattr(getattr(self, "config", None), "mode", None) == "processing_server":
+            with cycle.step("scan/collage index"):
+                try:
+                    from mousereach.watcher import collage_index
+                    if getattr(self, "_collage_index", None) is None:
+                        self._collage_index = collage_index.Rebuilder()
+                    self._collage_index.maybe_write(Paths.NAS_ROOT)
+                except Exception as e:
+                    logger.warning(f"Collage index not rewritten this cycle: {e}")
         # Filed videos that were never compared with their hand scores: compared
         # once their scores arrive, and listed for a person -- on its own
         # thread, only after the scores file changes (filed_hand_scores.py).

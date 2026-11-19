@@ -6277,7 +6277,9 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
   `pause_while_running` is running; a file under `recording_outbox_min_mb` (1), shorter than
   `recording_outbox_min_seconds` (10) or whose duration cannot be read (`probe_duration`: ffprobe,
   else ffmpeg from the PATH or imageio-ffmpeg). The last three are held.
-- **Already there?** Before copying, the name is looked up in every place a collage rests on the
+- **Already there?** (How the lookup is done changed the same day: see "Update 2026-11-18: the
+  recording PC never walks the shared drive" below. What counts as a resting place did not.)
+  Before copying, the name is looked up in every place a collage rests on the
   shared drive (`resting_places`: the intake, `Unanalyzed/Unsupported_Tray_Type` and
   `Processing/Quarantine` all the way down, every `Multi-Animal` folder up to four levels under
   `Analyzed` and `Archive`). Same size and SHA-256: only the local file is deleted. Different: held
@@ -7073,3 +7075,60 @@ recording -- and left each file's 'quarantined' row behind. It now follows one r
   the file is kept. A row in any other state belongs to a live video of the same name and is
   left alone. Only the row on the machine running the purge (and the shared rows) goes; a row on
   another node stays until a purge runs there.
+
+## Update 2026-11-18: the recording PC never walks the shared drive
+
+**Before:** every pass of the recording outbox, preview included, looked a name up by walking the
+shared drive from the recording PC (`recording_outbox.build_index` -> `resting_places`): `os.walk`
+all the way down `Unanalyzed/Unsupported_Tray_Type`, `Processing/Quarantine` and
+`Processing/Review/_Problematic`, and a four-level listing of `Analyzed` and `Archive` looking for
+`Multi-Animal` folders -- hundreds of network folder listings per pass. A long recursive walk of the
+share from a PC is what must never happen: when that PC's connection to the share degrades, each
+listing takes minutes, the watcher crawls, and `watcher_central.db` (on the same share) waits behind
+it for every machine. Rule: a graphics-card or recording PC never walks the shared drive.
+
+**Now** (`watcher/collage_index.py`, `watcher/recording_outbox.py`):
+
+* **The processing server writes one file.** `ProcessingOrchestrator._scan_phase`, step
+  `scan/collage index`, only when `watcher.mode` is `processing_server`, at most every 10 minutes
+  (`collage_index.Rebuilder`, `REBUILD_EVERY_S`): `resting_places` (moved here unchanged) is walked
+  and every file directly in each resting place is written to
+  `<nas_root>/Processing/.collage_index.json` -- `{format, built_at, built_at_epoch, built_by,
+  seconds_to_build, entries: {lower-case name: [{path: relative to nas_root with forward slashes,
+  bytes}]}}` -- through `write_json_atomic` (a reader sees the old file or the new one).
+  `built_at` is the time the walk STARTED. A failure is a WARNING and the previous file stays. By
+  hand: `python -m mousereach.watcher.collage_index`.
+* **The recording PC reads that one file once per pass** (`collage_index.read`, never raises; status
+  `ok`, `missing` or `unreadable`, reported as `recording_outbox.collage_index` in the node status)
+  and stats single named paths (`_named_file_exists`, `RecordingSender._whereabouts`):
+  `<intake>/<name>`, `Processing/Review/_Problematic/<name>` (`set_aside` puts a recording there
+  flat, by name), and every path the index lists for the name (a listed path with a drive, a leading
+  slash or `..` is ignored). No folder on the share is listed.
+* **The index is a pointer, never proof.** The found files go to `_match_existing` unchanged: the
+  same size and SHA-256 (the copy on the share opened by name and read in full) -> only the local
+  copy is deleted; different -> held as a conflict.
+* **Sent before, moved since: wait, never resend, never delete** (`_unlocated`). (a) The index lists
+  a path that is not there now, or (b) nothing is found and the shared claim table already has a row
+  for the name (`claim_lookup` -> `PipelineCoordinator.get_collage_claim`: ONE row, asked only when
+  nothing was found by name; the watcher uses its orchestrator's coordinator,
+  `mousereach-send-recordings` builds one on first use). The file waits; once an index built after
+  it was first noticed (`state.unlocated`) still does not show it, it is held in red for a person.
+  WHY not send: a second copy of a collage that was already cut would be cut again. WHY not delete:
+  nothing confirmed a copy.
+* **Index missing or unreadable, or the claim lookup failing:** a name found nowhere and unknown to
+  the claim table is sent as before (copy to `.partial`, read back from the share, SHA-256 compared,
+  rename without overwrite, THEN the local delete). The cutting step's claim
+  (`try_claim_collage`) still refuses a collage another machine has cut.
+* **Why not the coordination database alone:** `pipeline_collages` has a row only once a machine has
+  claimed a collage for cutting, and holds no path and no hash; where a filed collage went is kept
+  only in the filing machine's local database. It can say "known", not "here, with this content".
+* **Unchanged:** a local original is deleted only after the copy on the share is verified by
+  SHA-256 read back from the share; same name with different content is held, never overwritten;
+  nothing is sent inside `recording_days`/`recording_hours`.
+
+Tests: `tests/test_recording_outbox.py`. `test_a_pass_never_lists_a_folder_on_the_shared_drive`
+and `test_a_preview_never_lists_a_folder_on_the_shared_drive` patch `os.walk`, `os.scandir`,
+`os.listdir`, `glob.glob`/`iglob` and `Path.iterdir`/`glob`/`rglob` and count every call on the fake
+share; the index, the pointer-not-proof rules, the wait and held rules, the missing-index send and
+the server-only build each have their own test. Nine of them fail on ac01d37's
+`recording_outbox.py`.
