@@ -203,23 +203,20 @@ Examples:
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Reaches', index=False)
 
-            # Add session-level aggregation
-            session_cols = ['session_id', 'mouse_id', 'date', 'timepoint']
-            session_cols = [c for c in session_cols if c in df.columns]
-            if session_cols:
-                session_df = df.groupby(session_cols).agg({
-                    'reach_id': 'count',
-                    'outcome': lambda x: (x == 'retrieved').sum() / len(x) if len(x) > 0 else 0
-                }).rename(columns={'reach_id': 'n_reaches', 'outcome': 'retrieval_rate'}).reset_index()
-                session_df.to_excel(writer, sheet_name='Sessions', index=False)
-
-            # Add mouse-level aggregation
-            if 'mouse_id' in df.columns:
-                mouse_df = df.groupby('mouse_id').agg({
-                    'reach_id': 'count',
-                    'session_id': 'nunique'
-                }).rename(columns={'reach_id': 'n_reaches', 'session_id': 'n_sessions'}).reset_index()
-                mouse_df.to_excel(writer, sheet_name='Mice', index=False)
+            # Session- and mouse-level sheets, counted from PELLETS by the one
+            # results builder (export/results.py). WHY: these sheets used to be
+            # grouped from the reach rows, so "retrieval_rate" was the share
+            # of reaches whose pellet was retrieved (not retrieved / pellets
+            # presented) and a pellet nobody reached for dropped out of every
+            # count. Read from the same features files as the Reaches sheet.
+            from mousereach.export.resolved import load_resolved_videos
+            from mousereach.export.results import build_rows
+            videos, _left = load_resolved_videos(Path(data_dir))
+            if videos:
+                pd.DataFrame(build_rows(videos, "session")).to_excel(
+                    writer, sheet_name='Sessions', index=False)
+                pd.DataFrame(build_rows(videos, "animal")).to_excel(
+                    writer, sheet_name='Mice', index=False)
     else:
         # Default to CSV
         df.to_csv(output_path.with_suffix('.csv'), index=False)

@@ -76,13 +76,19 @@ def test_a_video_without_features_is_left_out_and_named(folder):
     assert any(VID in line for line in r["metadata"]["left_out"])
 
 
-def test_the_quick_summary_counts_the_persons_outcome(folder, monkeypatch):
+def test_the_quick_summary_counts_the_persons_outcome(folder, monkeypatch, tmp_path):
+    """Since 2026-11-19 the quick summary is the session level of the FILED
+    results (export/results.py): it reads the filed tree, not Processing."""
     from mousereach.export import quick_summary
-    monkeypatch.setattr(sys, "argv", ["mousereach-quick-summary"])
-    quick_summary.main()
-    with open(folder.parent / "summary_for_PI.csv", newline="") as f:
-        row = next(csv.DictReader(f))
-    assert (row["retrieved"], row["untouched"]) == ("1", "0")
+    filed = tmp_path / "Analyzed" / "PRJ" / "PRJ_09"
+    filed.mkdir(parents=True)
+    (folder / f"{VID}_features.json").replace(filed / f"{VID}_features.json")
+    monkeypatch.setattr(Paths, "ANALYZED_OUTPUT", tmp_path / "Analyzed")
+    monkeypatch.setattr(Paths, "NAS_ROOT", tmp_path)
+    assert quick_summary.main([]) == 0
+    out = list((tmp_path / "Exports").glob("MouseReach_results_session_*.csv"))
+    row = next(csv.DictReader(open(out[0], newline="")))
+    assert (row["session_retrieved"], row["session_untouched"]) == ("1", "0")
 
 
 def test_the_aspa_sync_rows_are_the_resolved_reaches(folder):

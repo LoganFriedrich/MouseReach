@@ -479,14 +479,20 @@ Contains per-reach:
 
 ### Process
 
-**Export to Excel:**
+**The filed results (the usual case):** filing moves each finished video into
+`Analyzed/<project>/<cohort>/`, so Processing is empty for it afterwards. Export
+the filed results with the **Export results** tab, or:
 ```bash
-mousereach-export -i Processing/ -o results.xlsx
+mousereach-results --level session                # one row per tray
+mousereach-results --level reach --format xlsx    # one row per reach
 ```
+Levels: reach, pellet, session, day, animal. Columns and counting rules:
+`docs/RESULTS_EXPORT.md`.
 
-**Export to CSV:**
+**One folder you name** (e.g. a copy of some videos' files):
 ```bash
-mousereach-export -i Processing/ -o csv_folder/ --format csv
+mousereach-export -i <folder> -o results.xlsx
+mousereach-export -i <folder> -o csv_folder/ --format csv
 ```
 
 ### Output
@@ -564,8 +570,8 @@ mousereach-detect-outcomes -i Processing/
 # 6. Extract kinematic features
 mousereach-grasp-analyze -i Processing/
 
-# 7. Export
-mousereach-export -i Processing/ -o results.xlsx
+# 7. Export (the filed results; see docs/RESULTS_EXPORT.md)
+mousereach-results --level session
 ```
 
 ---

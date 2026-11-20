@@ -48,7 +48,7 @@ walkthroughs of the review tools themselves.
 - [Archive - File by hand a video the watcher has passed](#archive-file-by-hand-a-video-the-watcher-has-passed) -- `mousereach-archive`
 - [Migration - One-time migration from old multi-folder to v2.3+ single-folder architecture](#migration-one-time-migration-from-old-multi-folder-to-v2-3-single-folder-architecture) -- `mousereach-migrate`
 - [Algorithm Evaluation](#algorithm-evaluation) -- `mousereach-eval`, `mousereach-eval-direct`, `mousereach-update-algo-ref`, `mousereach-algo-vs-human`
-- [Export Utilities](#export-utilities) -- `mousereach-quick-summary`, `mousereach-features-csv`
+- [Export Utilities](#export-utilities) -- `mousereach-results`, `mousereach-quick-summary`, `mousereach-features-csv`
 - [Kinematic Analysis Utilities](#kinematic-analysis-utilities) -- `mousereach-reach-export`, `mousereach-real-kinematics`
 - [Performance Tracking](#performance-tracking) -- `mousereach-perf`, `mousereach-perf-eval`, `mousereach-perf-report`
 - [Algorithm Documentation](#algorithm-documentation) -- `mousereach-docs`
@@ -1538,16 +1538,44 @@ options:
 
 ## Export Utilities
 
+### `mousereach-results`
+
+```
+usage: mousereach-results [-h] [--level LEVEL] [--root ROOT] [--out OUT]
+                          [--format {csv,xlsx}]
+
+Export the FILED results (every video's features file under Analyzed) at one
+level: reach, pellet (= segment), session (= tray = video), day (one animal on
+one date) or animal. Session, day and animal are counted from pellets: success
+rate = retrieved / pellets presented, and a pellet with no reach still counts.
+Needs nothing but MouseReach: no watcher, no hand-score sheet, no database.
+Column meanings: docs/RESULTS_EXPORT.md (and the 'columns' sheet of an xlsx
+file).
+
+options:
+  -h, --help           show this help message and exit
+  --level LEVEL        reach | pellet (or segment) | session | day | animal
+                       (default session)
+  --root ROOT          the filed-results folder (default: Analyzed in the
+                       pipeline folder)
+  --out OUT            file to write (default: <pipeline folder>/Exports/Mouse
+                       Reach_results_<level>_<time>.<format>)
+  --format {csv,xlsx}  csv (default) or xlsx
+```
+
 ### `mousereach-quick-summary`
 
 ```
 usage: mousereach-quick-summary [-h]
 
-Quick summary for PI - run this to generate a CSV and stats.
+Quick summary: the filed results per session, plus overall totals.
 
-Reads each video's _features.json in the local Processing folder: the result
-with every person's answer applied. A video without a features file (its
-kinematics have not run, or were held) is left out and named.
+Redirected 2026-11-19 to ``mousereach-results --level session``
+(export/results.py). WHY: this command read only the local Processing folder,
+which filing empties, so after filing it found nothing; and it counted a
+session's success rate over every segment, a segment with no pellet
+included. It now writes the session-level export of the FILED results
+(retrieved / pellets presented) and prints the overall totals from it.
 
 options:
   -h, --help  show this help message and exit
@@ -1558,7 +1586,8 @@ options:
 ```
 usage: mousereach-features-csv [-h]
 
-Convert grasp_features.json files to CSV for easy viewing
+Retired: runs 'mousereach-results --level reach' (the filed results, one row
+per reach). Extra options are passed on.
 
 options:
   -h, --help  show this help message and exit
