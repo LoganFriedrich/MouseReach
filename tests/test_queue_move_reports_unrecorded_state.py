@@ -46,6 +46,7 @@ def setup(tmp_path, monkeypatch):
         _status_label=SimpleNamespace(setText=lambda text: None),
         _load_next_video=lambda: None,
         _watcher_db_for_move=lambda: (wrong_db, ""),
+        _release_video_file=lambda: None,
     )
     return w, deep, infos
 

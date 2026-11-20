@@ -1688,6 +1688,59 @@ def _held_in_this_queue(bundle: Path, stem: str, db) -> Tuple[bool, str]:
     return True, ""
 
 
+def _catch_up_route_from_triage(bundle: Path, stem: str, db) -> bool:
+    """Record 'deep_review' for a video whose route from the triage queue into
+    the deep-review queue moved the folder but could not record the state.
+    Returns True when the row was brought in line. Never raises.
+
+    Only when ALL hold: the watcher row says 'triage'; ``bundle`` is a live
+    deep-review bundle (the caller skips a leftover kept for a person); its
+    routing record says it was routed FROM the video's own triage folder with
+    db_state 'deep_review'. Then the row is simply behind: deep review
+    supersedes triage, and a route into triage is refused while this bundle
+    exists, so 'triage' cannot be the video's real place.
+
+    WHY: a review window moves a video out of triage (Escalate, and Flag
+    Session before 2026-11-19) through the reviewer's own login. A login
+    whose settings name no watcher database cannot write the row
+    (db_location.open_watcher_db_if_present), so the folder moved and the row
+    stayed 'triage'. When the window still had the mp4 open, the mp4 failed
+    to move (WinError 32) and stayed in the triage folder. The scan's repair
+    then refused to move it in -- "the watcher record says the video is
+    'triage', not held in this queue" (_held_in_this_queue) -- and the triage
+    copy could not be emptied while the bundle lacked a file, so the video
+    stayed in both queues for good (2026-11-19, three videos). The refusal
+    exists to protect a run in Processing; a source in the video's own triage
+    folder is never a running copy."""
+    if db is None:
+        return False
+    try:
+        row = db.get_video(stem)
+        if not row or row.get("state") != "triage":
+            return False
+        triage = getattr(Paths, "TRIAGE_REVIEW", None)
+        if not triage:
+            return False
+        from .review_routing import read_routing_manifest
+        record = read_routing_manifest(bundle, stem) or {}
+        if record.get("db_state") != "deep_review":
+            return False
+        source = record.get("source_dir")
+        if not source or not _same_path(source, Path(triage) / stem):
+            return False
+        from .resume_point import QUEUE_STEP
+        db.update_state(stem, "deep_review",
+                        held_at_step=QUEUE_STEP["deep_review"], resume_stage=None)
+        logger.warning("Return scan: %s is in deep review (%s) but its watcher record "
+                       "still said 'triage' (the route from triage could not record "
+                       "it); recorded 'deep_review'", stem, bundle)
+        return True
+    except Exception as e:
+        logger.warning("Return scan: %s: could not bring its watcher record in line "
+                       "with its deep-review bundle: %s", stem, e)
+        return False
+
+
 def _finish_failed_moves(bundle: Path, stem: str, db=None):
     """Finish what the routing record of ``bundle`` lists as failed_files.
     Returns ``(still_missing, moved_count)``: the entries this machine lists
@@ -1947,6 +2000,8 @@ def repair_unfinished_routes(force: bool = False, db=None,
                 continue            # a leftover kept for a person, not a bundle
             try:
                 failed, finished_later = _record_flags(bundle, stem, signature)
+                if queue_root == getattr(Paths, "DEEP_REVIEW", None):
+                    _catch_up_route_from_triage(bundle, stem, db)
                 if failed:
                     still, n_moved = _finish_failed_moves(bundle, stem, db=db)
                     out["route_files_finished"] += n_moved

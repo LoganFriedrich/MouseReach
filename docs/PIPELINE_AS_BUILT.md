@@ -3823,7 +3823,12 @@ below).
   With a failed file the triage folder is kept untouched and listed (`queue_folder_in_the_way`);
   `repair_unfinished_routes` empties it as above on every pass once the deep-review bundle's route
   is whole (its record has `finished_later` and no `failed_files` left), whoever moved the missing
-  file in. Escalate and the return scan's mislabel divert are not this path: they route the
+  file in. A route from the video's own triage folder whose state was never written (a review
+  window in a login whose settings name no watcher database: the row stays `triage`) is caught up
+  first: `review_return._catch_up_route_from_triage` records `deep_review` when the routing record
+  says `db_state: deep_review` and `source_dir` is `<triage>/<stem>`, so `_finish_failed_moves`
+  (which acts only while the row says the video is held in the bundle's queue) can move the
+  left-behind file in (2026-11-19; before, such a video stayed in both queues). Escalate and the return scan's mislabel divert are not this path: they route the
   triage bundle itself, and its review and ground truth travel with it into deep review; once a
   person saves new cuts there, no answer in that review given before the save counts, on any
   pellet (REVIEW_TOOLS.md, "A re-cut voids the answers given before it").

@@ -444,3 +444,55 @@ def test_a_routing_record_is_read_only_when_it_changed(env, monkeypatch):
     changed.write_text('{"failed_files": [], "x": 1}', encoding="utf-8")
     rr.repair_unfinished_routes(force=True, db=db)
     assert reads[5:] == ["20990101_ABC9902_P1"]
+
+
+def test_a_route_from_triage_the_row_never_recorded_is_finished(env, monkeypatch):
+    """A review window in a login that names no watcher database moves a video
+    from triage into deep review: the folder moves, the row stays 'triage',
+    and the mp4 (open in the window) stays in the triage folder. The scan
+    must bring the row in line, move the mp4 in and empty the triage folder;
+    the person's review, which moved with the bundle, is kept. Before, the
+    repair refused ('not held in this queue') and the video sat in both
+    queues for good."""
+    tmp_path, triage, db = env
+    deep = Paths.DEEP_REVIEW
+    db.update_state(VID, "triage")
+    copy = triage / VID
+    _source(copy)
+    (copy / f"{VID}_causal_review.json").write_text('{"answers": [1]}', encoding="utf-8")
+    lock = _lock(monkeypatch, f"{VID}.mp4")
+    rg.route_to_queue(VID, copy, deep, "reviewer escalated from triage", db=None,
+                      db_state="deep_review")
+    bundle = deep / VID
+    assert (copy / f"{VID}.mp4").is_file() and not (bundle / f"{VID}.mp4").exists()
+    assert db.get_video(VID)["state"] == "triage"
+
+    # Still held open: the row is brought in line, the file stays listed.
+    rr.repair_unfinished_routes(force=True, db=db)
+    assert db.get_video(VID)["state"] == "deep_review"
+    assert (copy / f"{VID}.mp4").is_file()
+    assert [i["video_id"] for i in _listed(tmp_path)] == [VID]
+
+    # Released: moved in, triage folder gone, the review kept in the bundle.
+    lock["on"] = False
+    out = rr.repair_unfinished_routes(force=True, db=db)
+    assert out["route_files_finished"] == 1
+    assert (bundle / f"{VID}.mp4").read_text(encoding="utf-8") == f"{VID}.mp4"
+    assert not copy.exists()
+    assert json.loads((bundle / f"{VID}_causal_review.json").read_text(
+        encoding="utf-8")) == {"answers": [1]}
+    assert _listed(tmp_path) == []
+
+
+def test_a_row_is_not_relabelled_for_a_route_from_processing(env, monkeypatch):
+    """Only a route FROM the video's own triage folder is caught up: a deep-
+    review bundle routed from Processing whose row says 'triage' is a case
+    for a person, and the row is left alone."""
+    tmp_path, triage, db = env
+    proc = tmp_path / "Processing"
+    _source(proc)
+    rg.route_to_queue(VID, proc, Paths.DEEP_REVIEW, "segmentation_failed: x",
+                      db=None, db_state="deep_review")
+    db.update_state(VID, "triage")
+    assert rr._catch_up_route_from_triage(Paths.DEEP_REVIEW / VID, VID, db) is False
+    assert db.get_video(VID)["state"] == "triage"
