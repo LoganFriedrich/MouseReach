@@ -77,7 +77,7 @@ def _snapshot(folder: Path):
     return {p.name: p.read_bytes() for p in sorted(folder.iterdir()) if p.is_file()}
 
 
-def _save(folder: Path):
+def _save(folder: Path, reviewed=None):
     from mousereach.segmentation.review_widget import BoundaryReviewWidget
     w = MagicMock()
     w.video_path = folder / f"{STEM}.mp4"
@@ -85,6 +85,8 @@ def _save(folder: Path):
     w._original_boundaries = list(OLD)
     w.fps = 60.0
     w._algorithm_version = "9.9.9"
+    # Every cut accepted or set on the screen (its boundaries_reviewed list).
+    w.boundaries_reviewed = list(reviewed) if reviewed is not None else [True] * len(NEW)
     w.saved = BoundaryReviewWidget._save_validated(w)
     return w
 
@@ -207,3 +209,21 @@ def test_a_folder_that_left_while_open_is_not_recreated(tmp_path):
     w = _save(folder)
     assert not folder.exists()
     assert "NOT saved" in _status(w)
+
+
+def test_a_deep_review_bundle_with_cuts_not_all_accepted_is_not_released(tmp_path):
+    """Owner decision MRR-08d (2026-11-19): a video leaves re-segmentation only
+    when every cut was explicitly accepted or set -- on this screen, the
+    boundaries it marks reviewed."""
+    from mousereach.review.resegmented import resegmented_since_entry
+    folder = _video_folder(tmp_path / "share" / "Processing" / "Review"
+                           / "deep_review" / STEM)
+    (folder / f"{STEM}_routing.json").write_text(json.dumps(
+        {"routed_at": "2000-01-01T09:00:00",
+         "routed_reason": "segmentation: cuts wrong"}), encoding="utf-8")
+    w = _save(folder, reviewed=[True] + [False] * (len(NEW) - 1))
+    assert w.saved is True
+    ok, why = resegmented_since_entry(folder, STEM)
+    assert not ok and "accepted or moved" in why
+    assert not (folder / f"{STEM}_deep_review_cleared.json").exists()
+    assert "NOT released" in _status(w)

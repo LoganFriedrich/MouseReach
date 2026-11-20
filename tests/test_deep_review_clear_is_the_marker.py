@@ -97,7 +97,9 @@ def test_marker_and_fixer_cuts_release_it(tmp_path, monkeypatch):
     b = _bundle(deep)
     (b / f"{PILLAR}_segments.json").write_text(json.dumps(
         {"boundaries": [100, 210, 300], "boundary_source": "human",
-         "corrected_at": AFTER}), encoding="utf-8")
+         "corrected_at": AFTER,
+         "boundary_calls": [{"frame": f, "action": "accepted"} for f in (100, 210, 300)]}),
+        encoding="utf-8")
     (b / f"{PILLAR}_deep_review_cleared.json").write_text("{}", encoding="utf-8")
     assert _scan(tmp_path, monkeypatch, deep) == [PILLAR]
 
@@ -199,6 +201,8 @@ def test_recut_for_another_reason_with_ground_truth_still_has_clear(tmp_path, ce
     b = _bundle(tmp_path, reason="qc_needs_review", certified=certified)
     (b / f"{PILLAR}_segments.json").write_text(json.dumps(
         {"boundaries": [100, 200, 300], "boundary_source": "human",
-         "corrected_at": AFTER}), encoding="utf-8")
+         "corrected_at": AFTER,
+         "boundary_calls": [{"frame": f, "action": "accepted"} for f in (100, 200, 300)]}),
+        encoding="utf-8")
     assert not _fixer_lists(b)
     assert _window_lists(b)

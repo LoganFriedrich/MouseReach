@@ -890,6 +890,13 @@ reasons, and each has its tool:
   cut with the manual controls below the questions. Press *Confirm -> next
   boundary* each time; press *Save these cuts* when the video is done.
   Saving marks the cuts as human-made -- the pipeline will keep them.
+  **Every boundary must be answered before saving** (since 2026-11-19): *Save
+  these cuts* refuses, names the frames still unanswered and takes you to the
+  first one, until every boundary has been accepted (Confirm), moved, removed,
+  or added by you. A video that cannot leave the queue because an earlier save
+  left boundaries unanswered is listed again, with the line "N of M boundaries
+  were saved without being explicitly accepted or moved"; the answers already
+  given are kept and the walk starts at the first boundary left.
 - **Something else is wrong with the whole video** (escalated for a reason
   that is not boundaries, or you need to re-judge every segment's outcome).
   Press **Open Re-segmentation Review**. It walks every segment of the video asking the
@@ -1048,19 +1055,47 @@ Per boundary:
   click: the two segments it separated merge, and every later segment
   renumbers automatically.
 
-Corrections apply to the cuts immediately; the per-boundary answers are saved
-into the segments file as `guided_walk` records ({boundary_num, algo_frame,
-confirmed, corrected_frame?/removed?}). Below the walk, the full candidate
-table and manual add/drop-cut controls remain -- adding a MISSED boundary
-happens there ("Add a cut at the current frame"), and the walk picks it up
-immediately. The DLC tracking points are drawn on the video, and video
+Corrections apply to the cuts immediately. Each answer is kept under the
+cut's FRAME -- its frame after a move -- never under its position in the list
+(which shifts when a cut moves past another, is removed or is added; the
+older `guided_walk` record was keyed by position, so a later answer could
+overwrite an earlier one). After each answer the walk goes to the next
+boundary nobody has answered. Below the walk, the full candidate table and
+manual add/drop-cut controls remain -- adding a MISSED boundary happens there
+("Add a cut at the current frame"), and a cut added by hand counts as
+answered; dropping a cut records its removal. *Back to the algorithm's cuts*
+clears every answer.
+
+**Every boundary is a person's call (owner decision 2026-11-19).** "Force a
+human to at least look at every single boundary ... can't save and can't send
+the video out of resegmentation until they have explicitly accepted that a
+boundary is already correctly placed or have corrected it." So:
+- *Save these cuts* refuses while any cut has no answer (nothing is written).
+- The saved file carries `boundary_calls`: one entry per cut,
+  `{frame, action: accepted|moved|added|removed, shown_frame, by, at}`
+  (`hand_cuts.BOUNDARY_CALLS_KEY`).
+- A video leaves re-segmentation only when every cut in its segments file is
+  such a call (`resegmented_since_entry` and `release_after_hand_cuts`): the
+  return scan, Clear, *Release finished videos* and the fixer's own release
+  all ask it. A save made before this rule with boundaries left unwalked (read
+  from what survived of its `guided_walk`) keeps the video in the queue until
+  a person walks the rest; the "Step 2b - Review Boundaries" screen records
+  the boundaries it marks reviewed the same way, and a save there with
+  unreviewed boundaries does not release a queued video.
+- The answers already on file are kept (`resegmented.carried_calls`) when
+  they were saved on this visit, or when the video was sent back with the
+  reason `segmentation: boundaries not all explicitly accepted/corrected`
+  (`hand_cuts.RECUT_REMAINING_REASON`): only the remaining boundaries are
+  walked. A video sent back for any other reason starts a fresh walk -- its
+  earlier cuts were found wrong. The DLC tracking points are drawn on the video, and video
 navigation (play/reverse/speeds, frame steps, go-to-frame, and the causal
 review tool's exact keyboard scheme) is identical to the other review tools.
 
 Saving copies the original aside, then rewrites `{stem}_segments.json` with
 `boundaries`, `algo_boundaries` (what the algorithm had), `boundary_source:
 "human"`, `corrected_by`/`corrected_at`, `needs_human` emptied, and
-`guided_walk` (`_save`).
+`boundary_calls` (`_save`; an older `guided_walk` record is dropped from the
+new file and kept in the archived copy).
 
 Two things it does not do:
 
@@ -1739,7 +1774,7 @@ Because the queues are shared storage scanned by every watcher node, every mutat
 - **Triage**: the bundle leaves when it has triaged elements, all of them are resolved, and segmentation has not failed (`:247`). "Resolved" means a saved review answered the segment **or ground truth determined it** — `triage_status` folds in `gt_resolved_segments` since 2026-08-28, and treats a fully certified video as resolved outright. "Fully certified" is worked out each time it is read: reaches and outcomes both marked exhaustive in the ground-truth tool **and** every pellet's outcome determined by a person. Marking the lists exhaustive while some outcome is still undetermined does not certify the video (the ground-truth tool says so when you mark it), and a stored `completion_status` is ignored. A segment only a few frames long that the segmenter left between two pellets (too short for any pellet to be presented in, see `MIN_REAL_SEGMENT_FRAMES`) is not counted: no outcome can be recorded for it, so it never stands in the way of a video whose real pellets are all determined.
 
   Before that fix the release side was narrower than the admission side. `evaluate_gate` had always subtracted GT-determined segments, but `triage_status.resolved_segments` read the causal-review document alone, so a bundle whose questions GT had answered could never satisfy `fully_resolved`. The review tool skipped the same bundle because `has_gt()` said there was nothing to ask. Nobody asked and nobody released, so such bundles stayed stuck there.
-- **Deep review**: the bundle leaves only when a person has cleared it -- its clear marker `{stem}_deep_review_cleared.json` exists (`_deep_review_cleared`, `review_return.py`, the same test the review gate makes) -- and, for a Pillar tray, a person has also saved its cuts in the Segmentation Fixer after the video arrived in the queue (`resegmented_since_entry`, `review/resegmented.py`). Until both are true the video stays, and the scan logs once why ("is cleared but not re-segmented: ..."). Easy and Flat trays are never segmented, so for them the marker alone releases the bundle. **Ground truth does not release a deep-review bundle**, and saved ground-truth boundaries are not proof of new cuts: nothing copies ground-truth boundaries into the segments file, so a video released on ground truth alone would be cut again exactly as before and sent straight back. To release a video, set or confirm its cuts in the Segmentation Fixer, save, then press Clear. (Older versions also released a bundle when any ground-truth file sat in it, even an empty progress save.)
+- **Deep review**: the bundle leaves only when a person has cleared it -- its clear marker `{stem}_deep_review_cleared.json` exists (`_deep_review_cleared`, `review_return.py`, the same test the review gate makes) -- and, for a Pillar tray, a person has also saved its cuts in the Segmentation Fixer after the video arrived in the queue, with every boundary explicitly accepted or moved (since 2026-11-19; `resegmented_since_entry`, `review/resegmented.py`). Until both are true the video stays, and the scan logs once why ("is cleared but not re-segmented: ..."). Easy and Flat trays are never segmented, so for them the marker alone releases the bundle. **Ground truth does not release a deep-review bundle**, and saved ground-truth boundaries are not proof of new cuts: nothing copies ground-truth boundaries into the segments file, so a video released on ground truth alone would be cut again exactly as before and sent straight back. To release a video, set or confirm its cuts in the Segmentation Fixer, save, then press Clear. (Older versions also released a bundle when any ground-truth file sat in it, even an empty progress save.)
 - **Deep review, held by the quality check alone (since 2026-10-22)**: a bundle whose routing reason is `qc_needs_review` and that holds no file a person wrote (a review, a clear marker, ground truth) has the quality check re-run on it. The pose-tracking layer is not re-run -- its stored flags are carried over, so a hold it made stays (except a ruler-variation hold: since 2026-10-23 the check only records a ruler that varies within a video, so those holds are released) -- and the file-based layers are. If nothing critical remains, the bundle leaves for a fresh run: its mp4 and pose files go back to the posed folder (`Processing/Posed`), the video's state becomes `dlc_complete`, and then its other files are cleared as a leftover with the posed folder as the current copy (machine results, records and copies of the posed files deleted; for an Easy or Flat tray, which is released even with a person's file in it, that file stays in the bundle folder with a note, listed -- nothing goes to an archive folder), so intake takes it in its priority turn (Easy and Flat only when nothing else waits). It is not sent straight to `processing`: anything there blocks intake of new work. Nothing in the posed folder is replaced. The posed folder usually still holds the video's files (intake leaves them there until the video is archived); the same file there -- same size and modified time (the quick check rsync and robocopy use; every copy in the chain keeps the time), or the same SHA-256 when the times differ -- is kept as the one copy and the bundle's duplicate is removed, while a copy that differs leaves the bundle for a person. If a move fails, every move is undone and the bundle stays. Re-checks take at most 30 seconds of each scan, and a bundle is re-checked once until its files change (`_qc_hold_lifted`, `_release_to_posed`, `review_return.py`). **Why:** a corrected check otherwise leaves every hold it made by mistake in a person's queue -- the check once demanded an outcomes file Easy and Flat trays never get, and such bundles sat in re-segmentation for that alone.
 - **Triage with a failed segmentation**: the return scan diverts the bundle to re-segmentation -- it can never satisfy the triage release condition (which requires a sound segmentation), and before this divert existed such bundles had no route out at all. The processing-side gate honors an existing human clear marker even when the segmentation self-check still reports failure, and since 2026-09-09 the return scan honors the same marker: a bundle carrying `{stem}_deep_review_cleared.json` is never diverted (the re-segmentation question is answered) and may release from triage once its triaged segments are answered, seg self-check notwithstanding. The scan also leaves the bundle in triage, undiverted, when the video's ground truth certifies every part of it (`_gt_certifies_whole_video`, `review_return.py`: the ground truth marks the whole video complete, or its reaches and its outcomes both exhaustive -- the test the review gate makes): the gate passes such a video even with a failed segmentation, so diverting it would hold a video the gate releases. Ground truth that covers only part of the video does not stop the divert -- the gate would send that video to re-segmentation anyway. (Older versions let any ground-truth file stop the divert.) Before that, the gate's honor and the scan's raw `seg_failed` divert fought each other and a cleared video with unresolved triage segments lapped processing -> triage -> re-segmentation -> processing indefinitely.
 

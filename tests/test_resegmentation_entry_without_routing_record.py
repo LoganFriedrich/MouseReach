@@ -23,6 +23,11 @@ def _bundle(tmp_path, seg_extra=None, routing=None, manifest=None):
     b.mkdir(parents=True)
     seg = {"boundaries": [100, 200, 300]}
     seg.update(seg_extra or {})
+    # A fixer save records every cut as a person's explicit call
+    # (hand_cuts.BOUNDARY_CALLS_KEY, owner decision MRR-08d).
+    if seg.get("boundary_source") == "human":
+        seg.setdefault("boundary_calls", [{"frame": f, "action": "accepted"}
+                                          for f in seg["boundaries"]])
     (b / f"{STEM}_segments.json").write_text(json.dumps(seg), encoding="utf-8")
     if routing is not None:
         (b / f"{STEM}_routing.json").write_text(json.dumps(routing), encoding="utf-8")

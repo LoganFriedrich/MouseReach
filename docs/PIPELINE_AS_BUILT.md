@@ -7494,3 +7494,41 @@ re-check). Measured read-only before the change: see the work record of 2026-11-
 Tests: `tests/test_triage_release_reads_ground_truth_in_bundle.py` (5 of 6 fail on the commit
 before); `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` rewritten (the
 bundle is released, an old listing is taken off).
+
+## Update 2026-11-19 (re-cut: every boundary explicitly accepted or moved)
+
+WHY: owner decision MRR-08d (2026-11-19): "Force a human to at least look at every single boundary
+... can't save and can't send the video out of resegmentation until they have explicitly accepted
+that a boundary is already correctly placed or have corrected it." A fixer save stamped every cut as
+a person's (`boundary_source: "human"`) whether or not it was walked, and its walk record
+(`guided_walk`) was keyed by the boundary's position, which shifts on a move, removal or addition --
+nothing read it, and a later answer could overwrite an earlier one.
+
+WHAT IS BUILT:
+- `hand_cuts`: `BOUNDARY_CALLS_KEY = "boundary_calls"` (one entry per cut, keyed by frame:
+  `{frame, action: accepted|moved|added|removed, shown_frame, by, at}`), `called_frames` (reads
+  `boundary_calls`, else what survived of an older `guided_walk`), `uncalled_boundaries`,
+  `uncalled_reason`, `RECUT_REMAINING_REASON`. `release_after_hand_cuts` refuses ("NOT released")
+  while a cut is uncalled.
+- `resegmented.resegmented_since_entry`: a hand save after entry counts only when every cut is a
+  call. Every way out of the re-segmentation queue asks it (return scan, Clear, Release finished
+  videos, the fixer's release). `resegmented.carried_calls`: the calls kept when the fixer reopens a
+  video (same visit, or sent back with `RECUT_REMAINING_REASON`).
+- Segmentation fixer (`fix_segmentation_widget`): answers kept in `_calls` keyed by the cut's
+  current frame; the walk goes to the next unanswered boundary; manual add = "added", drop/remove =
+  "removed"; Reset clears all; Save refuses while any cut is unanswered and writes `boundary_calls`.
+- Step 2b boundary screen (`segmentation/review_widget._save_validated`): writes `boundary_calls` for
+  the boundaries it marks reviewed (accepted, or moved when the frame changed). It still saves with
+  unreviewed boundaries (it is also the by-hand standalone screen), but such a save no longer
+  releases a video from the re-segmentation queue.
+
+DATA: past fixer saves with boundaries left unwalked were measured read-only on 2026-11-19 (work
+record). Those still in the re-segmentation queue stay there and are listed again in the fixer for
+their remaining boundaries; the others are sent back to the queue by a person's command
+(`mousereach-route-to-queue --queue deep_review --reason "segmentation: boundaries not all
+explicitly accepted/corrected" <video>`), which the coordinator runs after deploy.
+
+Tests: `tests/test_recut_every_boundary_is_a_persons_call.py` (new); fixtures in six existing test
+files now write `boundary_calls` for a complete hand save; `test_boundary_review_saves_a_persons_cuts`
+gains the unreviewed-boundary case.
+
