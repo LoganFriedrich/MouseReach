@@ -129,14 +129,35 @@ def test_a_ground_truth_reach_never_shares_an_id_with_a_detected_one(tmp_path):
     assert [(x["start_frame"], x["reach_source"]) for x in causal] == [(700, "ground_truth")]
 
 
-def test_a_review_pick_a_ground_truth_reach_replaced_is_not_kept(tmp_path):
-    # The review picked detected reach 31; a determined ground-truth reach
-    # replaced it. With no interaction frame, the dangling id must not block
-    # the reach assignment's pick.
+def test_a_review_pick_a_ground_truth_reach_replaced_follows_its_frames(tmp_path):
+    # The review picked detected reach 31 (frames 100-130); a determined
+    # ground-truth reach (98-135) replaced it and was renumbered 90. The pick
+    # is found again by its frames (truth_resolver._apply_outcome_layers,
+    # since 2026-11-20): the ground-truth reach IS the reach the person picked,
+    # so it is the causal reach. Before, the id 31 dangled and the pellet was
+    # left to the reach assignment.
     (tmp_path / f"{STEM}_unified_ground_truth.json").write_text(json.dumps({
         "video_name": STEM,
         "reaches": {"exhaustive": False, "reaches": [
             {"reach_id": 90, "segment_num": 1, "start_frame": 98, "end_frame": 135,
+             "start_determined": True, "end_determined": True}]},
+        "outcomes": {"exhaustive": False, "segments": [
+            {"segment_num": 1, "outcome": "retrieved", "determined": True}]},
+    }), encoding="utf-8")
+    _review(tmp_path, "retrieved", pick=(31, 100, 130))
+    _, seg = _resolve(tmp_path)
+    assert seg["causal_reach_id"] == 90
+    assert seg["causal_reach_source"] == "human_review"
+
+
+def test_a_review_pick_with_no_reach_left_goes_to_the_assignment(tmp_path):
+    # The ground-truth reach list (exhaustive) has no reach at the picked
+    # frames: the pick names nothing in the final list, so the id must not
+    # dangle -- the reach assignment answers.
+    (tmp_path / f"{STEM}_unified_ground_truth.json").write_text(json.dumps({
+        "video_name": STEM,
+        "reaches": {"exhaustive": True, "reaches": [
+            {"reach_id": 90, "segment_num": 1, "start_frame": 400, "end_frame": 440,
              "start_determined": True, "end_determined": True}]},
         "outcomes": {"exhaustive": False, "segments": [
             {"segment_num": 1, "outcome": "retrieved", "determined": True}]},

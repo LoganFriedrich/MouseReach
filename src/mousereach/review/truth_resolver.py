@@ -214,6 +214,7 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         stored = hc.get("reach_id")
         cid = stored
         review_reach = None
+        pick_frames = None
         # The FRAMES are the durable fact; the reach_id is not. Reach ids are
         # renumbered on every run, so a review written against an earlier
         # reach list names an id this run does not have -- the id-only match
@@ -235,6 +236,7 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
                     logger.info("review causal pick re-anchored by frames: segment %s id %s -> %s",
                                 sn, stored, best)
                 cid = best
+                pick_frames = (_hs, _he)
             elif ho in _TOUCHED_OUTCOMES:
                 # No detected reach is this one: the detector missed it. The
                 # frames the person gave are the fact; the stored id, if any,
@@ -257,6 +259,12 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
             "outcome": ho,
             "causal_reach_id": cid if ho in _TOUCHED_OUTCOMES else None,
             "review_causal_reach_id": stored,
+            # The frames of the reach the person picked, kept so the pick can
+            # be found again by frames once ground truth has replaced the reach
+            # list (_apply_outcome_layers): ``causal_reach_id`` is an id in the
+            # list the review was matched against, which ground-truth reaches
+            # replace and renumber.
+            "pick_frames": pick_frames if ho in _TOUCHED_OUTCOMES else None,
             "review_reach": review_reach,
             # The frames the person checked for the causal reach they named
             # (person_reach_bounds), put on that reach by
@@ -369,6 +377,7 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
     segment, both outcomes and who gave the review. Non-destructive; stamps
     provenance and preserves the algo originals as algo_outcome /
     algo_causal_reach_id."""
+    from mousereach.review.causal_review_io import typed_reach_match
     out = copy.deepcopy(outcomes_data)
     reach_lists: Dict[int, List[dict]] = {}
     for rseg in (reaches_data or {}).get("segments", []):
@@ -387,6 +396,26 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
             continue
         top = ovs[-1]
         review = next((o for o in reversed(ovs) if o.get("source") == "human_review"), None)
+
+        def _picked_id(ov):
+            """The id, in THIS run's resolved reach list, of the reach a review
+            picked. The review was matched by frames against the detected
+            reaches; ground-truth reaches may since have replaced that list
+            and renumbered it, so the id it carries can name another reach.
+            Found again by the pick's frames; None when no reach in the final
+            list is that reach. WHY (2026-11-20): a pick of reach 66 at frames
+            9519-9534 was applied as reach 66 of the ground-truth list, frames
+            9494-9504 -- the wrong reach credited with the pellet."""
+            pf = ov.get("pick_frames")
+            if pf is None or reaches_data is None or int(sn) not in reach_lists:
+                return ov.get("causal_reach_id")
+            m = typed_reach_match(pf[0], pf[1], reach_lists[int(sn)])
+            if m is None:
+                logger.warning("segment %s: the review's causal reach (frames %d-%d) is not in "
+                               "the resolved reach list; left to the reach assignment",
+                               sn, pf[0], pf[1])
+                return None
+            return m.get("reach_id")
         seg["algo_outcome"] = seg.get("outcome")
         seg["algo_causal_reach_id"] = seg.get("causal_reach_id")
         seg["outcome"] = top["outcome"]
@@ -421,7 +450,12 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                 if seg.get("algo_causal_reach_id") is None:
                     seg.pop("causal_reach_id", None)
                 continue
-            seg["causal_reach_id"] = top.get("causal_reach_id")
+            seg["causal_reach_id"] = _picked_id(top)
+            if seg["causal_reach_id"] is None and top.get("causal_reach_id") is not None                     and not top.get("review_reach"):
+                # The person's reach is not in the final list: not a person's
+                # "no reach", so the reach assignment answers.
+                seg.pop("causal_reach_id", None)
+                continue
             if seg["causal_reach_id"] is not None:
                 seg["causal_reach_source"] = top.get("source")
                 if top.get("review_reach_bounds"):
@@ -443,8 +477,8 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                 seg["causal_reach_id"] = held["reach_id"]
                 seg["causal_reach_source"] = "ground_truth"
             elif review is not None and review.get("outcome") == top["outcome"] and \
-                    (review.get("review_reach") or review.get("causal_reach_id") in
-                     {r.get("reach_id") for r in reach_lists.get(int(sn), [])}):
+                    (review.get("review_reach") or (_picked_id(review) is not None and _picked_id(review) in
+                     {r.get("reach_id") for r in reach_lists.get(int(sn), [])})):
                 # The review's pick counts only while that reach is still in
                 # this run's resolved list: a ground-truth reach may have
                 # replaced it, and a dangling id would block the assignment.
@@ -453,7 +487,7 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                     # it and makes it the causal reach.
                     seg["review_reach_frames"] = list(review["review_reach"])
                 else:
-                    seg["causal_reach_id"] = review["causal_reach_id"]
+                    seg["causal_reach_id"] = _picked_id(review)
                     if review.get("review_reach_bounds"):
                         seg["review_reach_bounds"] = list(review["review_reach_bounds"])
                 seg["causal_reach_source"] = "human_review"
