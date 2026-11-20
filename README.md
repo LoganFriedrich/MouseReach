@@ -2,6 +2,12 @@
 
 Complete pipeline for analyzing mouse single-pellet reaching behavior videos.
 
+**One PC, everything by hand?** Start with
+[docs/STANDALONE_LAB.md](docs/STANDALONE_LAB.md): install, set the PC up as the
+only MouseReach machine, name and drop in your videos, press Run, review, export
+a spreadsheet at reach, pellet, session, day or animal level. No automatic
+watcher, hand-score sheet or database is needed.
+
 ---
 
 ## Quick Start

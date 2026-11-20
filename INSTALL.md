@@ -702,7 +702,9 @@ leave that folder alone; see USER_GUIDE.md, "File Organization".
 
 **Before you start, make sure:**
 - The PC can see the NAS (its drive letter shows up in File Explorer)
-- You know where your DLC model lives (a file called `config.yaml` — ask if unsure)
+- You know where your DLC model lives (a file called `config.yaml` — ask if unsure). MouseReach
+  ships no model: it needs a trained DeepLabCut project with MouseReach's body parts (listed in
+  docs/STANDALONE_LAB.md, "What the computer needs"), and an NVIDIA graphics card to pose with it.
 
 ---
 
