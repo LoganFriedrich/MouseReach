@@ -48,6 +48,12 @@ from mousereach.watcher.locate import (
     held_or_filed_on_share,
 )
 from mousereach.pipeline.manifest import select_pose_file
+from mousereach.watcher.restart_from_recrop import (  # noqa: E402
+    POSE_UNUSABLE as RESTART_POSE_UNUSABLE, OUTPUT_MISSING as RESTART_OUTPUT_MISSING)
+# The quality-triage verdict for a video that was started over from a new cut
+# of its recording (ProcessingOrchestrator._restart_from_recrop) or listed red
+# instead: the run stops; never given to the review gate.
+QC_RESTARTED = "restarted_from_recrop"
 from mousereach.watcher.work_priority import load_lab_policy, LAB_PRIORITY_HINT
 from mousereach.config import (
     Paths, WatcherConfig, require_processing_root, parse_tray_type,
@@ -954,9 +960,15 @@ class BaseOrchestrator:
             pose_flags = [f.description for f in triage_result.flags
                           if f.category == POSE_UNUSABLE]
             if pose_flags and not self._new_pose_requestable(video_id, dlc_path):
-                # Not a case the watcher may send for a new pose by itself
-                # (_new_pose_requestable says which are): the verdict stands
-                # as before, so the gate holds the video for a person.
+                # Not a case the round trip may re-pose (_new_pose_requestable):
+                # a video not filed is started completely over from a new cut
+                # of its recording (restart_from_recrop, lab decision
+                # 2026-11-19), never held for a person -- no review fixes a pose.
+                if self._restart_from_recrop(
+                        video_id, f"{RESTART_POSE_UNUSABLE}: {'; '.join(pose_flags)}"):
+                    return QC_RESTARTED
+                # A filed video's own-model pose: the verdict stands as
+                # before, so the gate holds the video for a person.
                 logger.warning(f"Triage: {video_id} -> the pose is unusable "
                                f"({'; '.join(pose_flags)}); no new pose can be "
                                f"requested by the watcher for it, so it is held "
@@ -969,6 +981,17 @@ class BaseOrchestrator:
                 logger.warning(f"Triage: {video_id} -> the pose is unusable "
                                f"({'; '.join(pose_flags)}); not a review question")
                 return QC_POSE_UNUSABLE
+            # A step output missing or unreadable: no person can supply it,
+            # so the video is started completely over (lab decision
+            # 2026-11-19, D2-11 flag 2). A boundary count or an uncertain
+            # outcome is NOT this: a person answers those, and they hold the
+            # video in review as before.
+            from mousereach.watcher.restart_from_recrop import is_output_missing_finding
+            missing = [f.description for f in triage_result.flags
+                       if f.severity == 'critical' and is_output_missing_finding(f.description)]
+            if missing and self._restart_from_recrop(
+                    video_id, f"{RESTART_OUTPUT_MISSING}: {'; '.join(missing)}"):
+                return QC_RESTARTED
             logger.info(
                 f"Triage: {video_id} -> {triage_result.verdict} "
                 f"({triage_result.n_critical} critical, {triage_result.n_warnings} warnings)"
@@ -1047,6 +1070,10 @@ class BaseOrchestrator:
             logger.debug(f"{video_id}: could not log the refused route: {e}")
 
     POSE_UNUSABLE_PREFIX = "pose unusable"
+    # (restart_from_recrop.POSE_UNUSABLE is the same words, on purpose: a
+    # restarted video's mark_reason starts "restart from re-crop: pose
+    # unusable: ...", never with this prefix, so the pose-attention list,
+    # which reads this prefix, does not list it as waiting for a pose.)
 
     def _pose_check_before_segmentation(self, video_id: str, pose_path,
                                         row: Optional[dict] = None) -> bool:
@@ -1103,6 +1130,112 @@ class BaseOrchestrator:
                          f"requested: {e}")
             return False
 
+    def _restart_from_recrop(self, video_id: str, error: str) -> bool:
+        """Start ``video_id`` completely over from a new cut of its
+        multi-animal recording (watcher/restart_from_recrop.py: the rule,
+        what is deleted and what never is, and the three red listings).
+        True when the video was handled -- restarted, or listed red -- and the
+        current run must stop. False only for a FILED video (filed is final:
+        it is never started over automatically) or when this machine has no
+        shared folders to do it with; the caller then goes on as before.
+        Never raises."""
+        from mousereach.watcher import restart_from_recrop as rr
+        try:
+            row = self.db.get_video(video_id) or {}
+        except Exception as e:
+            logger.warning(f"{video_id}: could not read its row ({e}); not restarted")
+            return False
+        nas = getattr(Paths, "NAS_ROOT", None)
+        proc_dir = getattr(self, "processing_dir", None)
+        release = getattr(self, "_release_claim", None)
+        # Only the processing server restarts (it holds the posed claim and
+        # runs the re-posed video afterwards); elsewhere: as before.
+        if row.get('archived_at') or not nas or not proc_dir or release is None:
+            return False
+        try:
+            p = rr.plan(video_id, error, nas_root=nas, db=self.db)
+        except Exception as e:
+            logger.error(f"{video_id}: could not plan its restart ({e}); not restarted")
+            return False
+        if p["decision"] != "restart":
+            self._restart_listed_red(video_id, p["says"], error)
+            return True
+        try:
+            from mousereach.watcher import repose
+            qdir = repose.repose_queue_dir()
+            if not qdir:
+                logger.warning(f"{video_id}: no shared re-pose queue configured; not restarted")
+                return False
+            staging = getattr(self, "staging_dir", None)
+            deleted = []
+            for f in rr.machine_files(video_id, [proc_dir, staging]):
+                try:
+                    f.unlink()
+                    deleted.append(f.name)
+                except OSError as e:
+                    logger.warning(f"{video_id}: could not delete {f} ({e})")
+            try:
+                release(video_id)
+            except Exception:
+                pass
+            try:
+                mp4 = rr.cut_single(p["collage"], video_id, Path(proc_dir))
+            except rr.RecordingUnreadable as e:
+                says = (f"{video_id}: {rr.RECORDING_PROBLEM_PREFIX} -- its multi-animal "
+                        f"recording {p['collage'].name} cannot be read ({e}). A new cut "
+                        f"cannot fix this; the recording needs a person.")
+                rr.append_history(nas, video_id, error, "recording_problem")
+                self._restart_listed_red(video_id, says, error)
+                return True
+            parked = Path(qdir) / "_parked" / video_id
+            parked.mkdir(parents=True, exist_ok=True)
+            if not safe_copy(mp4, parked / mp4.name, verify=True):
+                raise OSError(f"could not copy the new cut to {parked}")
+            declared = repose.declared_scorer()
+            repose.write_json_atomic(repose.queue_path(video_id, qdir), {
+                "video_id": video_id, "declared_scorer": declared,
+                "video_rel": repose._relative_to_root(parked / mp4.name),
+                "video_path": str(parked / mp4.name),
+                "requested_by": self.hostname,
+                "requested_at": datetime.now().isoformat(),
+                "reason": f"{rr.RESTART_PREFIX}: {error}"})
+            rr.append_history(nas, video_id, error, "restarted")
+            note = f"{rr.RESTART_PREFIX}: {error}"
+            self.db.set_fields(video_id, reprocess_scope='full', mark_reason=note,
+                               dlc_output_path='')
+            self.db.force_state(video_id, 'outdated', reason=f"{note}; cut again from "
+                                f"{p['collage'].name}, a new pose is requested")
+            self.db.log_step(video_id, 'restart', 'started',
+                             message=f"{note}; deleted {len(deleted)} machine file(s): "
+                                     f"{', '.join(sorted(deleted))}")
+            logger.warning(f"{video_id}: {note} -- deleted {len(deleted)} machine "
+                           f"file(s), cut again from {p['collage'].name}, pose requested "
+                           f"(restart {p['same_error_run'] + 1} with this error)")
+            return True
+        except Exception as e:
+            logger.error(f"{video_id}: restart from a new cut failed ({e}); listed for a person")
+            self._restart_listed_red(video_id, f"{video_id}: the restart from a new cut "
+                                     f"failed ({e}); see the watcher log", error)
+            return True
+
+    def _restart_listed_red(self, video_id: str, says: str, error: str) -> None:
+        """List ``video_id`` red (<NAS>/attention/<host>_restart_stopped.json)
+        and mark it failed with no retries left, so the failed-video retry
+        does not run it into the same stop again. Never raises."""
+        from mousereach.watcher import restart_from_recrop as rr
+        from mousereach.watcher.attention import note_video
+        try:
+            note_video(Paths.NAS_ROOT, self.hostname, rr.ATTENTION_KIND, video_id, says)
+        except Exception as e:
+            logger.warning(f"{video_id}: could not list it for a person ({e})")
+        try:
+            self.db.mark_failed(video_id, says)
+            self.db.set_fields(video_id, error_count=int(
+                getattr(getattr(self, "config", None), "max_retries", 3) or 3))
+        except Exception as e:
+            logger.warning(f"{video_id}: could not mark it failed ({e})")
+        logger.error(says)
+
     def _pose_is_unusable(self, video_id: str, why: str, pose_path=None) -> str:
         """The video's pose cannot be used by the steps (pipeline/pose_check.py
         says what that means). ``pose_path``: the pose that was judged.
@@ -1124,6 +1257,8 @@ class BaseOrchestrator:
         except Exception as e:
             logger.debug(f"{video_id}: could not log the pose check: {e}")
         if not self._new_pose_requestable(video_id, pose_path):
+            if self._restart_from_recrop(video_id, f"{RESTART_POSE_UNUSABLE}: {why}"):
+                return 'needs_pose'     # started over (or listed red); this run stops
             logger.warning(f"{video_id}: the pose is unusable ({why}); the watcher may "
                            f"not request a new pose for it by itself, so it goes on "
                            f"as before")
@@ -9366,6 +9501,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         qc_verdict = self._run_quality_triage(video_id, self.processing_dir,
                                               dlc_path, triage_video)
         from mousereach.watcher.review_gate import QC_POSE_UNUSABLE
+        if qc_verdict == QC_RESTARTED:
+            return True         # started over from a new cut (or listed red)
         if qc_verdict == QC_POSE_UNUSABLE:
             self._pose_is_unusable(
                 video_id, getattr(self, "_pose_unusable_reason", {}).pop(

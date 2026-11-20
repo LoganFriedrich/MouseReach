@@ -73,11 +73,18 @@ def _waiting(tmp_path):
     return json.loads(f.read_text(encoding="utf-8"))["items"] if f.exists() else []
 
 
-def test_an_unfiled_videos_unusable_pose_goes_on_as_before(env, monkeypatch):
-    """Not filed: how its video would reach a GPU node for a new pose is not
-    built, and what to do instead is for the lab to decide. So the check
-    neither fails the video nor marks it for a new pose; the run goes on as
-    it did before the check existed (segmentation is reached)."""
+def _red(tmp_path):
+    f = tmp_path / "nas" / "attention" / "TEST-HOST_restart_stopped.json"
+    return json.loads(f.read_text(encoding="utf-8"))["items"] if f.exists() else []
+
+
+def test_an_unfiled_videos_unusable_pose_starts_over_and_never_reaches_segmentation(
+        env, monkeypatch):
+    """Not filed: the video is started completely over from a new cut of its
+    recording (lab decision 2026-11-19; watcher/restart_from_recrop.py). Here
+    the recording is not on the share, so it is listed red ("source recording
+    missing") and failed with no retries -- never segmented on the bad pose,
+    never sent to a review queue."""
     o, proc, tmp_path = env
     _pose(proc / POSE, ["Nose", "BOXL", "BOXR"])
     import mousereach.segmentation.core.batch as seg
@@ -90,17 +97,19 @@ def test_an_unfiled_videos_unusable_pose_goes_on_as_before(env, monkeypatch):
         o._run_pipeline({"id": VID, "data": dict(row, dlc_output_path=str(proc / POSE))})
     except Exception:
         pass                                            # whatever happened before
-    assert reached                                      # the run went on
+    assert reached == []                                # stopped before segmentation
     row = o.db.get_video(VID)
-    assert row["state"] != "outdated" and row.get("reprocess_scope") != "full"
-    assert not str(row.get("mark_reason") or "").startswith("pose unusable")
+    assert row["state"] == "failed"
+    assert "source recording missing" in (row.get("error_message") or "")
+    assert [i["video_id"] for i in _red(tmp_path)] == [VID]
+    assert _no_queue(tmp_path)
     assert _waiting(tmp_path) == []
 
 
-def test_an_unreadable_pose_of_an_unfiled_video_is_held_as_before(env):
-    """The quality check's 'Could not read DLC file' on a video the watcher
-    may not send for a new pose: the verdict stands as before (the gate holds
-    the video), and it is neither failed nor marked for a new pose."""
+def test_an_unreadable_pose_of_an_unfiled_video_starts_over(env):
+    """The quality check's 'Could not read DLC file' on a video not filed:
+    started over from a new cut (here: its recording is missing, so listed
+    red), never held in a review queue."""
     o, proc, tmp_path = env
     from mousereach.pipeline.triage import triage_video
     from mousereach.watcher.review_gate import DECISION_CLEAN, run_gate
@@ -114,7 +123,9 @@ def test_an_unreadable_pose_of_an_unfiled_video_is_held_as_before(env):
                                            run_gate, DECISION_CLEAN)
     assert held is True                                     # no kinematics
     row = o.db.get_video(VID)
-    assert row["state"] not in ("failed", "outdated")
+    assert row["state"] == "failed"
+    assert [i["video_id"] for i in _red(tmp_path)] == [VID]
+    assert _no_queue(tmp_path)
     assert _waiting(tmp_path) == []
 
 

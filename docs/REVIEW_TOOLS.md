@@ -1971,3 +1971,13 @@ kinematics recalculation sends it. It comes back only when a person sends it
 that filed video), and then the queue gets a COPY: the filed results stay in Analyzed until the
 video's new run is filed and replaces them. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19
 (filed is final)".
+
+## Update 2026-11-19 (findings no review can fix no longer reach a queue)
+
+An unusable pose (will not load, or SABL/SABR missing) and a missing or unreadable step output are no
+longer held in re-segmentation for a person: nothing in a review window can fix them. A video not
+filed is started over from a new cut of its multi-animal recording instead, and listed red only if
+that cannot work (same error 5 restarts in a row, the recording unreadable, or the recording not
+found). An unexpected boundary count and an uncertain outcome still come to you as before. See
+docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (a finding no person can fix starts the video over
+from a new cut)".
