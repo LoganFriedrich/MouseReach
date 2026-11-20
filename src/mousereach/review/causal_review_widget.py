@@ -2471,7 +2471,7 @@ The notes box travels with the video.
         # human.causal_reach_bounds (causal_review_io.CAUSAL_BOUNDS_KEY); an
         # answer naming a touched pellet's reach without the tick is not
         # recorded (answer_problem).
-        bounds_box = QGroupBox("Causal reach: its first and last frames (always check)")
+        bounds_box = QGroupBox("Causal reach: its first and last frames (correct them only if they are wrong)")
         bounds_row = QHBoxLayout()
         bounds_box.setLayout(bounds_row)
         bounds_row.addWidget(QLabel("First:"))
@@ -2484,7 +2484,12 @@ The notes box travels with the video.
         b_end.setRange(0, max(0, self.n_frames - 1))
         b_end.setMaximumWidth(80)
         bounds_row.addWidget(b_end)
+        # No separate "Checked" tick (owner, 2026-11-20): naming a reach IS the
+        # person's statement that it is this reach with these frames; a reach
+        # whose frames are wrong is corrected here or entered by hand. The box
+        # is kept, hidden, only so older code paths that set it still work.
         b_checked = QCheckBox("Checked: these are its first and last frames")
+        b_checked.setVisible(False)
         bounds_row.addWidget(b_checked)
         bounds_row.addStretch()
         layout.addWidget(bounds_box)
@@ -2533,11 +2538,12 @@ The notes box travels with the video.
             rp["bounds_end"].setValue(int(frames[1]))
 
     def _checked_causal_bounds(self) -> Optional[Dict[str, int]]:
-        """The causal reach's first/last frame as the person checked them, or
-        None when the Checked tick is not set."""
+        """The causal reach's first/last frame as the person confirmed them by
+        naming the reach (and correcting the frames if needed), or None when no
+        reach is named. Naming the reach is the check -- no separate tick."""
         rp = (getattr(self, "_q_widgets", None) or {}).get("_reach_picker") or {}
         box = rp.get("bounds_checked")
-        if box is None or not box.isChecked() or not box.isEnabled():
+        if box is None or not box.isEnabled():
             return None
         return {"start": int(rp["bounds_start"].value()),
                 "end": int(rp["bounds_end"].value())}
