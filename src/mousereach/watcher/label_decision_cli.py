@@ -1,5 +1,24 @@
-"""mousereach-label-mismatch: list the videos held as a LABEL MISMATCH, and
-record a person's decision about one.
+"""mousereach-label-mismatch: the record of the RETIRED label-mismatch hold.
+
+RETIRED 2026-11-20 (owner rule: "Just trust what is written down")
+-------------------------------------------------------------------
+A video is always processed and filed under the name a person gave it. The
+watcher no longer holds a video whose results match another tray's hand
+scores better than its own: it is compared with its OWN row only, and a
+disagreement with that row goes to triage like any other. So no video is
+held as a label mismatch any more, and no new decision is taken:
+
+  --list        still works: says nothing is held (and lists any hold an
+                attention list still carries from before the retirement)
+  --decisions   still works: prints every decision on record (the history)
+  --sheet-error / --name-wrong / --labels-right
+                refused with a message: there is nothing left to decide.
+
+A "the sheet is wrong" decision already on record still stands: that video is
+filed with the disagreement recorded, never sent to triage over it
+(hand_scores.check). The record file is kept for good.
+
+What follows describes the hold as it was, for reading the record.
 
 WHAT A LABEL MISMATCH IS
 ------------------------
@@ -62,33 +81,20 @@ def _held_items():
     return [i for i in (read_items(nas) if nas else []) if i.get("kind") == "label_mismatch"]
 
 
-def _mismatch_from_item(item):
-    """The LabelMismatch an attention item describes (for the record), or None."""
-    from mousereach.watcher.hand_scores import LabelMismatch, RowMatch
-    own = item.get("own_row") or {}
-    rows = item.get("matched_rows") or []
-    if not own or not rows:
-        return None
-    return LabelMismatch(item.get("video_id"),
-                         RowMatch(own.get("key"), own.get("agree"), own.get("compared")),
-                         [RowMatch(r.get("key"), r.get("agree"), r.get("compared"))
-                          for r in rows])
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="mousereach-label-mismatch",
-        description="List videos held as a label mismatch, or record which is wrong: "
-                    "the recording's name or the sheet.")
+        description="The label-mismatch hold is RETIRED (2026-11-20): videos are filed "
+                    "as named. --list and --decisions read what was recorded.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--list", action="store_true", help="videos held as a label mismatch now")
     g.add_argument("--decisions", action="store_true", help="every decision on record")
     g.add_argument("--sheet-error", metavar="VIDEO",
-                   help="the sheet is a human error: keep it, file the video, record it")
+                   help="RETIRED 2026-11-20: refused, nothing to decide")
     g.add_argument("--name-wrong", metavar="VIDEO",
-                   help="the recording's name is wrong (give the right one with --as)")
+                   help="RETIRED 2026-11-20: refused, nothing to decide")
     g.add_argument("--labels-right", metavar="VIDEO",
-                   help="neither is wrong: compare the video with its own row as usual")
+                   help="RETIRED 2026-11-20: refused, nothing to decide")
     ap.add_argument("--as", dest="new_name", metavar="RIGHT_NAME")
     ap.add_argument("--by", metavar="NAME", help="who decides (kept with the decision)")
     ap.add_argument("--note", default="", help="anything else to keep with the decision")
@@ -98,7 +104,8 @@ def main(argv=None) -> int:
     if a.list:
         items = _held_items()
         if not items:
-            print("No video is held as a label mismatch.")
+            print("No video is held as a label mismatch (the hold was retired on "
+                  "2026-11-20: videos are filed as named).")
         for i in items:
             print("%s (cohort %s): %s" % (i.get("video_id"), i.get("cohort_id"), i.get("says")))
         return 0
@@ -116,34 +123,12 @@ def main(argv=None) -> int:
         return 0
 
     video = a.sheet_error or a.name_wrong or a.labels_right
-    held = {i.get("video_id"): i for i in _held_items()}
-    if video not in held:
-        print("[FAIL] %s is not held as a label mismatch (mousereach-label-mismatch --list "
-              "shows which are). Nothing recorded." % video, file=sys.stderr)
-        return 1
-    try:
-        entry = hs.record_decision(
-            video, (hs.DECISION_SHEET_ERROR if a.sheet_error else
-                    hs.DECISION_NAME_WRONG if a.name_wrong else hs.DECISION_LABELS_RIGHT),
-            a.by, mismatch=_mismatch_from_item(held[video]), new_name=a.new_name,
-            note=a.note)
-    except Exception as e:
-        print("[FAIL] %s. Nothing recorded." % e, file=sys.stderr)
-        return 1
-    if a.sheet_error:
-        print("[OK] Recorded: the sheet is wrong for %s (by %s, %s). The sheet stays as it "
-              "is; the watcher files the video with the disagreement recorded on its next "
-              "pass." % (video, entry["by"], entry["at"]))
-    elif a.labels_right:
-        print("[OK] Recorded: the labels of %s are right (by %s, %s). The watcher compares "
-              "it with its own row on its next pass; a real disagreement goes to triage."
-              % (video, entry["by"], entry["at"]))
-    else:
-        print("[OK] Recorded: %s should be named %s (by %s, %s). It stays held until the "
-              "recording is renamed the documented way (originals and a record in "
-              "Archive/manual_corrections); then it checks itself again."
-              % (video, a.new_name, entry["by"], entry["at"]))
-    return 0
+    # RETIRED 2026-11-20: no hold, so nothing to decide. Refused before
+    # anything is written, so the record keeps only real decisions.
+    print("[FAIL] The label-mismatch hold was retired on 2026-11-20 (owner rule: trust "
+          "the name a person gave). %s is processed and filed under its own name; no "
+          "decision is needed. Nothing recorded." % video, file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

@@ -117,10 +117,10 @@ def test_a_sheet_error_decision_files_it_with_the_disagreement_recorded(tmp_path
     os.utime(seg, (time.time() - 3600,) * 2)
     _outcomes(folder, P4_ROW)               # every pellet called: nothing else to ask
     orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False      # held
+    # A sheet-error decision recorded while the label-mismatch hold existed
+    # (retired 2026-11-20) still stands: filed with the disagreement recorded.
     mm = hs.label_mismatch(VID, hs.algo_classes(_doc(folder)), {VID: P3_ROW, OTHER: P4_ROW})
     hs.record_decision(VID, hs.DECISION_SHEET_ERROR, "a reviewer", mismatch=mm)
-    assert orch._waiting_for_hand_scores(VID) is False          # checked again at once
     assert orch._hand_score_precheck(VID, folder) is True       # goes on
     doc = _doc(folder)
     assert _bench_flagged(doc) == set()
@@ -138,19 +138,14 @@ def test_a_sheet_error_decision_files_it_with_the_disagreement_recorded(tmp_path
     assert e["at"]
 
 
-def test_a_name_wrong_decision_keeps_it_held_until_the_rename(tmp_path, monkeypatch):
+def test_a_recorded_name_wrong_decision_changes_nothing_now(tmp_path, monkeypatch):
+    """Retired hold (2026-11-20): the video is compared with its own row."""
     folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
     orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False
     hs.record_decision(VID, hs.DECISION_NAME_WRONG, "a reviewer", new_name=OTHER)
-    assert orch._hand_score_precheck(VID, folder) is False      # still held
-    item = json.loads((tmp_path / "nas" / "attention" / "HOST_hand_scores.json")
-                      .read_text())["items"][0]
-    assert "name is wrong" in item["says"] and OTHER in item["says"]
-    # The renamed results replace these: it checks itself again.
-    _outcomes(folder, P3_ROW)
-    assert orch._waiting_for_hand_scores(VID) is False
-    assert orch._hand_score_precheck(VID, folder) is True
+    assert hs.check(VID, folder).status == hs.DISAGREES
+    assert orch._hand_score_precheck(VID, folder) is True       # on to the gate
+    assert _bench_flagged(_doc(folder))                          # asked in triage
 
 
 def test_a_decision_needs_who_and_for_a_name_the_right_name(tmp_path, monkeypatch):
@@ -167,9 +162,7 @@ def test_labels_right_compares_as_usual_and_a_real_disagreement_goes_to_triage(
         tmp_path, monkeypatch):
     folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
     orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False      # held
     hs.record_decision(VID, hs.DECISION_LABELS_RIGHT, "a reviewer")
-    assert orch._waiting_for_hand_scores(VID) is False
     assert orch._hand_score_precheck(VID, folder) is True       # on to the gate
     assert _bench_flagged(_doc(folder))                          # asked in triage
     assert hs.check(VID, folder).status == hs.DISAGREES

@@ -136,16 +136,19 @@ AGREES = "agrees"
 DISAGREES = "disagrees"
 WAITING = "waiting"
 NOT_CHECKED = "not_checked"
-# The video's calls match ANOTHER hand-score row of the same animal and day
-# (another tray) clearly better than its own: the file name or the sheet has
-# the trays swapped (label_mismatch says how it is decided and why).
+# RETIRED 2026-11-20 (owner rule: "Just trust what is written down"):
+# check() never returns this any more. It was the verdict for a video whose
+# calls matched ANOTHER tray's row better than its own, which was then held
+# outside the review queues. Kept so outcomes files and attention lists
+# written before the retirement still read.
 LABEL_MISMATCH = "label_mismatch"
 # The lab suspended the comparison for this session (suspension): it is left
 # out of the decision to triage -- no bench flags, no label-mismatch hold.
 SUSPENDED = "suspended"
-# A label mismatch a person decided is a SHEET error (label_decision): the
-# sheet is kept as it is, the video goes on and is filed with the
-# disagreement and the decision recorded, never flagged for triage over it.
+# A video a person decided has a SHEET error (label_decision, recorded while
+# the label-mismatch hold existed): the sheet is kept as it is, the video goes
+# on and is filed with the disagreement and the decision recorded, never
+# flagged for triage over it. Still honoured after the hold's retirement.
 SHEET_ERROR = "sheet_error"
 
 # The two decisions a person can make about a label mismatch.
@@ -754,44 +757,34 @@ def check(video_id: str, folder: Path) -> Verdict:
     # pellet is compared because a person answered them all.
     hand = dict(hand)
 
-    # Which tray is this, before anything else (label_mismatch says why). Run
-    # before the "every pellet answered" shortcut: a person who confirmed the
-    # calls of a recording carrying another tray's name has not made it this
-    # tray, and the video must not be filed under the wrong tray. Not run
-    # while a reviewer's statement that the cuts number a pellet wrongly
-    # stands (the numbering itself is then in doubt; the check below routes
-    # the video to manual segmentation instead).
+    # A video is checked against ITS OWN row only: the name a person gave it is
+    # trusted (owner rule 2026-11-20: "Just trust what is written down"). The
+    # label-mismatch hold that used to stop a video whose results matched
+    # ANOTHER tray's row better than its own is retired; such a video goes on
+    # like any other, and a disagreement with its own row goes to triage as
+    # usual. label_mismatch() is kept only to describe the rows in the
+    # record of a sheet-error decision made while the hold existed.
+    #
+    # A recorded "the sheet is wrong" decision (label_decision; the record is
+    # kept for good) still stands: the video is filed with the disagreement
+    # recorded, never sent to triage over it. Not applied while a reviewer's
+    # statement that the cuts number a pellet wrongly stands (the numbering
+    # is then in doubt; the check below routes it to manual segmentation).
     out_path = Path(folder) / f"{video_id}_pellet_outcomes.json"
     out = (json.loads(out_path.read_text(encoding="utf-8"))
            if out_path.is_file() else None)
-    if out is not None:
-        mm = label_mismatch(video_id, algo_classes(out), scores)
-        if mm is not None and (decision_for(video_id) or {}).get("decision") == DECISION_LABELS_RIGHT:
-            mm = None          # a person said the labels are right: compare as usual
-        if mm is not None:
-            review, seg_doc = _review_and_segments(video_id, folder)
-            if not unresolved_mislabels(review, seg_doc):
-                check_partner(mm, partner_calls(mm.matches[0].key, folder), scores)
-                # A person's decision about it (label_decision). The sheet
-                # is a human error: kept as it is, the video goes on and is
-                # filed with the disagreement recorded. The name is wrong: it
-                # stays held until the rename replaces its files.
-                dec = decision_for(video_id)
-                if dec and dec.get("decision") == DECISION_SHEET_ERROR:
-                    return Verdict(SHEET_ERROR, (
-                        "a person (%s, %s) decided the sheet is wrong for this session: "
-                        "kept as it is and recorded; %s" % (
-                            dec.get("by"), dec.get("at"), describe_mismatch(mm).split(" -- ")[0])),
-                        cohort_id=cohort_id, last_import=last, hand=hand, mismatch=mm,
-                        decision=dec)
-                reason = describe_mismatch(mm)
-                if dec and dec.get("decision") == DECISION_NAME_WRONG:
-                    reason = ("%s -- %s decided %s the recording's name is wrong (it should be "
-                              "%s); held until it is renamed" % (
-                                  reason.split(" -- ")[0], dec.get("by"), dec.get("at"),
-                                  dec.get("new_name")))
-                return Verdict(LABEL_MISMATCH, reason, cohort_id=cohort_id,
-                               last_import=last, hand=hand, mismatch=mm, decision=dec)
+    dec = decision_for(video_id)
+    if out is not None and dec and dec.get("decision") == DECISION_SHEET_ERROR:
+        review, seg_doc = _review_and_segments(video_id, folder)
+        if not unresolved_mislabels(review, seg_doc):
+            mm = label_mismatch(video_id, algo_classes(out), scores)
+            rows = (describe_mismatch(mm).split(" -- ")[0] if mm is not None
+                    else "compared with its own row")
+            return Verdict(SHEET_ERROR, (
+                "a person (%s, %s) decided the sheet is wrong for this session: "
+                "kept as it is and recorded; %s" % (dec.get("by"), dec.get("at"), rows)),
+                cohort_id=cohort_id, last_import=last, hand=hand, mismatch=mm,
+                decision=dec)
 
     from mousereach.watcher.route_cli import answered_segments_of
     answered = answered_segments_of(video_id, folder)
@@ -1093,6 +1086,9 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                 })
                 continue
             if w.get("label_mismatch"):
+                # RETIRED 2026-11-20: nothing sets this any more (check()
+                # never returns LABEL_MISMATCH, and a hold restored from
+                # before the retirement comes back as a plain hold).
                 # The results match another tray's hand scores (label_mismatch):
                 # held outside the review queues until the name or the sheet is
                 # corrected. The structured fields let a reader (a database

@@ -6808,6 +6808,10 @@ lived: `watcher/cpu_pose_pool.py` (deleted). Tests: `tests/test_cpu_pose_pool_re
 
 ## Update 2026-11-18: label mismatches are held outside the queues; triage bundles are compared again with the hand scores; the lab can suspend the comparison for named sessions
 
+**The label-mismatch part of this update is RETIRED (2026-11-20; see "Update
+2026-11-20: the label-mismatch hold is retired" at the end).** The bundle
+re-comparison and the suspension below still hold.
+
 Owner rulings, 2026-11-18: a label mismatch "isn't for triage to do. That's not
 something any triage process could repair, so it's not something to put into
 triage over." -- and the sheets "just are what they are, and if they're wrong
@@ -7719,3 +7723,47 @@ WHAT CHANGED. The owner's requirement of 2026-11-19 (MRR-15a): a person must be 
 ## Update 2026-11-19 (one-PC walkthrough)
 
 docs/STANDALONE_LAB.md, linked from the top of README, walks a lab with one PC from install to spreadsheet without reading code: install; mousereach-setup answering "only machine" (single-machine role, pipeline folder and pipeline_versions.json built, watcher database named); the naming rule with good and bad examples and where a misnamed file goes (Processing/Quarantine); where to drop videos; Run (button or `mousereach-watch --once`; chosen videos with "Run chosen videos..." or `mousereach-run-videos`); the review loop (review, then Run again, because without the automatic watcher nothing takes a reviewed video back until a pass runs); Export results (tab or `mousereach-results`); what the main columns mean; and what each common failure means. It states the hardware a single machine needs: an NVIDIA graphics card (posing on the processor was removed 2026-11-18), ffmpeg, and a trained DeepLabCut model with MouseReach's body parts (none is shipped).
+
+
+## Update 2026-11-20: the label-mismatch hold is retired
+
+Owner rule, 2026-11-20: "Just trust what is written down." A video is always
+processed and filed under the name a person gave it.
+
+**What changed.** `hand_scores.check()` compares a video with its OWN tray's
+hand-score row only. It no longer looks for another tray of the same animal and
+day that fits the results better, and never returns `label_mismatch`. So:
+
+- The watcher holds no video as a label mismatch (`_hold_label_mismatch` and its
+  helpers are removed from `watcher/orchestrator.py`). A video that would have
+  been held goes on like any other: if it agrees with its own row it goes on to
+  filing; a pellet that disagrees is flagged and goes to triage as an ordinary
+  bench disagreement.
+- A triage bundle is no longer moved out of the queue as a label mismatch
+  (`review_return._bench_act`).
+- `mousereach-bring-current` no longer refuses a video as a label mismatch.
+- A hold written to an attention list before the retirement is restored after a
+  restart as a plain hold, checked again once, and then goes on as named.
+- `mousereach-label-mismatch`: `--list` and `--decisions` still read what was
+  recorded; `--sheet-error`, `--name-wrong` and `--labels-right` are refused
+  (exit 1, nothing recorded). The decisions file
+  `<NAS>/review_records/label_decisions.jsonl` is kept for good.
+- A `sheet_error` decision already on record still stands: that video is filed
+  with its disagreement recorded (`"hand_scores": {"verdict": "sheet_error",
+  "decision": {...}}`), never sent to triage over it. Recorded `name_wrong` and
+  `labels_right` decisions no longer change anything.
+- The status screens (`mousereach-watch-status`, the census's
+  `held_for_label_mismatch`) and a database tool reading the attention lists
+  simply find no label-mismatch item any more; no report lists suspected tray
+  swaps.
+
+**Why.** The hold asked a person, for every such video, whether the name or the
+sheet was wrong. The owner ruled that the name a person gave is what the
+pipeline uses, so the question is not asked.
+
+**Operator note.** Videos held when the change was installed were released with
+`mousereach-label-mismatch --sheet-error <video> --by <name>` (filed as named,
+the disagreement recorded), before the decision commands were retired.
+
+Tests: `tests/test_label_mismatch_hold.py` (rewritten: no hold, a recorded
+sheet error still files, the CLI refuses decisions).

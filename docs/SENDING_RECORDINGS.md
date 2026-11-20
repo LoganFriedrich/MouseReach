@@ -224,34 +224,14 @@ yourself.
 | The name was never a valid session name | It never left the PC: it is held in red there. Rename it in the recording folder; it is sent on the next pass outside recording hours. |
 | A file whose name the intake could not read is in the Quarantine folder | In `mousereach`, open the **Quarantine** tab, type the right name in the "Corrected name (editable)" column of its row, choose **Collage intake (8-camera videos)** under "Release to:", and press **Release selected**. A name the intake would not accept is refused with the reason, and nothing moves. |
 | The name is a valid session name but wrong (wrong animal, wrong tray, wrong date) | Tell whoever looks after the pipeline: the name the recording has and the name it should have. |
-| The pipeline holds a video as a **label mismatch** (its results fit the hand scores of another tray of the same animal and day better than its own tray's) | Record which is wrong with `mousereach-label-mismatch`, below. |
 
-**Label mismatch.** There is no button for this yet: use a terminal on a machine
-where MouseReach is set up. Activate the environment first (`<mousereach env>` is
-the name or folder of your MouseReach environment, often `mousereach`):
-
-```
-conda activate <mousereach env>
-mousereach-label-mismatch --list
-```
-
-`--list` shows the videos held as a label mismatch. Then record one decision:
-
-* The recording's name is wrong:
-  `mousereach-label-mismatch --name-wrong "<video>" --as "<right name>" --by "<your name>"`.
-  This only RECORDS the decision; it renames nothing. The video stays held until
-  whoever looks after the pipeline has renamed the recording as above.
-* The sheet is wrong (the sheet itself is never edited):
-  `mousereach-label-mismatch --sheet-error "<video>" --by "<your name>"`.
-* Neither is wrong: `mousereach-label-mismatch --labels-right "<video>" --by "<your name>"`.
-
-It refuses, and records nothing, a video that is not held as a label mismatch
-(`[FAIL] <video> is not held as a label mismatch (mousereach-label-mismatch --list shows which are). Nothing recorded.`),
-`--name-wrong` without `--as`, and any decision without `--by`.
-
-This check only compares the other trays of the same animal and day, so a
-recording named with the wrong **animal** is not caught by it: tell whoever looks
-after the pipeline.
+**Label mismatch: retired 2026-11-20.** The pipeline no longer holds a video
+whose results fit another tray's hand scores better than its own: a video is
+always processed and filed under the name a person gave it, and compared with
+its OWN tray's hand scores only. `mousereach-label-mismatch --decisions` still
+prints the decisions recorded while the hold existed; the commands that made
+decisions are refused. A name that is wrong is still fixed the way the table
+above says.
 
 ## Settings (in `~/.mousereach/config.json`, section `watcher`)
 

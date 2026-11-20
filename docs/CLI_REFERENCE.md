@@ -37,7 +37,7 @@ walkthroughs of the review tools themselves.
 - [Routine triage review: the causal review tool, TRIAGED-ONLY, over the Pending queue](#routine-triage-review-the-causal-review-tool-triaged-only-over-the-pending-queue) -- `mousereach-review-tool`
 - [Bulk release check for re-segmentation bundles (human-invoked; every segment answered)](#bulk-release-check-for-re-segmentation-bundles-human-invoked-every-segment-answered) -- `mousereach-review-release`
 - [Pipeline census: total workload, per-stage breakdown, pace and ETA (headless JSON)](#pipeline-census-total-workload-per-stage-breakdown-pace-and-eta-headless-json) -- `mousereach-census`
-- [Decide about a video held as a label mismatch](#mousereach-label-mismatch) -- `mousereach-label-mismatch`
+- [Read the record of the retired label-mismatch hold](#mousereach-label-mismatch) -- `mousereach-label-mismatch`
 - [Put a video into a review queue with a reason (generic; the way an external integrator such as a database tool asks MouseReach to hold a video for a person)](#put-a-video-into-a-review-queue-with-a-reason-generic-the-way-an-external-integrator-such-as-a-database-tool-asks-mousereach-to-hold-a-video-for-a-person) -- `mousereach-route-to-queue`
 - [Send named videos back to a GPU for a new pose when their pose is not trusted (same model, distrusted machine); the re-pose round trip does the rest](#send-named-videos-back-to-a-gpu-for-a-new-pose-when-their-pose-is-not-trusted-same-model-distrusted-machine-the-re-pose-round-trip-does-the-rest) -- `mousereach-repose-videos`
 - [Provenance checks -- what the pipeline actually produces, and whether the documents still describe the code.](#provenance-checks-what-the-pipeline-actually-produces-and-whether-the-documents-still-describe-the-code) -- `mousereach-field-audit`, `mousereach-doc-check`, `mousereach-fix-segmentation`, `mousereach-backfill-manifest-versions`, `mousereach-triage-clearing`, `mousereach-unified-review`, `mousereach-gt`, `mousereach-review-legacy`, `mousereach-migrate-gt`
@@ -737,33 +737,32 @@ options:
 
 ### `mousereach-label-mismatch`
 
-List the videos held as a LABEL MISMATCH (results match another tray's hand
-scores of the same animal and day, not their own), and record a person's
-decision about one. No review queue can settle a label mismatch, so this is the
-way a held video is released (watcher/label_decision_cli.py has the details).
+**The label-mismatch hold is RETIRED (2026-11-20).** The owner's rule: a video is
+always processed and filed under the name a person gave it ("Just trust what is
+written down"). The pipeline used to hold a video whose results matched ANOTHER
+tray's hand scores of the same animal and day better than its own; it no longer
+does. A video is compared with its OWN tray's hand scores only, and a
+disagreement with them goes to triage like any other. No video is held as a
+label mismatch any more, so there is nothing left to decide.
 
 ```
 mousereach-label-mismatch --list
-mousereach-label-mismatch --sheet-error VIDEO --by NAME [--note TEXT]
-mousereach-label-mismatch --name-wrong VIDEO --as RIGHT_NAME --by NAME [--note TEXT]
-mousereach-label-mismatch --labels-right VIDEO --by NAME [--note TEXT]
 mousereach-label-mismatch --decisions
 ```
 
-- `--sheet-error`: the sheet is a human error and stays as it is. The watcher
-  files the video on its next pass, with the disagreement and the decision
-  recorded in its outcomes file.
-- `--name-wrong`: the recording's name is wrong. Recorded only; the video stays
-  held until the recording is renamed the documented way (original and a record
-  in `Archive/manual_corrections`), which this command does not do.
-- `--labels-right`: neither is wrong (another tray's row happened to fit). The
-  video is compared with its own row as usual; a real disagreement goes to
-  triage.
-- Every decision is appended to `<NAS>/review_records/label_decisions.jsonl`
-  (who, when, which video, which two sheet rows) and never removed, so the
-  bench's tray error rate can be counted; `--decisions` prints it.
-- Refuses a video that is not held as a label mismatch, and a decision without
-  `--by`. Exit code 1 and nothing recorded on any refusal.
+- `--list`: says no video is held (and shows any hold an attention list still
+  carries from before the retirement, which clears on the watcher's next pass).
+- `--decisions`: prints every decision recorded while the hold existed, from
+  `<NAS>/review_records/label_decisions.jsonl` (kept for good: who, when, which
+  video, which two sheet rows).
+- `--sheet-error`, `--name-wrong`, `--labels-right`: refused with
+  `[FAIL] The label-mismatch hold was retired on 2026-11-20 ...`, exit code 1,
+  nothing recorded.
+- A "the sheet is wrong" (`--sheet-error`) decision already on record still
+  stands: that video is filed with its disagreement recorded in its outcomes
+  file, never sent to triage over it. `--name-wrong` and `--labels-right`
+  decisions on record no longer change anything: the video is compared with its
+  own row like every other.
 
 ### `mousereach-route-to-queue`
 
