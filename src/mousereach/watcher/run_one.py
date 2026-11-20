@@ -35,8 +35,9 @@ WHAT IS REFUSED (nothing is run or moved; the reason is shown)
   * a video the watcher on this machine does not know and that is not waiting
     in the posed folder (it has no record to run);
   * a video not yet posed, quarantined, or with no file on this machine;
-  * when this machine is not the processing machine (this tab runs only
-    there; a graphics-card PC set to analyse does so through its own
+  * when this machine is not the processing machine or a single machine
+    (``standalone``, whose processing half is the processing server's
+    program; a graphics-card PC set to analyse does so through its own
     watcher), when a watcher already runs on it (it does the video by itself;
     "Put first" on the Run Pipeline tab puts the video's animal first), when a
     stop is requested, or when the watcher is paused.
@@ -232,7 +233,12 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
         except Exception as e:
             return _refuse(f"MouseReach is not set up on this machine ({e}). Use the "
                            f"Setup tab (mousereach-setup), then come back.")
-        if getattr(cfg, "mode", None) != "processing_server":
+        from mousereach.watcher.standalone import analyses_and_files, STANDALONE, split_config
+        if getattr(cfg, "mode", None) == STANDALONE:
+            # A single machine: the run is its processing half, the processing
+            # server's own program (watcher/standalone.py).
+            cfg = split_config(cfg)[1]
+        if not analyses_and_files(getattr(cfg, "mode", None)):
             return _refuse(
                 f"This machine's role is '{getattr(cfg, 'mode', '?')}', not the processing "
                 f"machine, and this tab runs only on the processing machine (a "

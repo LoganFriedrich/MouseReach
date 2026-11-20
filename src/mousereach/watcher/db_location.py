@@ -27,7 +27,9 @@ The rule, in order:
      REFUSE (WatcherDbUnnamed): the processing server's watcher database must
      be named in the settings of every login that works with it;
   4. otherwise ``<processing_root>/watcher.db`` -- the daemon's own default on
-     a GPU PC (``dlc_pc``). An unconfigured processing root raises
+     a GPU PC (``dlc_pc``) and on a single machine (``standalone``, whose
+     setup names it explicitly anyway; its posing half keeps a second file,
+     ``watcher_posing.db``, that no tool reads -- watcher/standalone.py). An unconfigured processing root raises
      ConfigurationError (from require_processing_root), whose message names
      the setup command.
 

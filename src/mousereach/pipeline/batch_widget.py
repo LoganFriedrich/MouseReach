@@ -110,6 +110,12 @@ def role_explanation(mode, also_process=False) -> str:
     graphics-card PC that is the pose pass, not the analysis, and a person
     who pressed the button there must not expect videos to be analysed or
     filed by it."""
+    if mode == "standalone":
+        return ("This machine is the lab's only MouseReach machine: a pass cuts and "
+                "poses waiting recordings, then analyses every posed video, takes "
+                "back videos a person has finished reviewing, sends a video with a "
+                "problem to its review queue and files a video that passed every "
+                "check.")
     if mode == "processing_server":
         return ("This machine is the processing machine: a pass analyses the "
                 "posed videos waiting here, sends a video with a problem to its "

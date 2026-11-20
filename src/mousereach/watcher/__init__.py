@@ -13,7 +13,12 @@ Two-machine architecture with role-aware orchestrators:
       new DLC outputs, copies them locally, runs segmentation + reach
       detection + outcome detection, and archives results back to NAS.
 
-Both modes share the same codebase.  The mode is set in
+  Single machine (mode="standalone")
+      The only MouseReach machine of a lab: runs BOTH programs above on one
+      PC -- cut + pose, then everything after the pose, review return and
+      filing included (watcher/standalone.py). Needs a GPU.
+
+All modes share the same codebase.  The mode is set in
 ~/.mousereach/config.json (watcher.mode) and is auto-detected by
 mousereach-setup based on the machine's role profile.
 
@@ -75,7 +80,7 @@ NAS (shared between both):
 Configuration (in ~/.mousereach/config.json):
     nas_drive:                     root of NAS mount (e.g. "<drive>:\\")
     processing_root:               parent of DLC_Queue/Processing/etc.
-    watcher.mode:                  "dlc_pc" or "processing_server"
+    watcher.mode:                  "dlc_pc", "processing_server" or "standalone"
     watcher.dlc_config_path:       path to DLC model config.yaml (GPU node only)
     watcher.dlc_gpu_device:        GPU index (GPU node only, default 0)
     watcher.poll_interval_seconds: how often to scan for new files

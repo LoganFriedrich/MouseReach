@@ -402,6 +402,9 @@ class WatcherControlWidget(QWidget):
             "processing_server")
         self._mode_select.addItem(
             "DLC -- crop collages + run pose estimation (needs a GPU)", "dlc_pc")
+        self._mode_select.addItem(
+            "Single machine -- cut, pose, analyse, take reviews back, file (needs a GPU)",
+            "standalone")
         self._mode_select.setToolTip(
             "The watcher this machine runs. It must match this machine's role "
             "(mode in the settings below): Start and Run Once refuse the other one.")
@@ -473,13 +476,17 @@ class WatcherControlWidget(QWidget):
         cfg = QGroupBox("Configuration (applies on next start)")
         form = QFormLayout(cfg)
         self._f_enabled = QCheckBox()
-        self._f_mode = QComboBox(); self._f_mode.addItems(["dlc_pc", "processing_server"])
+        self._f_mode = QComboBox()
+        self._f_mode.addItems(["dlc_pc", "processing_server", "standalone"])
+        self._f_mode.setToolTip(
+            "dlc_pc: a graphics-card PC that cuts and poses and hands poses on. "
+            "processing_server: the machine that analyses, takes reviews back and "
+            "files. standalone: ONE machine that does all of it (a lab with one PC).")
         self._f_poll = QSpinBox(); self._f_poll.setRange(1, 3600)
         self._f_stability = QSpinBox(); self._f_stability.setRange(0, 3600)
         self._f_retries = QSpinBox(); self._f_retries.setRange(0, 20)
         self._f_maxpending = QSpinBox(); self._f_maxpending.setRange(1, 100000)
         self._f_gpu = QSpinBox(); self._f_gpu.setRange(-1, 16)
-        self._f_autoarchive = QCheckBox()
         self._f_alsoprocess = QCheckBox()
         self._f_dlccfg = QLineEdit()
         self._f_quarantine = QLineEdit()
@@ -516,7 +523,6 @@ class WatcherControlWidget(QWidget):
         form.addRow("max_retries", self._f_retries)
         form.addRow("max_local_pending", self._f_maxpending)
         form.addRow("dlc_gpu_device", self._f_gpu)
-        form.addRow("auto_archive_approved", self._f_autoarchive)
         form.addRow("also_process", self._f_alsoprocess)
         form.addRow("dlc_config_path", self._f_dlccfg)
         form.addRow("quarantine_dir", self._f_quarantine)
@@ -864,10 +870,8 @@ class WatcherControlWidget(QWidget):
             # logins' tools would not agree on.
             from mousereach.watcher.db_location import resolve_watcher_db_path
             db = WatcherDB(Path(resolve_watcher_db_path()))
-            if cfg.mode == "processing_server":
-                self._orchestrator = ProcessingOrchestrator(cfg, db)
-            else:
-                self._orchestrator = DLCOrchestrator(cfg, db)
+            from mousereach.watcher.standalone import make_orchestrator
+            self._orchestrator = make_orchestrator(cfg, db)
             self._run_error = None
             self._shutdown_event = threading.Event()
             self._thread = threading.Thread(
@@ -946,8 +950,8 @@ class WatcherControlWidget(QWidget):
                 cfg = WatcherConfig.load()
                 from mousereach.watcher.db_location import resolve_watcher_db_path
                 db = WatcherDB(Path(resolve_watcher_db_path()))   # as Start does
-                orch = (ProcessingOrchestrator(cfg, db) if cfg.mode == "processing_server"
-                        else DLCOrchestrator(cfg, db))
+                from mousereach.watcher.standalone import make_orchestrator
+                orch = make_orchestrator(cfg, db)
                 orch.run_once()
             except Exception as e:
                 self._run_error = str(e)
@@ -1105,7 +1109,6 @@ class WatcherControlWidget(QWidget):
         self._f_retries.setValue(int(d.get("max_retries", 3)))
         self._f_maxpending.setValue(int(d.get("max_local_pending", 2)))
         self._f_gpu.setValue(int(d.get("dlc_gpu_device", 0)))
-        self._f_autoarchive.setChecked(bool(d.get("auto_archive_approved", False)))
         self._f_alsoprocess.setChecked(bool(d.get("also_process", False)))
         self._f_dlccfg.setText(str(d.get("dlc_config_path", "") or ""))
         self._f_quarantine.setText(str(d.get("quarantine_dir", "") or ""))
@@ -1130,7 +1133,7 @@ class WatcherControlWidget(QWidget):
     _FORM_MANAGED_KEYS = frozenset({
         "enabled", "mode", "poll_interval_seconds", "stability_wait_seconds",
         "max_retries", "max_local_pending", "dlc_gpu_device",
-        "auto_archive_approved", "also_process", "dlc_config_path",
+        "also_process", "dlc_config_path",
         "quarantine_dir", "log_dir", "db_path", "staging_path",
         "pause_while_running", "pause_resume_grace_seconds",
         "recording_days", "recording_hours",
@@ -1145,7 +1148,6 @@ class WatcherControlWidget(QWidget):
             "max_retries": self._f_retries.value(),
             "max_local_pending": self._f_maxpending.value(),
             "dlc_gpu_device": self._f_gpu.value(),
-            "auto_archive_approved": self._f_autoarchive.isChecked(),
             "also_process": self._f_alsoprocess.isChecked(),
             "pause_resume_grace_seconds": self._f_pause_grace.value(),
         }

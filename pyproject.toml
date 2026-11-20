@@ -39,6 +39,12 @@ dependencies = [
     # through napari, because a node with recording programs listed stays
     # paused for good when it cannot check.
     "psutil",
+    # The watcher's coordination database (collage claims, the shared record).
+    # In the core list since 2026-11-19: it used to be only in the [sync]
+    # extra, and a watcher installed with plain "pip install -e ." could not
+    # reach that database and cut no recording -- the one-PC install in the
+    # README is exactly that. Pure Python; installs everywhere.
+    "sqlalchemy>=2.0",
 
     # TensorFlow compatibility fixes
     "protobuf>=3.9.2",

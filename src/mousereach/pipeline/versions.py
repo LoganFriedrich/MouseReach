@@ -386,7 +386,10 @@ def publication_lock_gate(config=None):
             return False, ("Publication locks are set on the processing server, and this "
                            "machine's role could not be read (%s). Nothing was changed." % e)
     mode = getattr(config, "mode", None)
-    if mode == "processing_server":
+    from mousereach.watcher.standalone import analyses_and_files
+    if analyses_and_files(mode):
+        # The processing server, or a single machine (whose processing half
+        # holds the filed videos' rows, watcher/standalone.py).
         return True, None
     if mode == "dlc_pc" and getattr(config, "also_process", False):
         return True, ("Note: this machine analyses and files videos itself (also_process), "

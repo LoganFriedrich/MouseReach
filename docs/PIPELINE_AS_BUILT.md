@@ -212,7 +212,7 @@ Dropping a single-mouse video by hand into the shared folder Unanalyzed\Single_A
 
 HOW THIS PART OF THE PIPELINE ACTUALLY WORKS TODAY
 
-There are two watcher programs in the code, and one machine runs exactly one of them. The choice is made at startup from that machine's own settings file (~/.mousereach/config.json), from the key watcher.mode. The value "dlc_pc" starts the first watcher; the value "processing_server" starts the second. There is no way to run both on one machine (src/mousereach/watcher/cli.py:298).
+There are two watcher programs in the code, and one machine runs exactly one of them. The choice is made at startup from that machine's own settings file (~/.mousereach/config.json), from the key watcher.mode. The value "dlc_pc" starts the first watcher; the value "processing_server" starts the second. Until 2026-11-19 there was no way to run both on one machine; since then the value "standalone" runs both on one machine (see "Update 2026-11-19 (single-machine role)" at the end of this file).
 
 WHAT THE FIRST WATCHER DOES
 
@@ -7670,3 +7670,21 @@ segment's first frame):
 
 No version number changes: no algorithm's call changes (outcomes get the same input; the assignment's
 only difference is that such a reach is `unassigned` instead of a `miss`/`triaged` of pellet 1).
+
+
+## Update 2026-11-19 (single-machine role)
+
+WHAT WAS WRONG. A lab with one PC could not run the whole pipeline. A machine ran exactly one of the two watcher programs (watcher.mode "dlc_pc": cut and pose, then hand the pose on; "processing_server": take posed videos in, analyse, gate, take reviewed videos back, file). A "dlc_pc" with also_process on analyses and files what it posed, but through its own older copy of the analysis, which has no review return: every video the gate sent to triage or deep review stayed there for good, whatever a person answered. And a fresh install became a pose-only "dlc_pc" without being asked: the role came only from a lab profile.
+
+WHAT HOLDS NOW.
+
+- A third role, watcher.mode = "standalone" (src/mousereach/watcher/standalone.py), for a lab's only MouseReach machine. It runs the two EXISTING programs on the same PC, unchanged: a posing half (the GPU node's program, with also_process off, so it hands each pose on through Processing/Posed) and a processing half (the processing server's program: intake, analysis, quality check, hand-score comparison when configured, review gate, review return, kinematics, filing). No step has a third copy; a fix to either program reaches a single-machine lab too.
+- One pass (the "Run the pipeline now" button, Watcher Control's Run Once, `mousereach-watch --once`) runs the posing half until nothing is left, then the processing half until nothing is left: one press takes a recording in Unanalyzed/Multi-Animal to filed results in Analyzed/<project>/<cohort>/, or to a review queue. After a person finishes a review, the next pass takes the video back and files it.
+- The automatic watcher (`mousereach-watch`, or Start) runs both halves at the same time, each in its own thread: the graphics card poses while the processor analyses. A stop request (watcher_stop.flag, the Stop button) stops both after their current item; a pause pauses both.
+- Two databases, as two machines would have. THE watcher database (watcher.db_path, default <processing folder>/watcher.db) is the processing half's; every tool reads it (status, review tools, Run All Steps, crystallize). The posing half keeps <processing folder>/watcher_posing.db for the recordings it has cut and the videos it is posing. WHY separate: the processing half registers a posed video only if it does not know it yet; one shared database would know every video from the posing half and never take any in. So `mousereach-watch-status` counts a video from the moment it is posed; cutting and posing show in the machine's status report (Processing/.node_status).
+- Each half has its own temporary folder (watcher_working for the posing half, watcher_working_processing for the processing half), so the processing half stopping first never clears a crop the posing half is writing.
+- Every check that meant "the machine that analyses and files" now accepts the single machine too: the start-up checks (it needs both lists: the posed folder and Processing, AND a GPU, ffmpeg and the DLC model), Run All Steps (runs on the processing half's program), crystallize/uncrystallize, the unresolvable-video retry and sweep, the dashboard's re-run of an unresolvable video, and the dry run (which previews both halves). An unknown watcher.mode is refused at start instead of running as a pose-only node.
+- Setup asks. `mousereach-setup` begins with "Is this the ONLY machine that will run MouseReach in your lab?" (default yes on a new machine with no role from its settings or a lab profile; default no on a machine with a multi-machine role). Yes writes mode standalone, also_process off, the watcher on and a named watcher.db_path, and builds the pipeline folder's layout and pipeline_versions.json (which the watcher refuses to start without) without a separate command. No asks "g" (graphics-card PC) or "p" (processing machine); a processing machine without a db_path gets <processing folder>/watcher.db. The pipeline folder and the processing root must be different folders (both hold a folder named Processing); setup refuses the same folder for both. The Setup tab has the same choice ("What this machine does") and a field for the DeepLabCut model, and writes the same settings (wizard.role_settings, wizard.make_pipeline_folder).
+- The lab-profile template (src/mousereach/setup/lab_profiles.json.example) has a "Single machine" profile.
+- sqlalchemy is a core dependency (pyproject.toml). It was only in the [sync] extra, and a watcher installed with a plain `pip install -e .` could not reach its coordination database and cut no recording.
+- Requirement unchanged: the single machine needs an NVIDIA graphics card for posing (CPU posing was removed on 2026-11-18).

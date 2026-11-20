@@ -290,7 +290,8 @@ def rerun(db, video_id: str, from_step: Optional[str] = None,
         if server is None:
             try:
                 from mousereach.config import WatcherConfig
-                server = WatcherConfig.load().mode == 'processing_server'
+                from mousereach.watcher.standalone import analyses_and_files
+                server = analyses_and_files(WatcherConfig.load().mode)
             except Exception as e:
                 return False, f"could not read this machine's watcher settings: {e}"
         outcome, msg = retry_unresolvable_row(db, row, server=server, dry_run=False)

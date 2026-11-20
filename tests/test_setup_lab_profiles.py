@@ -81,7 +81,11 @@ def test_a_profile_fills_in_the_role_but_never_replaces_the_machines_settings():
     assert got["also_process"] is True                      # the machine's own value
     assert got["pause_while_running"] == ["recorder.exe"]   # filled in from the profile
     assert got["recording_days"] == "Mon-Fri"
-    assert got["mode"] == "dlc_pc"
+    # The role is ASKED since 2026-11-19 (wizard.ask_role); the profile's role
+    # is the default answer, not a value carried over without asking.
+    assert "mode" not in got
+    answers = iter(["", ""])
+    assert wizard.ask_role(existing, profile, ask=lambda _p: next(answers)) == "dlc_pc"
     assert got["dlc_config_path"] == "asked/config.yaml"    # asked for, so not overridden
 
 

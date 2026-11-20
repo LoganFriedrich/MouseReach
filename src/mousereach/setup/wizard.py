@@ -49,8 +49,122 @@ MACHINE_ROLE_FILE = CONFIG_DIR / "machine_role.json"
 # section is rewritten -- see run_setup_wizard().
 _WIZARD_PROMPTED_KEYS = frozenset({
     'dlc_config_path', 'dlc_gpu_device', 'poll_interval_seconds',
-    'stability_wait_seconds', 'enabled', 'max_retries',
+    'stability_wait_seconds', 'enabled', 'max_retries', 'mode',
 })
+
+# The machine's role (watcher.mode). WHY the wizard asks: it used to take the
+# role only from a lab profile, and WatcherConfig defaults a missing one to a
+# pose-only graphics-card PC. A new lab with one PC that ran mousereach-setup
+# and pressed "Run the pipeline now" got cutting and posing, then a hand-off
+# to a processing machine that does not exist. The first question is now
+# "is this the only MouseReach machine?"; yes means the single-machine role
+# (watcher/standalone.py), which does every step on this PC.
+ROLE_STANDALONE = "standalone"
+ROLE_GPU = "dlc_pc"
+ROLE_SERVER = "processing_server"
+
+
+def default_only_machine(existing_watcher: dict, profile_watcher: dict) -> bool:
+    """The default answer to "is this the only MouseReach machine?": yes on a
+    machine already set up that way, or with no role from its settings or a
+    lab profile (a new lab); no where a role for a multi-machine lab is known."""
+    known = (existing_watcher or {}).get('mode') or (profile_watcher or {}).get('mode')
+    return (not known) or known == ROLE_STANDALONE
+
+
+def ask_role(existing_watcher: dict, profile_watcher: dict, ask=input) -> str:
+    """Ask the machine's role and return watcher.mode. Never returns an unknown
+    role. ``ask`` is ``input`` (replaceable in tests)."""
+    only_default = default_only_machine(existing_watcher, profile_watcher)
+    print("\n0. This machine's role")
+    print("   Is this the ONLY machine that will run MouseReach in your lab?")
+    print("   Yes: this PC does everything -- cuts recordings, poses them on its")
+    print("   graphics card, analyses them, takes reviewed videos back and files the")
+    print("   results. Most labs answer yes.")
+    print("   No: your lab splits the work between graphics-card PCs and one")
+    print("   processing machine.")
+    hint = "[Y/n]" if only_default else "[y/N]"
+    ans = ask(f"   Only MouseReach machine? {hint}: ").strip().lower()
+    only = only_default if not ans else ans.startswith('y')
+    if only:
+        return ROLE_STANDALONE
+    known = (existing_watcher or {}).get('mode') or (profile_watcher or {}).get('mode')
+    default = known if known in (ROLE_GPU, ROLE_SERVER) else ROLE_GPU
+    letter = 'p' if default == ROLE_SERVER else 'g'
+    print("   Which part of the work does this machine do?")
+    print("     g = graphics-card PC: cuts recordings and poses them, hands each pose on")
+    print("     p = processing machine: analyses posed videos, takes reviews back, files")
+    while True:
+        ans = ask(f"   Role (g/p) [{letter}]: ").strip().lower() or letter
+        if ans.startswith('g'):
+            return ROLE_GPU
+        if ans.startswith('p'):
+            return ROLE_SERVER
+        print("   Please answer g or p.")
+
+
+def role_settings(role: str, proc_root, existing_watcher: dict = None,
+                  profile_watcher: dict = None) -> dict:
+    """The watcher settings a role needs, for the wizard and the Setup tab
+    (one rule, two ways in). ``mode`` always; on a single machine
+    ``also_process`` off and the watcher switched on (its one pass is the Run
+    button); on a machine that analyses, a named ``db_path`` when it has none
+    (watcher/db_location.py refuses an unnamed one on a processing server)."""
+    out = {'mode': role}
+    if role == ROLE_STANDALONE:
+        out['also_process'] = False
+        out['enabled'] = True
+    if role in (ROLE_STANDALONE, ROLE_SERVER) and proc_root and not (
+            (existing_watcher or {}).get('db_path') or (profile_watcher or {}).get('db_path')):
+        out['db_path'] = str(Path(proc_root) / "watcher.db")
+    return out
+
+
+def same_folder(proc_root, nas_root):
+    """Why the processing root may not be the pipeline folder, or None.
+
+    Both hold a folder named Processing: the pipeline folder's holds posed
+    videos and the review queues, the processing root's holds the working
+    files of the video being analysed. One folder for both would put the two
+    in one place, where the intake and the review return each read the
+    other's files."""
+    if not proc_root or not nas_root:
+        return None
+    try:
+        a, b = Path(proc_root).resolve(), Path(nas_root).resolve()
+    except Exception:
+        a, b = Path(proc_root), Path(nas_root)
+    if a == b:
+        return ("The processing root must be a different folder from the pipeline "
+                "folder (both hold a folder named Processing). For example: the "
+                "pipeline folder <disk>\\MouseReach_Data and the processing root "
+                "<disk>\\MouseReach_Work.")
+    return None
+
+
+def make_pipeline_folder(nas_root: Path) -> list:
+    """Create the pipeline folder layout inside ``nas_root`` and its
+    pipeline_versions.json when missing. Returns the lines to print.
+
+    WHY here: the watcher refuses to start without pipeline_versions.json in
+    the pipeline folder (it is how it knows the folder is a pipeline and not a
+    wrong turn), and the wizard used to print only a hint to run
+    mousereach-version-check --init. A single-machine lab gets a working
+    folder from setup alone. Nothing existing is changed: folders are only
+    created, and an existing pipeline_versions.json is left as it is."""
+    from mousereach.pipeline.pipe_structure import TARGET_DIRS
+    out = []
+    for rel in TARGET_DIRS:
+        d = Path(nas_root) / rel
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            out.append(f"     Created: {d}")
+    versions = Path(nas_root) / "pipeline_versions.json"
+    if not versions.exists():
+        from mousereach.pipeline.versions import initialize_versions
+        initialize_versions(Path(nas_root))
+        out.append(f"     Created: {versions}")
+    return out
 
 # The lab's machine profiles (lab-specific; never shipped). Looked for, in
 # order: the file named by the MOUSEREACH_LAB_PROFILES environment variable
@@ -460,6 +574,10 @@ def run_setup_wizard():
     profile_defaults = profile.get("defaults", {}) if profile else {}
     profile_watcher = profile_defaults.get("watcher", {})
 
+    # --- Step 0: the machine's role (see ROLE_STANDALONE) ---
+    role = ask_role(existing.get("watcher", {}), profile_watcher)
+    single = role == ROLE_STANDALONE
+
     # --- Step 1: Data repository ---
     nas_default = (
         existing.get("nas_drive")
@@ -494,15 +612,22 @@ def run_setup_wizard():
     print("\n2. Shared Pipeline Folder (nas_root)")
     print("   The folder on your data repository that holds the pipeline itself:")
     print("   Unanalyzed/, Processing/, Analyzed/ and pipeline_versions.json.")
-    print("   Every machine in the lab points at the same folder. Leave it blank")
-    print("   only on a machine that never uses shared storage.")
+    if single:
+        # A single machine needs it all the same: the intake folder, the review
+        # queues and Analyzed live in it. Any folder on this PC will do.
+        print("   On a single machine this can be any folder with room for your")
+        print("   videos and results (it is created for you). You put recordings")
+        print("   in its Unanalyzed/Multi-Animal folder; results appear in Analyzed.")
+    else:
+        print("   Every machine in the lab points at the same folder. Leave it blank")
+        print("   only on a machine that never uses shared storage.")
     nas_root = prompt_path(
         "   Pipeline folder",
         default=root_default,
         must_exist=False,
-        allow_empty=True
+        allow_empty=not single
     )
-    if nas_root and not (nas_root / "pipeline_versions.json").exists():
+    if nas_root and not single and not (nas_root / "pipeline_versions.json").exists():
         print("   [!] There is no pipeline_versions.json in that folder yet. If this")
         print("       is a new pipeline, create it with: mousereach-version-check --init")
 
@@ -520,12 +645,21 @@ def run_setup_wizard():
     print("     <root>/Processing/    - post-DLC analysis")
     print("     <root>/Failed/        - errors requiring investigation")
     print("   Use a fast local disk on this machine, not the shared folder.")
-    proc_root = prompt_path(
-        "   Enter path",
-        default=proc_default,
-        must_exist=False,
-        allow_empty=False
-    )
+    while True:
+        proc_root = prompt_path(
+            "   Enter path",
+            default=proc_default,
+            must_exist=False,
+            allow_empty=False
+        )
+        # WHY two different folders: both hold a folder named Processing --
+        # the pipeline folder's (posed videos, review queues) and this one's
+        # (the working files of the video being analysed). One folder for both
+        # would mix them. same_folder() says so in words.
+        clash = same_folder(proc_root, nas_root)
+        if not clash:
+            break
+        print("   " + clash)
 
     # --- Step 4: Watcher configuration ---
     watcher_config = None
@@ -540,8 +674,15 @@ def run_setup_wizard():
     print("     - Access to the DLC model config.yaml")
     print()
 
-    # Default to yes if the profile includes watcher config
-    if profile_watcher.get("enabled"):
+    # Default to yes if the profile includes watcher config. A single machine
+    # always gets it: the watcher's one pass IS the Run button and
+    # 'mousereach-watch --once' (nothing runs automatically unless started).
+    if single:
+        print("   Single machine: these settings are needed for the Run button and")
+        print("   'mousereach-watch --once'. Nothing runs automatically unless you")
+        print("   start the watcher yourself.")
+        setup_watcher = True
+    elif profile_watcher.get("enabled"):
         setup_watcher = input("   Set up the watcher on this machine? [Y/n]: ").strip().lower()
         setup_watcher = setup_watcher != 'n'
     else:
@@ -590,6 +731,10 @@ def run_setup_wizard():
         watcher_config['enabled'] = True
         watcher_config['max_retries'] = existing_watcher.get('max_retries',
                                          profile_watcher.get('max_retries', 3))
+        # The role and what it needs (role_settings): a single machine has
+        # also_process off; a machine that analyses names its database.
+        watcher_config.update(role_settings(role, proc_root, existing_watcher,
+                                            profile_watcher))
 
         _carry_unprompted(watcher_config, existing_watcher, profile_watcher)
 
@@ -610,6 +755,19 @@ def run_setup_wizard():
             from mousereach.pipeline.pipe_structure import TARGET_DIRS
             dirs_to_create.extend(nas_root / rel for rel in TARGET_DIRS)
 
+        if single and nas_root:
+            # A single machine's pipeline folder is its own: build it, with
+            # pipeline_versions.json, without asking (make_pipeline_folder).
+            print("\n5. Pipeline Directories")
+            for d in (proc_root / "DLC_Queue", proc_root / "Processing"):
+                d.mkdir(parents=True, exist_ok=True)
+            try:
+                for line in make_pipeline_folder(nas_root):
+                    print(line)
+                print(f"   Pipeline folder ready: {nas_root}")
+            except Exception as e:
+                print(f"   ERROR preparing {nas_root}: {e}")
+            dirs_to_create = []
         missing = [d for d in dirs_to_create if not d.exists()]
         if missing:
             print(f"\n5. Pipeline Directories")
@@ -644,6 +802,7 @@ def run_setup_wizard():
     print(f"  Pipeline Folder:   {nas_root or '(not set)'}")
     print(f"  Processing Root:   {proc_root}")
     if watcher_config:
+        print(f"  Role:              {watcher_config.get('mode')}")
         print(f"  Watcher:           Enabled")
         print(f"    DLC Config:      {watcher_config.get('dlc_config_path', '(not set)')}")
         print(f"    GPU Device:      {watcher_config.get('dlc_gpu_device', 0)}")
@@ -651,7 +810,13 @@ def run_setup_wizard():
 
     print("\nNext steps:")
     print("  1. Verify config:     mousereach-setup --show")
-    if watcher_config:
+    if single and nas_root:
+        print(f"  2. Put recordings in: {nas_root / 'Unanalyzed' / 'Multi-Animal'}")
+        print("     (names must follow YYYYMMDD_<animals>_<tray><run>.mp4 --")
+        print("     see docs/STANDALONE_LAB.md)")
+        print("  3. Run everything:    mousereach-watch --once")
+        print("     (or the 'Run the pipeline now' button in: mousereach)")
+    elif watcher_config:
         print("  2. Dry run (scan):    mousereach-watch --dry-run")
         print("  3. Process once:      mousereach-watch --once")
         print("  4. Start daemon:      mousereach-watch")
@@ -826,7 +991,7 @@ def show_config():
         print(f"  GPU Device:      {watcher.get('dlc_gpu_device', 0)}")
         print(f"  Poll Interval:   {watcher.get('poll_interval_seconds', 30)}s")
         print(f"  Stability Wait:  {watcher.get('stability_wait_seconds', 60)}s")
-        print(f"  Auto Archive:    {watcher.get('auto_archive_approved', False)}")
+        print(f"  Role (mode):     {watcher.get('mode', 'dlc_pc')}")
         print(f"  Max Retries:     {watcher.get('max_retries', 3)}")
     else:
         print(f"\nWatcher:           Not configured")
