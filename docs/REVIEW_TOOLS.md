@@ -1601,6 +1601,20 @@ these rules:
     instead ("<file>: no button ... the video may be running there again"), and the watcher
     finishes the move by itself once the video is back in that queue. On a computer without a
     watcher record, the person pressing the button decides.
+  - **A route from triage whose state was never recorded is caught up.** A review window
+    moves a video through the reviewer's own login; a login whose MouseReach settings name no
+    watcher database (`watcher.db_path`) moves the folder but cannot record the new state, so the
+    record keeps saying `triage` while the video is in deep review. When the check finds a
+    deep-review bundle whose routing record says it came from the video's own triage folder (and
+    was meant to be `deep_review`) while the record says `triage`, it records `deep_review` (log:
+    "its watcher record still said 'triage' ... recorded 'deep_review'") and then finishes the
+    route as above: the video left behind in the triage folder (open in the window when it was
+    moved) is moved in, and the triage folder is emptied. Nothing a person wrote is lost: the
+    review moved with the bundle. **Why:** before 2026-11-19 the check refused ("the watcher
+    record says the video is 'triage', not held in this queue"), and the video stayed in both
+    queues for good. A deep-review bundle routed from anywhere else is not caught up this way.
+    The real fix is in the login: every reviewer login on the processing server must carry
+    `watcher.db_path` (see INSTALL.md).
 - **A route out of the filed results is all or nothing.** `mousereach-route-to-queue` and the
   watcher's "segment mislabel" divert take a video's files out of its filed folder in Analyzed.
   If any file cannot be moved, every file already moved goes back to the filed folder, nothing
