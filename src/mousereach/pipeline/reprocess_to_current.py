@@ -31,9 +31,9 @@ or with a person's work lost:
  - The hand-score comparison runs before the gate, as in the watcher
    (watcher/hand_scores.py): a disagreeing pellet is flagged so the gate holds
    the video in triage; a session whose hand scores cannot be found is NOT
-   finalized, never filed uncompared. A video whose results match another
-   tray's hand scores (hand_scores.label_mismatch) is refused the same way:
-   not finalized and not routed to triage. Nothing is moved.
+   finalized, never filed uncompared. A video is compared with its OWN row
+   only: the label-mismatch refusal (results matching another tray's row)
+   was retired 2026-11-20 -- the name a person gave is trusted.
  - Every stop is shown to a person (_show_the_stop): it is the summary's
    ``error``, it is printed, and with ``finalize=True`` it puts the video on
    this machine's attention list (<NAS root>/attention/<host>_bring_current_
@@ -564,13 +564,6 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
                 f"Find why its hand scores cannot be found (its rows in the "
                 f"tracking sheet, or the hand-scores file this machine reads), "
                 f"then run bring-current again for it.")
-            return summary
-        if verdict.status == hand_scores.LABEL_MISMATCH:
-            # The results match another tray's hand scores: the name or the
-            # sheet has the trays swapped. No review can fix that, so it is
-            # neither routed to triage nor filed (hand_scores.label_mismatch).
-            summary["error"] = (f"label mismatch: {verdict.reason}; held, nothing "
-                                f"finalized")
             return summary
         if verdict.status in (hand_scores.AGREES, hand_scores.DISAGREES,
                               hand_scores.SUSPENDED, hand_scores.SHEET_ERROR):

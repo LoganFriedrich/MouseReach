@@ -1,17 +1,16 @@
-"""A video whose results match ANOTHER tray's hand scores is held as a label
-mismatch, outside the review queues, and released when the sheet or the name
-is corrected (watcher/hand_scores.label_mismatch, orchestrator.
-_hold_label_mismatch, review_return.bench_recheck).
+"""The label-mismatch hold is RETIRED (owner rule 2026-11-20: "Just trust what
+is written down"). A video whose results match ANOTHER tray's hand scores
+better than its own is no longer held: it is compared with its OWN row, like
+every video, and goes on as named -- a disagreement goes to triage as an
+ordinary bench disagreement. hand_scores.label_mismatch() itself is kept (it
+describes the rows in a sheet-error decision recorded while the hold existed),
+so its rule is still tested.
 
-WHY (owner ruling 2026-11-18): "that kind of thing isn't for triage to do.
-That's not something any triage process could repair, so it's not something
-to put into triage over." A triage reason must be shown and fixable in the
-review window; a swapped tray in the file name or the sheet is neither.
-
-And a triage bundle held over its hand scores is compared again when the
-scores change: a corrected sheet must not leave a person looking at old
-scores and disagreements that no longer exist, and an unanswered bundle whose
-only questions went away must go back to the pipeline and be filed.
+Still true from 2026-11-18: a triage bundle held over its hand scores is
+compared again when the scores change: a corrected sheet must not leave a
+person looking at old scores and disagreements that no longer exist, and an
+unanswered bundle whose only questions went away must go back to the pipeline
+and be filed.
 """
 import json
 import os
@@ -152,29 +151,26 @@ def _attention(tmp_path):
                       .read_text())["items"]
 
 
-def test_a_swap_is_held_outside_the_queues_not_triaged(tmp_path, monkeypatch):
+def test_a_swap_is_not_held_it_goes_on_as_named(tmp_path, monkeypatch):
+    """Retired hold: compared with its OWN row, its disagreements flagged for
+    triage like any other, nothing listed as a label mismatch."""
     folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
-    # An old bench flag from a comparison with the wrong row is taken back.
-    _outcomes(folder, CALLS, flags={4: "bench disagreement: the hand score says untouched; "
-                                       "the algorithm says displaced_sa"})
-    routed = []
-    monkeypatch.setattr(rg, "route_to_queue", lambda *a, **k: routed.append(a))
-    monkeypatch.setattr(rg, "route_deep_review", lambda *a, **k: routed.append(a))
     orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False      # held, before the gate
-    assert routed == []
-    assert orch.db.get_video(VID)["state"] == "processing"
-    [item] = _attention(tmp_path)
-    assert item["kind"] == "label_mismatch" and item["needs_person"] is True
-    assert item["matched_rows"] == [{"key": OTHER, "agree": 19, "compared": 19}]
-    assert item["own_row"]["agree"] == 7
-    assert "not P3's (7/19)" in item["says"] and "held outside the review queues" in item["says"]
+    assert hs.check(VID, folder).status == hs.DISAGREES
+    assert orch._hand_score_precheck(VID, folder) is True       # on to the gate
+    assert not orch._held_for_hand_scores(VID)
+    assert orch._waiting_for_hand_scores(VID) is False
+    att = tmp_path / "nas" / "attention" / "HOST_hand_scores.json"
+    assert not att.exists() or all(i.get("kind") != "label_mismatch"
+                                   for i in _attention(tmp_path))
     doc = _doc(folder)
-    assert not any(str(s.get("flag_reason") or "").startswith("bench")
-                   for s in doc["segments"])
-    assert doc["hand_scores"]["verdict"] == "label_mismatch"
-    # held: not picked again while nothing changes
-    assert orch._waiting_for_hand_scores(VID) is True
+    assert doc["hand_scores"]["verdict"] == "disagrees"
+    assert "label_mismatch" not in doc["hand_scores"]
+    bench = {s["segment_num"] for s in doc["segments"]
+             if str(s.get("flag_reason") or "").startswith("bench")}
+    assert bench == {n for n, c in CALLS.items() if P3_ROW[n] != c}
+    decision, _, _ = rg.evaluate_gate(VID, folder)
+    assert decision != rg.DECISION_CLEAN                         # triage, not filed
 
 
 def test_a_genuine_disagreement_still_goes_to_triage(tmp_path, monkeypatch):
@@ -188,41 +184,27 @@ def test_a_genuine_disagreement_still_goes_to_triage(tmp_path, monkeypatch):
     assert not orch._held_for_hand_scores(VID)
 
 
-def test_a_corrected_sheet_releases_it(tmp_path, monkeypatch):
+def test_a_hold_written_before_the_retirement_goes_on_after_a_restart(
+        tmp_path, monkeypatch):
     folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
     orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False
-    # The sheet's P3 and P4 rows are swapped back; the next import rewrites the file.
-    _write_scores(tmp_path, {VID: P4_ROW, OTHER: P3_ROW})
-    assert orch._waiting_for_hand_scores(VID) is False          # checked again
-    assert orch._hand_score_precheck(VID, folder) is True       # goes on
-    assert not orch._held_for_hand_scores(VID)
-    assert _attention(tmp_path) == []
-    assert _doc(folder)["hand_scores"]["verdict"] == "agrees"
-
-
-def test_a_corrected_name_releases_it(tmp_path, monkeypatch):
-    folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
-    orch = _orch(tmp_path, monkeypatch)
-    assert orch._hand_score_precheck(VID, folder) is False
-    # The name correction puts the real P3 recording's results under this
-    # name (the originals kept in Archive/manual_corrections): its calls now
-    # match P3's row. The scores file did not change.
-    _outcomes(folder, {n: s for n, s in P3_ROW.items()})
-    assert orch._waiting_for_hand_scores(VID) is False
-    assert orch._hand_score_precheck(VID, folder) is True
-    assert _attention(tmp_path) == []
-
-
-def test_the_hold_survives_a_restart(tmp_path, monkeypatch):
-    folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
-    orch = _orch(tmp_path, monkeypatch)
-    orch._hand_score_precheck(VID, folder)
+    ready = orch.db.get_video(VID).get("processing_started_at") or "2026-11-19T10:00:00"
+    if not orch.db.get_video(VID).get("processing_started_at"):
+        orch.db.conn.execute("UPDATE videos SET processing_started_at=? WHERE video_id=?",
+                             (ready, VID)) if hasattr(orch.db, "conn") else None
+    att = tmp_path / "nas" / "attention"
+    att.mkdir(parents=True, exist_ok=True)
+    (att / "HOST_hand_scores.json").write_text(json.dumps({"items": [{
+        "kind": "label_mismatch", "needs_person": True, "video_id": VID,
+        "cohort_id": "ABC_01", "ready_since": ready, "says": "old hold"}]}),
+        encoding="utf-8")
     restored = orch._restore_score_waits()
-    assert restored[VID]["label_mismatch"] is True
+    for w in restored.values():
+        assert "label_mismatch" not in w                  # a plain hold now
     orch._score_waits = restored
-    orch._write_score_attention()
-    assert _attention(tmp_path)[0]["kind"] == "label_mismatch"
+    assert orch._waiting_for_hand_scores(VID) is False   # checked again at once
+    assert orch._hand_score_precheck(VID, folder) is True
+    assert all(i.get("kind") != "label_mismatch" for i in _attention(tmp_path))
 
 
 def test_census_counts_it(tmp_path, monkeypatch):
@@ -282,7 +264,9 @@ class FakeDB:
         return {}
 
 
-def test_a_bundle_in_triage_over_a_swap_moves_to_the_hold(tmp_path, monkeypatch):
+def test_a_bundle_in_triage_over_a_swap_stays_in_triage(tmp_path, monkeypatch):
+    """Retired hold: a bundle whose results match another tray is not moved out
+    of triage; the person answers its disagreements like any other."""
     triage = _wire(monkeypatch, tmp_path)
     _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
     b = _bench_bundle(triage, P3_ROW)
@@ -290,12 +274,11 @@ def test_a_bundle_in_triage_over_a_swap_moves_to_the_hold(tmp_path, monkeypatch)
     review.write_text(json.dumps({"segments": [{"segment_num": 4, "answers": {}}]}),
                       encoding="utf-8")
     before = review.read_bytes()
-    returned = []
     monkeypatch.setattr(rr, "_return_to_processing",
-                        lambda *a, **k: returned.append(a) or True)
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("moved")))
     summary = rr.scan_review_queues(FakeDB(), tmp_path / "proc")
-    assert [a[1] for a in returned] == [VID] and returned[0][4] == "label_mismatch"
-    assert summary.get("bench_label_mismatch") == 1
+    assert not summary.get("bench_label_mismatch")
+    assert b.exists()
     assert review.read_bytes() == before            # the answers are not touched
 
 
@@ -389,40 +372,24 @@ def test_a_bundle_being_answered_now_is_left_alone(tmp_path, monkeypatch):
     rr.scan_review_queues(FakeDB(), tmp_path / "proc")
 
 
-def test_a_bundle_moved_to_the_hold_keeps_its_answers_through_the_real_return(
-        tmp_path, monkeypatch):
-    """No stubbed return: the bundle with a person's answer goes back to
-    Processing through the ordinary return, the review file goes with it, and
-    the pipeline's check holds it naming the answered pellet."""
-    triage = _wire(monkeypatch, tmp_path)
-    _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW}, folder=tmp_path / "unused")
-    b = _bench_bundle(triage, P3_ROW)
-    (b / f"{VID}.mp4").write_bytes(b"not a real video")
-    (b / f"{VID}DLC_resnet50_testShuffle1_100.h5").write_bytes(b"not a real pose")
-    review = b / f"{VID}_causal_review.json"
-    review.write_text(json.dumps({"segments": [
-        {"segment_num": 4, "human": {"outcome": "displaced_sa"},
-         "answers": {"reviewed": True}}]}), encoding="utf-8")
-    before = review.read_bytes()
-    import time as _t
-    old = _t.time() - 7200
-    for f in b.iterdir():
-        os.utime(f, (old, old))
-    monkeypatch.setattr(rc, "answered_segments_of", lambda v, d: {4})
-    proc = tmp_path / "proc"
-    orch = _orch(tmp_path, monkeypatch)
-    orch.db.force_state(VID, "triage", reason="test fixture")
-    summary = rr.scan_review_queues(orch.db, proc)
-    assert summary.get("bench_label_mismatch") == 1
-    assert not (triage / VID).exists() or not any((triage / VID).iterdir())
-    kept = proc / f"{VID}_causal_review.json"
-    assert kept.read_bytes() == before                  # the answer travelled
-    assert orch.db.get_video(VID)["state"] == "processing"
-    assert orch._hand_score_precheck(VID, proc) is False            # held
-    item = json.loads((tmp_path / "nas" / "attention" / "HOST_hand_scores.json")
-                      .read_text())["items"][0]
-    assert item["kind"] == "label_mismatch" and item["answers_kept"] == [4]
-    assert "pellet(s) 4 are kept" in item["says"]
+def test_the_decision_command_refuses_new_decisions_and_keeps_the_record(
+        tmp_path, monkeypatch, capsys):
+    from mousereach.watcher import label_decision_cli as cli
+    _orch(tmp_path, monkeypatch)
+    from mousereach.review import causal_review_io as cio
+    monkeypatch.setattr(cio, "_default_index_dir", lambda: tmp_path / "review_records")
+    hs.record_decision(VID, hs.DECISION_SHEET_ERROR, "a reviewer")    # the history
+    for args in (["--sheet-error", OTHER, "--by", "x"],
+                 ["--name-wrong", OTHER, "--as", VID, "--by", "x"],
+                 ["--labels-right", OTHER, "--by", "x"]):
+        assert cli.main(args) == 1
+        assert "retired" in capsys.readouterr().err
+    lines = hs.decisions_path().read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1                                         # nothing recorded
+    assert cli.main(["--decisions"]) == 0
+    assert VID in capsys.readouterr().out
+    assert cli.main(["--list"]) == 0
+    assert "retired" in capsys.readouterr().out
 
 
 def test_a_suspended_bundle_with_another_question_is_not_released_again_and_again(

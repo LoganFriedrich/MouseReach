@@ -1144,7 +1144,7 @@ _bench_cache: Dict[str, tuple] = {}
 
 # What bench_recheck found for a triage bundle.
 BENCH_NOTHING = None                      # not held over its hand scores, or nothing to do
-BENCH_LABEL_MISMATCH = "label_mismatch"   # move it to the label-mismatch hold
+BENCH_LABEL_MISMATCH = "label_mismatch"   # RETIRED 2026-11-20: never returned now
 BENCH_RELEASE = "release"                 # now agrees, nobody answered: return it
 BENCH_REFRESHED = "refreshed"             # its kept scores and flags were brought up to date
 
@@ -1240,8 +1240,6 @@ def _bench_act(bundle: Path, stem: str, out: dict, stamp, st=None):
         v = hand_scores.check(stem, bundle)
     except hand_scores.PelletNumbersUnknown:
         return BENCH_NOTHING          # the triage return diverts it by its own rule
-    if v.status == hand_scores.LABEL_MISMATCH:
-        return BENCH_LABEL_MISMATCH
     if v.status not in (hand_scores.AGREES, hand_scores.DISAGREES, hand_scores.SUSPENDED,
                         hand_scores.SHEET_ERROR):
         return BENCH_NOTHING          # no row any more: left as it is, for a person
