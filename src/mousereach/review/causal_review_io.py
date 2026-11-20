@@ -1931,6 +1931,32 @@ def index_gt_outcomes_by_segment(gt, current_segments=None,
 UNDECIDED_OUTCOMES = (None, "triaged", "uncertain")
 
 
+def gt_outcome_is_answer(seg) -> bool:
+    """True when a ground-truth outcome entry is a person's DECIDED answer.
+
+    Two conditions: the entry is not marked ``determined: False``, and its
+    outcome is a decision (not in UNDECIDED_OUTCOMES). A ground-truth file can
+    hold an outcome a person marked determined whose value is "uncertain": the
+    person looked and could not tell. That is no answer to the question "what
+    happened to this pellet", so it does not outrank a lower layer's answer.
+
+    WHY one definition (2026-11-20): human answers are taken by precedence --
+    ground truth > deep review > triage, the highest that GAVE AN ANSWER wins,
+    and a video is never held over the disagreement. The review gate counted a
+    determined "uncertain" as settled while the kinematics applied it as the
+    pellet's outcome, so the gate passed a video whose features then said
+    "uncertain" and the archive step refused to file it (it does not file an
+    undecided pellet). Every reader of ground-truth outcomes -- the gate and
+    release check (triage_status.gt_resolved_segments), the kinematics
+    (truth_resolver), the triage lift (triage.gt_resolve) -- asks here, so
+    they cannot disagree again."""
+    if not isinstance(seg, dict):
+        return False
+    if seg.get("determined") is False:
+        return False
+    return seg.get("outcome") not in UNDECIDED_OUTCOMES
+
+
 def is_answered(rec) -> bool:
     """True when a saved review record is a person's ANSWER for its segment.
 
