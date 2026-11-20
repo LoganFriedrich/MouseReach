@@ -367,6 +367,27 @@ class _LazyVideo:
         self._max = int(max_cache)
         self._lock = threading.Lock()
         self._tl = threading.local()
+        # Every reader opened on the file, whichever thread opened it, and a
+        # generation that close() bumps so each thread opens a new one. WHY:
+        # an open reader keeps the mp4 open, and on Windows a file held open
+        # cannot be moved -- Escalate left the video behind in the triage
+        # folder (WinError 32) while the rest of the bundle went to deep
+        # review (close()).
+        self._caps: List[Any] = []
+        self._gen = 0
+
+    def close(self) -> None:
+        """Release every reader this view opened, so the file is no longer
+        held open (a move of the video needs that on Windows). A later read
+        opens a new reader; cached frames stay. Never raises."""
+        with self._lock:
+            caps, self._caps = self._caps, []
+            self._gen += 1
+        for cap in caps:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
     def __len__(self):
         return self.shape[0]
@@ -382,8 +403,11 @@ class _LazyVideo:
             return a
         cap = getattr(self._tl, "cap", None)
         pos = getattr(self._tl, "pos", -10)
-        if cap is None:
+        if cap is None or getattr(self._tl, "gen", None) != self._gen:
             cap = self._tl.cap = cv2.VideoCapture(self._path)
+            self._tl.gen = self._gen
+            with self._lock:
+                self._caps.append(cap)
             pos = -10
         if i != pos + 1:
             cap.set(cv2.CAP_PROP_POS_FRAMES, i)  # seek only when NOT sequential
@@ -1236,7 +1260,16 @@ The notes box travels with the video.
         """
         video = _LazyVideo(path, n_frames, h, w)
         self._frame_cache = video._cache
+        self._lazy_video = video
         return video
+
+    def _release_video_file(self) -> None:
+        """Stop holding the video's mp4 open (see _LazyVideo.close). Called
+        before this window moves the video to another queue: on Windows an
+        open file cannot be moved, and the route left the mp4 behind."""
+        video = getattr(self, "_lazy_video", None)
+        if video is not None:
+            video.close()
 
     def _relevant_reach(self, seg: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """The reach the reviewer should open ON for a segment.
@@ -3315,6 +3348,10 @@ The notes box travels with the video.
         reason = ("reviewer escalated from triage: bad segmentation"
                   + (f" -- {note}" if note else ""))
         db, db_note = self._watcher_db_for_move()
+        # The window has the mp4 open; release it so the move can take it
+        # (on Windows an open file cannot be moved, and the route used to go
+        # on without it, leaving the video in the triage folder).
+        self._release_video_file()
         try:
             from mousereach.watcher.review_gate import escalate_to_deep_review
             report = {}

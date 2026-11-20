@@ -312,6 +312,16 @@ asked again -- see "A re-cut voids the answers given before it"), moves the bund
 re-segmentation queue with the notes text as the routing reason, and loads the
 next video (`_escalate_to_deep_review`).
 
+**Escalate lets go of the video first (since 2026-11-19).** The window keeps the video file
+open while it shows it, and on Windows an open file cannot be moved. Escalate used to move the
+rest of the bundle into re-segmentation and leave the video file behind in the triage folder
+("WinError 32 ... being used by another process"), so the video was in both queues and the
+watcher logged "file(s) failed to move into its bundle". Escalate now closes the window's
+hold on the video before it moves anything (`_release_video_file`, `_LazyVideo.close`). Another
+window or program that has the same video open (a second review window, a video player) still
+blocks the move; the watcher then moves the file in by itself once it is closed (see "A route
+that could not move every file is finished later").
+
 **The watcher's record follows the move (since 2026-11-15).** Escalate and Flag Session now
 record the video as `deep_review` in the watcher's own database as they move it (the same
 database the watcher writes; it is never created by the tool). Before, the row kept saying
