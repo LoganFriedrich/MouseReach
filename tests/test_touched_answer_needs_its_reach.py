@@ -33,7 +33,10 @@ def _rec(outcome, reach=None, windows=None):
         human_causal_reach=({"start": reach[0], "end": reach[1], "reach_id": 9}
                             if reach else None),
         is_phantom=False, agreed=False, answers=answers, notes="",
-        segment_span={"start": 1000, "end": 2000})
+        segment_span={"start": 1000, "end": 2000},
+        # The person checked the reach's first and last frame (owner rule
+        # 2026-11-19; causal_review_io.CAUSAL_BOUNDS_KEY).
+        causal_reach_bounds=({"start": reach[0], "end": reach[1]} if reach else None))
 
 
 @pytest.mark.parametrize("outcome", ["retrieved", "displaced_sa", "displaced_outside"])

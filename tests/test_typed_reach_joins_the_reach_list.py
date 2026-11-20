@@ -99,4 +99,6 @@ def test_the_review_window_refuses_a_typed_reach_longer_than_any_reach():
            "answers": {"outcome_pick": "retrieved"}}
     assert "runs 732 frames" in answer_problem(rec)
     rec["human"]["causal_reach"] = {"start": 300, "end": 318, "typed": [300, 318]}
+    # ...with its first and last frame checked (owner rule 2026-11-19).
+    rec["human"]["causal_reach_bounds"] = {"start": 300, "end": 318}
     assert answer_problem(rec) is None

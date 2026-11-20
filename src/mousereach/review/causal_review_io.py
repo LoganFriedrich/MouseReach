@@ -366,6 +366,91 @@ def collect_provenance(video_dir: Path, video_stem: str) -> Dict[str, Any]:
 # Per-segment review record
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# What a triage answer says about EVERY reach of its segment (owner rules
+# 2026-11-19)
+# ---------------------------------------------------------------------------
+# "Naming the causal reach of a segment ALSO answers every other reach in that
+# segment -- they all missed, whether or not a person watched them. 1 answered
+# reach of 50 = 50 known reach outcomes." And "'untouched' / 'no reach
+# interacted' => every reach of the segment is a miss." So a saved answer
+# records that explicitly, reach by reach, instead of leaving every later step
+# to infer it:
+#
+#   human.reach_calls = [{"reach_id", "start", "end", "call": "causal"|"miss",
+#                         "detected": bool, "bounds": "human"|"detected"}, ...]
+#
+# one entry per reach the reach detector found in the segment's frames (and,
+# for a causal reach the detector missed, one more entry with detected False).
+# "bounds" says whose frames "start"/"end" are: only the causal reach's are a
+# person's (below); a miss's are the detector's, never judged.
+#
+# "A causal answer always includes the person checking that reach's
+# start/end (always shown, even if not asked)":
+#
+#   human.causal_reach_bounds = {"start": int, "end": int}
+#
+# the first and last frame of the causal reach as the person confirmed or
+# corrected them. Present only when a causal reach is named; an untouched
+# segment has no reach whose bounds anyone judged. ``human.causal_reach`` stays
+# the reach the person picked (the detector's frames, or the frames typed for
+# an undetected reach), so matching it to the reach list is unchanged.
+REACH_CALLS_KEY = "reach_calls"
+CAUSAL_BOUNDS_KEY = "causal_reach_bounds"
+# Outcomes that say no reach moved the pellet: every reach of the segment is a
+# miss. "abnormal_exception" is the outcome written when a person marks a
+# non-reach event (an ignore window) and names no reach.
+NO_REACH_OUTCOMES = ("untouched", "abnormal_exception")
+
+
+def segment_reach_calls(human_outcome, human_causal_reach, segment_reaches,
+                        causal_bounds=None) -> Optional[List[Dict[str, Any]]]:
+    """The explicit call on every reach of a segment implied by a person's
+    answer (comment at REACH_CALLS_KEY), or None when the answer does not
+    settle them: no outcome decided, or a touched outcome with no causal reach
+    named. ``segment_reaches``: the detected reaches in the segment's frames,
+    each ``{start, end, reach_id}``."""
+    if human_outcome in (None, "triaged", "uncertain"):
+        return None
+    reaches = []
+    for r in segment_reaches or []:
+        try:
+            reaches.append({"reach_id": r.get("reach_id"), "start": int(r["start"]),
+                            "end": int(r["end"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    causal = None
+    if human_causal_reach:
+        try:
+            cs, ce = int(human_causal_reach["start"]), int(human_causal_reach["end"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        rid = human_causal_reach.get("reach_id")
+        causal = next((r for r in reaches if rid is not None and r["reach_id"] == rid
+                       and r["start"] == cs and r["end"] == ce), None)
+        if causal is None:
+            causal = typed_reach_match(cs, ce, reaches)
+    elif human_outcome not in NO_REACH_OUTCOMES:
+        return None
+    out = []
+    for r in reaches:
+        is_causal = causal is not None and r is causal
+        e = dict(r, call="causal" if is_causal else "miss", detected=True,
+                 bounds="detected")
+        if is_causal and causal_bounds:
+            e["bounds"] = "human"
+            e["start"], e["end"] = int(causal_bounds["start"]), int(causal_bounds["end"])
+            e["detected_start"], e["detected_end"] = r["start"], r["end"]
+        out.append(e)
+    if human_causal_reach and causal is None:
+        # A reach the detector missed, named by its typed frames.
+        b = causal_bounds or {"start": cs, "end": ce}
+        out.append({"reach_id": None, "start": int(b["start"]), "end": int(b["end"]),
+                    "call": "causal", "detected": False,
+                    "bounds": "human" if causal_bounds else "typed"})
+    return out
+
+
 def build_segment_record(
     segment_num: int,
     pellet_num: Optional[int],
@@ -380,8 +465,15 @@ def build_segment_record(
     notes: str = "",
     segment_span: Optional[Dict[str, int]] = None,
     true_segment_num: Optional[int] = None,
+    segment_reaches: Optional[List[Dict[str, Any]]] = None,
+    causal_reach_bounds: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """Build a single segment's review record.
+
+    ``segment_reaches`` (the detected reaches in the segment's frames) and
+    ``causal_reach_bounds`` (the causal reach's first/last frame as the person
+    checked them) add ``human.reach_calls`` and ``human.causal_reach_bounds``
+    -- the explicit call on every reach (comment at REACH_CALLS_KEY).
 
     ``segment_span`` is the segment's frame range ({"start": .., "end": ..}) as
     it stood when the human looked at it, and it is what makes the record
@@ -431,6 +523,14 @@ def build_segment_record(
     if true_segment_num is not None and true_segment_num != segment_num:
         rec["true_segment_num"] = int(true_segment_num)
         rec["segmentation_wrong"] = True
+    if human_causal_reach and causal_reach_bounds:
+        rec["human"][CAUSAL_BOUNDS_KEY] = {"start": int(causal_reach_bounds["start"]),
+                                           "end": int(causal_reach_bounds["end"])}
+    if segment_reaches is not None:
+        calls = segment_reach_calls(human_outcome, human_causal_reach, segment_reaches,
+                                    rec["human"].get(CAUSAL_BOUNDS_KEY))
+        if calls is not None:
+            rec["human"][REACH_CALLS_KEY] = calls
     return rec
 
 
@@ -461,6 +561,7 @@ def _answer_signature(rec: Dict[str, Any]) -> str:
     return json.dumps({
         "outcome": human.get("outcome"),
         "causal_reach": human.get("causal_reach"),
+        "causal_reach_bounds": human.get(CAUSAL_BOUNDS_KEY),
         "is_phantom": human.get("is_phantom"),
         "answers": rec.get("answers"),
         "notes": rec.get("notes"),
@@ -976,6 +1077,26 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
         return ("The reach you typed runs %d frames (frames %d-%d); no reach lasts that "
                 "long. Check the two frame numbers and type them again."
                 % (typed[1] - typed[0] + 1, typed[0], typed[1]))
+    if cr is not None and human.get("outcome") in _TOUCHED_OUTCOMES:
+        # A causal answer includes the person checking that reach's first and
+        # last frame (owner rule 2026-11-19; comment at REACH_CALLS_KEY): the
+        # reach's frames are what its kinematics are computed over.
+        b = human.get(CAUSAL_BOUNDS_KEY)
+        if not b:
+            return ("Check the first and last frame of the reach you named as the one "
+                    "that touched pellet %s (frames %d-%d): correct them under 'Causal "
+                    "reach: its first and last frames' if needed, then tick 'Checked'."
+                    % (rec.get("pellet_num") or n, cr[0], cr[1]))
+        try:
+            bs, be = int(b["start"]), int(b["end"])
+        except (KeyError, TypeError, ValueError):
+            bs, be = 1, 0
+        if be < bs:
+            return ("The causal reach's last frame (%s) is before its first frame (%s). "
+                    "Correct them, then tick 'Checked'." % (b.get("end"), b.get("start")))
+        if _reach_outside((bs, be), span):
+            return ("The causal reach's checked frames (%d-%d) are outside segment %s, "
+                    "which runs from frame %d to %d." % (bs, be, n, span[0], span[1]))
     return None
 
 

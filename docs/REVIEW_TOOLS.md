@@ -124,6 +124,28 @@ The reach list is narrowed by `assignment.v2.triage_reduction.reduce_triaged_seg
 
 Until that date a typed reach was swapped for any detected reach touching it by a single frame, and a reach the detector missed was never added, so its pellet's credit was lost or landed on a neighbouring reach.
 
+**The causal reach's first and last frame -- always checked (since 2026-11-19).** Under the reach list
+is a row "Causal reach: its first and last frames (always check)": two frame boxes, filled with the
+frames of the reach currently picked (or typed, or pinned), and a box to tick, "Checked: these are
+its first and last frames". Whenever a reach is named as the one that moved the pellet, step to its
+first and last frame, correct the numbers if the detector got them wrong, and tick Checked. Picking
+another reach refills the frames and clears the tick. An answer naming a reach without the tick is
+not recorded ("Check the first and last frame of the reach you named ..."); nor are checked frames
+whose last frame comes before the first, or that lie outside the segment. With `untouched` (or no
+reach) the row is greyed out: an untouched pellet has no reach whose frames anyone judges. Why (owner
+rule): "a causal answer always includes the person checking that reach's start/end, even if not
+asked" -- the causal reach's frames are what its kinematics are computed over. A saved answer
+opened again shows its checked frames, ticked; an answer saved before this date shows the reach's
+own frames unticked, and must be ticked only if it is changed.
+
+**Every reach of the segment is recorded (since 2026-11-19).** Saving an answer also writes the call
+on every reach the detector found in the segment: the reach named is `causal`, every other one a
+`miss` -- whether or not anyone watched it. An `untouched` answer (or a non-reach event with no reach
+named, `abnormal_exception`) records every reach as a `miss`. Why (owner rule): "naming the causal
+reach of a segment ALSO answers every other reach in that segment -- they all missed"; one answer
+about one reach of fifty is fifty known reach outcomes, for the results, the exports and the
+evaluation of new algorithm versions.
+
 Every segment also gets an **"Ignore windows"** box — frame ranges where something that is not a reach moved the pellet (`:1369`, `_make_abnormal_ranges_widget`, `:2161`) — and a free-text notes box. There is no control for saying the cuts are wrong: a wrong pellet or wrong cuts is never answered here, it is escalated (see "Escalating out of triage").
 
 Two more buttons: **Flag Session** (`:2514`) and, in re-segmentation mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in re-segmentation.
@@ -777,7 +799,9 @@ segment_num       the segment's number at the time of review
 segment_span      {"start": ..., "end": ...} -- the frames the reviewer saw
 pellet_num
 algo              {outcome, causal_reach, interaction_frame}   as it stood
-human             {outcome, causal_reach, is_phantom, agreed}
+human             {outcome, causal_reach, is_phantom, agreed,
+                   causal_reach_bounds, reach_calls}   (the last two since
+                   2026-11-19, see below)
 answers           {triage_kind, outcome_pick/outcome_override, causal_pick,
                    abnormal_ranges, reviewed: false for placeholders,
                    double_disagreement: present only when the "check your
@@ -790,6 +814,32 @@ segmentation_wrong  true, alongside true_segment_num
 reviewer          who gave THIS segment's answer (since 2026-10-28; absent
                   on a placeholder nobody answered)
 reviewed_at       when that answer was given (same rule)
+```
+
+**`human.causal_reach_bounds` and `human.reach_calls` (since 2026-11-19;
+`causal_review_io.CAUSAL_BOUNDS_KEY`, `REACH_CALLS_KEY`, `segment_reach_calls`).**
+These are what later steps read to use a person's answer as the result for
+every reach of the segment:
+
+```
+causal_reach_bounds  {"start": int, "end": int} -- the causal reach's first and
+                     last frame as the person checked (and maybe corrected)
+                     them. Only when a causal reach is named. human.causal_reach
+                     stays the reach as PICKED (the detector's frames, or the
+                     typed frames), so matching it to the reach list is
+                     unchanged; these are the person's frames for it.
+reach_calls          one entry per reach the detector found in the segment's
+                     frames, plus one for a causal reach the detector missed:
+                     {reach_id, start, end, call: "causal" | "miss",
+                      detected: true|false,
+                      bounds: "human" (start/end are the person's checked
+                              frames; the detector's kept as detected_start /
+                              detected_end) | "detected" (the detector's frames,
+                              never judged -- every miss) | "typed"}
+                     Written when the answer settles every reach: a causal reach
+                     named (it is "causal", the rest "miss"), or untouched /
+                     abnormal_exception (all "miss"). Absent when the outcome is
+                     undecided, and on answers saved before 2026-11-19.
 ```
 
 **Who answered which segment (since 2026-10-28).** The file as a whole also

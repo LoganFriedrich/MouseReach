@@ -21,7 +21,11 @@ from mousereach.watcher.review_gate import DECISION_CLEAN, DECISION_DEEP, evalua
 def _rec(span, reach=None, outcome="displaced_sa", **answers):
     return {"segment_num": 17, "segment_span": {"start": span[0], "end": span[1]},
             "human": {"outcome": outcome,
-                      "causal_reach": ({"start": reach[0], "end": reach[1]} if reach else None)},
+                      "causal_reach": ({"start": reach[0], "end": reach[1]} if reach else None),
+                      # Its first/last frame checked by the person (owner rule
+                      # 2026-11-19; causal_review_io.CAUSAL_BOUNDS_KEY).
+                      "causal_reach_bounds": ({"start": reach[0], "end": reach[1]}
+                                              if reach else None)},
             "answers": answers or {"outcome_pick": outcome}}
 
 
