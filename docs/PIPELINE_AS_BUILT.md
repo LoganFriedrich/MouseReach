@@ -5385,7 +5385,15 @@ Now `db_location.resolve_watcher_db_path` follows these rules, in order:
    about which database the watcher uses, so the default file under that folder would be a
    guess;
 2. `watcher.db_path` is set -> that file;
-3. `watcher.mode` is `processing_server` and `db_path` is not set -> refused (`WatcherDbUnnamed`):
+2b. (since 2026-11-20) `db_path` is not set, but the lab profile for THIS machine -- the profile in
+   lab_profiles.json whose `match.hostname` is this computer's name -- names
+   `defaults.watcher.db_path` -> that file, with a log warning naming the profile and file. The
+   profiles file is looked for where `mousereach-setup` looks, then as `lab_profiles.json` in the
+   login's `nas_root`. WHY: a second reviewer's login on the server had no `db_path`, so its review
+   window could not record a queue move; the machine profile is the lab's own record of this
+   machine, not a guess. A profile matched only by drive letters is not used. No login's settings
+   file is edited;
+3. `watcher.mode` is `processing_server` and `db_path` is not set (nor by 2b) -> refused (`WatcherDbUnnamed`):
    the processing server's database must be named in the settings of every login that works
    with it;
 4. otherwise -> `<processing_root>/watcher.db`, as before. This is the GPU PC's own default,

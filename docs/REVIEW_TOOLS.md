@@ -334,8 +334,13 @@ Before, that case was only written to the log and the message just said "moved".
 
 **Checking a reviewer's login (whoever installs or updates the review tools).** The window finds
 the watcher database the same way the watcher does: `watcher.db_path` in that login's
-`~/.mousereach/config.json` if set, otherwise (on a GPU PC only) `watcher.db` in that login's
-processing folder. A login with no `~/.mousereach/config.json` at all is refused the same way
+`~/.mousereach/config.json` if set; otherwise, since 2026-11-20, the `db_path` that the lab
+profiles file (`lab_profiles.json`: where `MOUSEREACH_LAB_PROFILES` points, else
+`~/.mousereach/lab_profiles.json`, else `lab_profiles.json` in the login's `nas_root`) gives for
+THIS machine, matched by its hostname -- with a warning in the log naming the file used, and the
+login's own settings left as they are; otherwise (on a GPU PC only) `watcher.db` in that login's
+processing folder. So naming `watcher.db_path` once in the processing server's profile makes every
+reviewer's login on the server find the watcher's database, with nothing to copy into each login. A login with no `~/.mousereach/config.json` at all is refused the same way
 (run `mousereach-setup` in it). On a processing server the login's settings MUST name `watcher.db_path`: without
 it every move says "Note: the watcher's record was NOT updated (... name no watcher database
 (watcher.db_path) ...)" -- copy the value from the settings of the login that runs the watcher.

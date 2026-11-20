@@ -26,7 +26,12 @@ A node's live database is the `db_path` override in that machine's
 `~/.mousereach/config.json`, else `processing_root/watcher.db` -- but the
 fallback applies ONLY to a GPU PC (`watcher.mode` `dlc_pc`). On a processing
 server (`mode` `processing_server`) every login's settings must name the file
-in `watcher.db_path`; a login whose settings do not, whose settings file
+in `watcher.db_path` -- or the lab profile for that machine must: since
+2026-11-20 a login whose settings file names no `db_path` uses
+`defaults.watcher.db_path` of the profile in lab_profiles.json whose
+`match.hostname` is this computer's name, and logs a warning saying so (the
+login's own file is not changed). A login whose settings do not and whose
+machine profile does not either, whose settings file
 cannot be read, or that has no settings file at all, gets a refusal naming the problem from every command and from
 the watcher itself, never `processing_root/watcher.db`. On a machine with the
 override set, a file named `watcher.db` may also sit beside it holding the

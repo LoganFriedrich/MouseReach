@@ -23,6 +23,13 @@ The rule, in order:
   1. the settings file cannot be read, or this login has none at all ->
      REFUSE (WatcherDbUnnamed), naming the file and the problem;
   2. the configured ``watcher.db_path`` when set -- the file the daemon writes;
+  2b. no ``watcher.db_path`` in this login's settings, but the lab profile
+     for THIS machine (matched by its hostname in lab_profiles.json) names
+     one -> that file, with a log warning saying so (machine_watcher_db_path).
+     A second person's login on the server (a reviewer set up later) has its
+     own settings file and often no db_path; without this its review window
+     could not record a single queue move. The login's own file is never
+     edited;
   3. a machine configured as ``processing_server`` with no ``db_path`` ->
      REFUSE (WatcherDbUnnamed): the processing server's watcher database must
      be named in the settings of every login that works with it;
@@ -54,14 +61,84 @@ whose watcher writes an overridden file, an old decoy. Commands run from that
 login (crystallize, uncrystallize, process-animal, the dashboard's Reprocess
 outdated) then read and wrote the decoy without a word: a publication lock
 or an 'outdated' mark the watcher never sees. "Which database" cannot be
-guessed, so the answer is a refusal that says what to fix.
+guessed, so the answer is a refusal that says what to fix -- unless the
+lab profile for this very machine (matched by hostname) names it (rule 2b):
+that is the lab's own record of this machine's watcher, not a guess.
 """
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from mousereach.settings_file import ConfigurationError
 
 
+# The machine's own watcher database, for a login whose settings do not name
+# it (rule 2b in the module docstring). Said once per process, per file.
+_MACHINE_DB_REPORTED = set()
+
+
+def machine_watcher_db_path() -> Tuple[Optional[Path], Optional[str]]:
+    """``(path, source)``: the watcher database the lab's profile for THIS
+    machine names (``defaults.watcher.db_path`` of the profile whose
+    ``match.hostname`` is this computer's name), or ``(None, None)``.
+
+    WHY: every Windows login on a machine has its own settings file, but the
+    machine has one watcher. A second person's login (a reviewer set up later)
+    may have no ``watcher.db_path``, and its review window then could not
+    record a single queue move in the watcher's database. The lab profiles
+    file is where the lab writes down each machine's settings once; a profile
+    matched by this computer's NAME is a statement about this machine, not a
+    guess, so its ``db_path`` is the file the watcher here writes. A profile
+    matched only by drive letters is not used: two PCs can share a layout.
+
+    Looked for where mousereach-setup looks (MOUSEREACH_LAB_PROFILES, then
+    ~/.mousereach/lab_profiles.json, then beside the setup module), and then
+    as ``lab_profiles.json`` in the login's ``nas_root`` -- the shared folder
+    every login has, so a login without the environment variable still finds
+    the lab's file. Never raises; reads only."""
+    import json
+    import socket
+    candidates = []
+    try:
+        from mousereach.setup.wizard import lab_profiles_candidates
+        candidates.extend(lab_profiles_candidates())
+    except Exception:
+        pass
+    try:
+        from mousereach.config import _load_config
+        nas = (_load_config() or {}).get("nas_root")
+        if nas:
+            candidates.append(Path(nas) / "lab_profiles.json")
+    except Exception:
+        pass
+    try:
+        host = socket.gethostname().lower()
+    except Exception:
+        return None, None
+    for cand in candidates:
+        try:
+            if not Path(cand).is_file():
+                continue
+            with open(cand, "r", encoding="utf-8") as f:
+                profiles = (json.load(f) or {}).get("profiles", [])
+        except Exception:
+            continue
+        for prof in profiles:
+            if not isinstance(prof, dict):
+                continue
+            wanted = (prof.get("match") or {}).get("hostname")
+            names = [wanted] if isinstance(wanted, str) else list(wanted or [])
+            if host not in {str(n).lower() for n in names}:
+                continue
+            db = ((prof.get("defaults") or {}).get("watcher") or {}).get("db_path")
+            if db:
+                return Path(db), (f"the lab profile '{prof.get('name', '?')}' for this "
+                                  f"machine in {cand}")
+        # The first profiles file that exists is the lab's; do not mix files.
+        return None, None
+    return None, None
+
+
 class WatcherDbUnnamed(ConfigurationError):
     """This login's settings do not say which watcher database the watcher on
     this machine uses (the settings file cannot be read or does not exist, or a processing
@@ -102,6 +179,16 @@ def resolve_watcher_db_path() -> Path:
             f"written to any watcher database.")
     if cfg.db_path:
         return Path(cfg.db_path)
+    machine_db, source = machine_watcher_db_path()
+    if machine_db is not None:
+        key = str(machine_db)
+        if key not in _MACHINE_DB_REPORTED:
+            _MACHINE_DB_REPORTED.add(key)
+            logging.getLogger(__name__).warning(
+                "This login's MouseReach settings (%s) name no watcher.db_path; "
+                "using this machine's watcher database %s, from %s. The login's "
+                "settings file was not changed.", _settings_file_name(), machine_db, source)
+        return machine_db
     if (cfg.mode or "") == "processing_server":
         raise WatcherDbUnnamed(
             f"the MouseReach settings of this login ({_settings_file_name()}) say this "
@@ -110,7 +197,9 @@ def resolve_watcher_db_path() -> Path:
             f"database its watcher writes: copy watcher.db_path from the settings of "
             f"the login that runs the watcher (mousereach-watch-status there prints it on "
             f"its first line, [watcher db]), "
-            f"or set it with the Watcher Control panel's settings. On a new machine "
+            f"or set it with the Watcher Control panel's settings, or name it once for "
+            f"every login as watcher.db_path in this machine's profile in the lab "
+            f"profiles file (lab_profiles.json, matched by hostname). On a new machine "
             f"where no watcher has run yet, set watcher.db_path to the file the watcher "
             f"should create (for example <processing folder>/watcher.db) in every login, "
             f"then start the watcher. Nothing was read "

@@ -150,3 +150,77 @@ def test_the_watcher_will_not_start_on_an_unnamed_database(login, monkeypatch, c
     assert taken == []
     assert not (login.root / "watcher.db").exists()
     assert "db_path" in capsys.readouterr().err
+
+
+# ---- a login without db_path takes the machine's own profile (2026-11-20) ----
+
+def _profiles(tmp_path, monkeypatch, host_in_profile, db, match_key="hostname"):
+    """A lab profiles file in tmp_path naming ``db`` for ``host_in_profile``,
+    found through MOUSEREACH_LAB_PROFILES; this computer is called HOST-A."""
+    import socket
+    p = tmp_path / "profiles" / "lab_profiles.json"
+    p.parent.mkdir()
+    match = ({"hostname": host_in_profile} if match_key == "hostname"
+             else {"drives_present": ["C"]})
+    p.write_text(json.dumps({"profiles": [{
+        "name": "SERVER_PROFILE", "match": match,
+        "defaults": {"watcher": {"mode": "processing_server", "db_path": str(db)}}}]}),
+        encoding="utf-8")
+    monkeypatch.setenv("MOUSEREACH_LAB_PROFILES", str(p))
+    monkeypatch.setattr(socket, "gethostname", lambda: "HOST-A")
+    db_location._MACHINE_DB_REPORTED.clear()
+    return p
+
+
+def test_a_login_without_db_path_uses_this_machines_profile(login, tmp_path, monkeypatch, caplog):
+    live = tmp_path / "live" / "watcher_live.db"
+    settings = login({"processing_root": str(login.root),
+                      "watcher": {"mode": "processing_server"}})
+    before = settings.read_text(encoding="utf-8")
+    _profiles(tmp_path, monkeypatch, "host-a", live)
+    _decoy(login.root)
+    with caplog.at_level("WARNING"):
+        assert db_location.resolve_watcher_db_path() == live
+    assert "SERVER_PROFILE" in caplog.text and "no watcher.db_path" in caplog.text
+    assert settings.read_text(encoding="utf-8") == before, "a login's settings were edited"
+    # A login with no mode at all gets the machine's database too, not the decoy.
+    login({"processing_root": str(login.root)})
+    assert db_location.resolve_watcher_db_path() == live
+
+
+def test_the_lab_profiles_file_is_found_in_nas_root(login, tmp_path, monkeypatch):
+    import socket
+    live = tmp_path / "live" / "watcher_live.db"
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    (nas / "lab_profiles.json").write_text(json.dumps({"profiles": [{
+        "name": "SERVER_PROFILE", "match": {"hostname": ["HOST-B", "HOST-A"]},
+        "defaults": {"watcher": {"db_path": str(live)}}}]}), encoding="utf-8")
+    monkeypatch.delenv("MOUSEREACH_LAB_PROFILES", raising=False)
+    from mousereach.setup import wizard
+    monkeypatch.setattr(wizard, "lab_profiles_candidates", lambda: [tmp_path / "none.json"])
+    monkeypatch.setattr(socket, "gethostname", lambda: "HOST-A")
+    login({"processing_root": str(login.root), "nas_root": str(nas),
+           "watcher": {"mode": "processing_server"}})
+    assert db_location.resolve_watcher_db_path() == live
+
+
+def test_another_machines_or_a_drive_matched_profile_is_not_used(login, tmp_path, monkeypatch):
+    live = tmp_path / "live" / "watcher_live.db"
+    login({"processing_root": str(login.root), "watcher": {"mode": "processing_server"}})
+    for sub in ("x", "y"):
+        (tmp_path / sub).mkdir()
+    _profiles(tmp_path / "x", monkeypatch, "HOST-OTHER", live)
+    with pytest.raises(db_location.WatcherDbUnnamed):
+        db_location.resolve_watcher_db_path()
+    _profiles(tmp_path / "y", monkeypatch, None, live, match_key="drives")
+    with pytest.raises(db_location.WatcherDbUnnamed):
+        db_location.resolve_watcher_db_path()
+
+
+def test_the_logins_own_db_path_wins_over_the_profile(login, tmp_path, monkeypatch):
+    own = tmp_path / "own.db"
+    login({"processing_root": str(login.root),
+           "watcher": {"mode": "processing_server", "db_path": str(own)}})
+    _profiles(tmp_path, monkeypatch, "HOST-A", tmp_path / "profile.db")
+    assert db_location.resolve_watcher_db_path() == own
