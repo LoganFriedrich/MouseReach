@@ -98,6 +98,15 @@ def _decision(outcome, causal_id, reaches, left_out) -> dict:
 
 def decisions_of_features(doc) -> Dict[int, dict]:
     """{pellet: decision} of a features file (its ``segments``)."""
+    # A filed reach that starts before the first cut was filed inside pellet 1
+    # by the reach step's old rule; it belongs to no pellet (owner decision
+    # D2-3), and the extractor now takes it out of pellet 1. That is not a
+    # change of any pellet's decision, so it is not compared -- except a reach
+    # a PERSON credited as the pellet's causal reach, which stays the pellet's
+    # (before_first_cut.person_credited).
+    from mousereach.reach.core.before_first_cut import (first_cut, person_credited,
+                                                        starts_before)
+    cut = first_cut(doc)
     out = {}
     for g in (doc or {}).get("segments") or []:
         try:
@@ -105,7 +114,10 @@ def decisions_of_features(doc) -> Dict[int, dict]:
         except (TypeError, ValueError):
             continue
         out[k] = _decision(g.get("outcome"), g.get("causal_reach_id"),
-                           g.get("reaches"), g.get("reaches_left_out"))
+                           [r for r in g.get("reaches") or []
+                            if not starts_before(r, cut) or person_credited(r)],
+                           [r for r in g.get("reaches_left_out") or []
+                            if not starts_before(r, cut)])
     return out
 
 

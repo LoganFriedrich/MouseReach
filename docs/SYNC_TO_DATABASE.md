@@ -377,3 +377,12 @@ Flag Session button on the video's mouse+day session (`flagged_by`, `flagged_at`
 it differently because of it (lab decision 2026-11-19: a flag is only recorded so it can be found).
 Filed videos receive it through a kinematics-only recalculation when their session is flagged later.
 See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (session flags are only recorded)".
+
+## Update 2026-11-19: a reach before the first cut is synced under no pellet
+
+A reach that starts before the first cut belongs to no pellet (owner decision D2-3). A features file
+written before 2026-11-19 lists such a reach under segment 1; `sync_features_file` now reads the file
+through `reach/core/before_first_cut.split_before_first_cut`, so the reach is not written as one of
+pellet 1's rows (and the rest of pellet 1's reaches are renumbered 1..n). Features files written
+since list it only at the top level (`reaches_before_first_cut`), which this sync does not write as a
+reach row. The features file on disk is never changed.

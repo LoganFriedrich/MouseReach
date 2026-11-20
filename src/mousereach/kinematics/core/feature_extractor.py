@@ -197,6 +197,11 @@ class VideoFeatures:
     # nothing in seconds): extract() refuses a video with no rate.
     frame_rate: Optional[float] = None
     frame_rate_source: Optional[str] = None
+    # Reaches that start before the first cut: no pellet's, so in no segment
+    # and not measured (owner decision D2-3, reach/core/before_first_cut.py).
+    # Listed so the file still says they happened: reach_id, start_frame,
+    # end_frame, reach_source. None when there are none.
+    reaches_before_first_cut: Optional[List[Dict]] = None
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization."""
@@ -633,6 +638,12 @@ class FeatureExtractor:
         # Load reaches
         with open(reaches_path) as f:
             reaches_data = json.load(f)
+        # A reach that starts before the first cut belongs to no pellet (owner
+        # decision D2-3): an older reaches file carries it inside segment 1,
+        # and it is taken out here, before anything maps reaches to pellets.
+        from mousereach.reach.core.before_first_cut import (BEFORE_FIRST_CUT_KEY,
+                                                            split_before_first_cut)
+        reaches_data = split_before_first_cut(reaches_data)
 
         # Load outcomes
         with open(outcomes_path) as f:
@@ -914,9 +925,13 @@ class FeatureExtractor:
                     df,
                     seg_data['ruler_pixels'],
                     outcome_data,
+                    # Every other reach of the video, those before the first
+                    # cut included: they are no pellet's, but the hand was
+                    # still moving then (anchored_path uses them as limits).
                     other_reaches=[
                         (r['start_frame'], r['end_frame'])
-                        for sg in reaches_data['segments'] for r in sg['reaches']
+                        for r in ([x for sg in reaches_data['segments'] for x in sg['reaches']]
+                                  + list(reaches_data.get(BEFORE_FIRST_CUT_KEY) or []))
                         if r is not reach
                     ],
                     window=(seg_first, seg_last),
@@ -970,6 +985,11 @@ class FeatureExtractor:
             extracted_at=extracted_at,
             frame_rate=self.frame_rate,
             frame_rate_source=self.frame_rate_source,
+            reaches_before_first_cut=[
+                {'reach_id': r.get('reach_id'), 'start_frame': r.get('start_frame'),
+                 'end_frame': r.get('end_frame'),
+                 'reach_source': r.get('reach_source', 'algo')}
+                for r in (reaches_data.get(BEFORE_FIRST_CUT_KEY) or [])] or None,
         )
 
     def _resolve_rate(self, dlc_path: Path, video_path: Optional[Path]) -> None:

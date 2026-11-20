@@ -164,6 +164,12 @@ def _emit_features_video(features_path: Path) -> List[Dict[str, Any]]:
     """Read a features.json and return one row per reach."""
     with open(features_path) as f:
         data = json.load(f)
+    # A reach that starts before the first cut belongs to no pellet (owner
+    # decision D2-3): a features file filed before 2026-11-19 lists it
+    # under pellet 1, so it is taken out of pellet 1 here, on reading --
+    # the filed file itself is never changed.
+    from mousereach.reach.core.before_first_cut import split_before_first_cut
+    data = split_before_first_cut(data)
     video = data.get("video_name") or features_path.stem.replace("_features", "")
     rows: List[Dict[str, Any]] = []
     for seg in data.get("segments", []):
@@ -179,6 +185,9 @@ def _emit_reaches_video(reaches_path: Path) -> List[Dict[str, Any]]:
     video = reaches_path.stem.replace("_reaches", "")
     with open(reaches_path) as f:
         reach_data = json.load(f)
+    # A reach before the first cut is no pellet's (owner decision D2-3).
+    from mousereach.reach.core.before_first_cut import split_before_first_cut
+    reach_data = split_before_first_cut(reach_data)
 
     outcome_path = reaches_path.parent / f"{video}_pellet_outcomes.json"
     outcomes_by_seg: Dict[int, str] = {}

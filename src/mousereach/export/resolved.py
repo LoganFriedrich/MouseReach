@@ -51,6 +51,12 @@ def load_resolved_videos(input_dir: Path, pellets_only: bool = False) -> Tuple[L
         except (OSError, ValueError) as err:
             left_out.append(f"{stem}: its features file could not be read ({err})")
             continue
+        # A reach that starts before the first cut belongs to no pellet (owner
+        # decision D2-3): a features file filed before 2026-11-19 lists it
+        # under pellet 1, so it is taken out of pellet 1 here, on reading --
+        # the filed file itself is never changed.
+        from mousereach.reach.core.before_first_cut import split_before_first_cut
+        doc = split_before_first_cut(doc)
         doc.setdefault("video_name", stem)
         if pellets_only and is_session_only(doc):
             continue

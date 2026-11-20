@@ -648,6 +648,12 @@ class DatabaseSyncer:
         try:
             with open(path, 'r') as f:
                 data = json.load(f)
+            # A reach that starts before the first cut belongs to no pellet (owner
+            # decision D2-3): a features file filed before 2026-11-19 lists it
+            # under pellet 1, so it is taken out of pellet 1 here, on reading --
+            # the filed file itself is never changed.
+            from mousereach.reach.core.before_first_cut import split_before_first_cut
+            data = split_before_first_cut(data)
 
             video_name = data.get('video_name', path.stem.replace('_features', ''))
             extractor_version = data.get('extractor_version', 'unknown')

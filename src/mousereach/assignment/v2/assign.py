@@ -269,11 +269,21 @@ def assign_reaches_v2(
     # Each entry: (start_frame, end_frame, reach_list_index)
     reach_records: List[Tuple[int, int, int]] = []
     reach_to_seg_idx: List[Optional[int]] = []
+    # The first cut: a reach that starts before it belongs to NO pellet (owner
+    # decision D2-3, reach/core/before_first_cut.py), whatever segment number
+    # an older reaches file gave it and wherever its midpoint falls. It is
+    # written "unassigned" with no segment, and marked before_first_cut.
+    _starts = [lo for lo, _hi in seg_bounds if lo >= 0]
+    first_cut = min(_starts) if _starts else None
 
     for ri, r in enumerate(reaches):
         rs = int(r.get("start_frame"))
         re_ = int(r.get("end_frame"))
         reach_records.append((rs, re_, ri))
+
+        if r.get("before_first_cut") or (first_cut is not None and rs < first_cut):
+            reach_to_seg_idx.append(None)
+            continue
 
         seg_num_in: Optional[int] = r.get("segment_num")
         seg_idx: Optional[int] = None
@@ -391,7 +401,7 @@ def assign_reaches_v2(
         seg_idx = reach_to_seg_idx[ri]
 
         if seg_idx is None:
-            out_reaches.append({
+            rec = {
                 "reach_id": int(rid),
                 "segment_num": None,
                 "start_frame": rs,
@@ -400,7 +410,10 @@ def assign_reaches_v2(
                 "is_causal": False,
                 "segment_outcome": None,
                 "segment_ifr": None,
-            })
+            }
+            if r.get("before_first_cut") or (first_cut is not None and rs < first_cut):
+                rec["before_first_cut"] = True
+            out_reaches.append(rec)
             continue
 
         seg = segments_with_outcomes[seg_idx]
