@@ -1788,6 +1788,11 @@ def index_gt_outcomes_by_segment(gt, current_segments=None,
                              if own else None),
             "human": {"outcome": seg.get("outcome")},
             "answers": {},
+            # When the person determined it, for the re-cut rule
+            # (answer_survives_recut): ground truth made AFTER a re-cut set
+            # the current cuts is an answer about those cuts and stands;
+            # without a time it counts as given before, as any answer does.
+            "reviewed_at": seg.get("determined_at") or (gt or {}).get("last_modified_at"),
             "_gt": seg,
         })
     mapping, notes = index_review_by_segment(

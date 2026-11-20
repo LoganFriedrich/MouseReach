@@ -1987,42 +1987,25 @@ def repair_unfinished_routes(force: bool = False, db=None,
     return out
 
 
-# A triage bundle the scan can neither divert, release nor offer:
-# its segmentation failed, ground truth INSIDE the bundle certifies the whole
-# video -- so it is not diverted to re-segmentation (the gate would pass it
-# clean) -- but the release check counts only the ground-truth index, not
-# ground truth inside a bundle (triage_status; whether it may is an open
-# decision about moving queue items), so its triaged pellets stay open, and
-# the review window does not offer it because it has ground truth. Listed for
-# a person under this kind, with the reason, so it does not sit unseen.
+# A triage bundle the scan could neither divert, release nor offer, before
+# 2026-11-19: its segmentation failed, ground truth INSIDE the bundle
+# certified the whole video -- so it was not diverted to re-segmentation --
+# but the release check counted only the ground-truth index, so its pellets
+# stayed open, and the window hid it because it had ground truth. Since owner
+# decision MRR-03d (2026-11-19) the release check reads ground truth inside
+# the bundle too (triage_status), so such a bundle is released and this case
+# no longer arises. The kind is kept only so that a listing written by older
+# code is taken off on the next scan.
 GT_NOT_COUNTED_KIND = "triage_ground_truth_not_counted"
 
 
 def _note_gt_not_counted(bundle: Path, stem: str, st, still_open, gt_only: bool,
                          listed: set) -> None:
-    """List ``stem`` for a person (review_routing.note_for_a_person, kind
-    GT_NOT_COUNTED_KIND) while it is stuck as described there; take it off
-    once it is not. Nothing is moved, released or changed. ``listed`` is the
-    set of ids already listed (read once per scan), updated here so the list
-    is written only when it changes. Never raises."""
+    """Take ``stem`` off the GT_NOT_COUNTED_KIND list for a person if older
+    code listed it (see the comment at GT_NOT_COUNTED_KIND). Nothing is
+    moved, released or changed. Never raises."""
     try:
-        stuck = bool(gt_only and st.seg_failed and still_open)
-        if stuck and stem not in listed:
-            from .review_routing import note_for_a_person
-            segs = ", ".join(str(s) for s in sorted(still_open))
-            says = (f"{stem} (triage queue, {bundle}): its automatic segmentation failed, "
-                    f"and a ground-truth file inside the bundle certifies the whole video, "
-                    f"so it is not sent to re-segmentation. But the release check counts "
-                    f"only ground truth it finds through the ground-truth index, not "
-                    f"ground truth inside a queue bundle, so its triaged pellet(s) {segs} "
-                    f"still count as open -- and the review window does not offer it "
-                    f"because it has ground truth. It stays in the triage queue, unchanged "
-                    f"and with nothing lost, until it is decided whether ground truth "
-                    f"inside a triage bundle may release it; no button does that.")
-            logger.warning("Return scan: %s", says)
-            note_for_a_person(GT_NOT_COUNTED_KIND, stem, bundle, says)
-            listed.add(stem)
-        elif not stuck and stem in listed:
+        if stem in listed:
             from .review_routing import drop_for_a_person
             drop_for_a_person(video_id=stem, kind=GT_NOT_COUNTED_KIND)
             listed.discard(stem)

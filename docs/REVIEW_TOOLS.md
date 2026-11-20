@@ -1680,17 +1680,22 @@ The segmenter's own `needs_human` verdict is read into the status object (`triag
 **Where the gate looks for ground truth (since 2026-11-03).** First in the folder the video is in
 -- the processing folder during a run, the bundle in a queue -- and only then in the corpus-wide
 index (`triage_status.gt_resolved_segments`, the one reading of ground truth shared by the gate
-and `mousereach-route-to-queue`). The queue's release check does not yet look inside the bundle:
-a triage bundle holding ground truth that answers every open segment would be released on the
-next scan, which waits on a decision. Until it is decided, one such case is LISTED rather than
-left unseen: a triage bundle whose automatic segmentation failed and whose ground truth inside the
-bundle certifies the whole video is neither sent to re-segmentation (the gate would pass it) nor
-released (its triaged pellets count as open) nor offered by the review window (it has ground
-truth). The return scan lists it for a person -- the Pipeline Dashboard's red panel and the
-Review Queues tab's "Folders left for a person" -- with that reason and no button
-(`review_return._note_gt_not_counted`, kind `triage_ground_truth_not_counted`), and takes it off
-the list once it no longer applies. Nothing is moved; the video stays in the triage queue as it
-is. **Why:** the index is built once per watcher
+and `mousereach-route-to-queue`). Since 2026-11-19 the queue's release check reads the same
+places (`triage_status.triage_status` passes the bundle folder): a triage bundle carrying the
+ground-truth tool's file (`<video>_unified_ground_truth.json`) whose answers cover every flagged
+pellet is RELEASED on the next return scan, goes back through the pipeline and is filed like any
+answered bundle -- nobody is asked again what a person already answered (owner rule: "an answer a
+human gives is always true so long as it was given about the correct pellet/segment"). A ground-truth
+answer counts for a pellet when it is about that pellet: matched by the pellet's frames in the
+ground truth's own cuts, exactly as a saved review answer is matched; and when a re-cut set the
+current cuts AFTER the ground truth was made, it stands only where that pellet's frames did not
+move (the re-cut rule below). A pellet ground truth does not answer stays a question: the review
+window then shows the bundle and walks only those pellets; a bundle whose ground truth (with any
+saved review) leaves nothing open is not shown -- the scan releases it. (Before 2026-11-19 the release
+check read only the corpus index, so such bundles were neither shown nor released; the one stuck
+case, a seg-failed bundle certified by its own ground truth, was listed for a person under kind
+`triage_ground_truth_not_counted`. It is now released, and a scan takes any old listing off.)
+**Why the gate looks in the folder first:** the index is built once per watcher
 process, and a re-run copies the ground truth into the processing folder after that; reading the
 index alone, the gate sent videos whose open segments ground truth had answered back to a person.
 The rule: a segment whose boundaries, causal reach and outcome have all already been answered by a

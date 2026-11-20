@@ -120,12 +120,14 @@ def actions_for(item: dict, db=None) -> List[Action]:
     if item.get("kind") in ("left_for_a_person", "queue_folder_in_the_way"):
         return _folder_actions(item)
     if item.get("kind") == "triage_ground_truth_not_counted":
-        # Shown, never acted on: whether ground truth inside a triage bundle
-        # may release it is an open decision (review_return.GT_NOT_COUNTED_KIND).
+        # Only a listing written by older code: since 2026-11-19 ground truth
+        # inside a triage bundle counts as its answers and the return scan
+        # releases such a bundle, then takes the listing off
+        # (review_return.GT_NOT_COUNTED_KIND).
         return [("note:decision", "No button",
-                 "Nothing here can release this video: whether ground truth inside a "
-                 "triage bundle counts as its answers is not decided yet. It stays in "
-                 "the queue, unchanged.")]
+                 "Nothing to do here: ground truth inside a triage bundle now counts as "
+                 "its answers, so the watcher releases this video on its next scan and "
+                 "this line goes away.")]
     if item.get("kind") != "route_unfinished":
         return []
     vid = item.get("video_id") or ""

@@ -432,17 +432,28 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # whose questions GT had determined could never satisfy fully_resolved, while
     # the review tool skipped it because has_gt() said there was nothing to ask.
     # Nobody asked, nobody released, and it sat in the queue forever.
-    # The release side reads the corpus index only, NOT ground truth inside
-    # ``directory`` (the gate reads both, review_gate._gt_certification).
-    # Deliberately, for now: a triage bundle can hold ground truth that
-    # answers every open segment and that the index cannot see (it covers
-    # this machine's processing folder, not the shared queues). Reading it here
-    # would release every such bundle on the next scan -- a full re-run and
-    # filing of each -- so it waits on a decision about moving queue items. Pass
-    # extra_dirs=(directory,) once that is decided.
+    # Ground truth INSIDE ``directory`` counts too (extra_dirs), the same files
+    # the gate reads (review_gate._gt_certification). WHY (owner decision
+    # MRR-03d, 2026-11-19: "an answer a human gives is always true so long as
+    # it was given about the correct pellet/segment"): a triage bundle can
+    # carry the ground-truth tool's file, and the corpus index cannot see it
+    # (it covers this machine's processing folder, not the shared queues).
+    # Read from the index only, a bundle whose every flagged pellet the ground
+    # truth answers was neither released (its pellets counted as open) nor
+    # shown (the window skips a bundle with ground truth) -- it sat in the
+    # queue for ever, and a person would have been asked again what a person
+    # had already answered. Now such a bundle is released on the next scan and
+    # goes through the pipeline to filing like any answered bundle.
+    # "About the correct pellet" is decided as for every review answer
+    # (index_gt_outcomes_by_segment -> index_review_by_segment): matched by
+    # the frames of the pellet in the ground truth's own cuts, and -- when a
+    # re-cut set the current cuts after the ground truth was made -- standing
+    # only where that pellet's frames are unchanged (answer_survives_recut).
+    # A pellet whose ground-truth answer a re-cut voided is asked again.
     from .causal_review_io import segments_from_segmentation
     gt_full, gt_segs = gt_resolved_segments(
-        video_id, current_segments=segments_from_segmentation(seg) or None,
+        video_id, extra_dirs=(directory,),
+        current_segments=segments_from_segmentation(seg) or None,
         human_segmentation=(seg or {}).get("boundary_source") == "human")
     res = tri if gt_full else (res | gt_segs)
 
