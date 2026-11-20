@@ -178,7 +178,9 @@ def test_a_filed_easy_or_flat_without_its_session_file_is_rerun_once(tmp_path, m
 
     # Only the Easy/Flat video without a session file; never a re-pose for
     # version staleness.
-    assert db.forced == [(EF, "outdated", "segmentation")]
+    # Its session file is made by the kinematics step alone, from its filed
+    # reaches: a filed video's reach detection is never re-run (2026-11-19).
+    assert db.forced == [(EF, "outdated", "kinematics")]
 
 
 def test_the_retired_reject_command_moves_nothing(tmp_path, monkeypatch, capsys):

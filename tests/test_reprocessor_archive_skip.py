@@ -141,13 +141,12 @@ def test_archived_pose_is_not_pose_present_live_model_folder_is(tmp_path):
     assert index.get(STEM_B) == {NEW}
 
 
-def test_scan_queues_a_real_repose_when_the_declared_pose_is_only_archived(
+def test_scan_never_reposes_or_reruns_a_filed_video_for_a_new_model(
         tmp_path, monkeypatch, no_review):
-    """End to end through scan(): both manifests name the OLD model. STEM's
-    declared (NEW) pose exists only under Analyzed/Archive -> it genuinely
-    needs a GPU re-pose (scope 'full'). STEM_B's declared pose is live in
-    DLC Model 4 -> re-run from segmentation. Old code counted the archived
-    pose, gave STEM scope 'segmentation' and pose_already_current == 2."""
+    """End to end through scan(): both manifests name the OLD model. Before
+    the 2026-11-19 rule (filed is final) STEM went for a GPU re-pose and
+    STEM_B was re-run from segmentation; now neither is marked, and both are
+    counted as kept."""
     coh = _live_cohort(tmp_path)
     for vid in (STEM, STEM_B):
         _write_json(coh / f"{vid}_processing_manifest.json",
@@ -166,10 +165,9 @@ def test_scan_queues_a_real_repose_when_the_declared_pose_is_only_archived(
     summary = _scanner(tmp_path, db).scan(mark_outdated=True,
                                           adopt_orphans=False)
 
-    assert (STEM, "outdated", "full") in db.forced
-    assert (STEM_B, "outdated", "segmentation") in db.forced
-    assert summary["pose_already_current"] == 1
-    assert summary["outdated_full"] == 1
+    assert [f for f in db.forced if f[1] == "outdated"] == []
+    assert summary["outdated_full"] == 0
+    assert summary["filed_final_kept"] == 2
 
 
 # ------------------------------------------------------- one-walk scan index
@@ -320,8 +318,11 @@ def test_segments_human_fixed_reads_the_live_segments(tmp_path, live_src,
 @pytest.fixture
 def routed(monkeypatch):
     calls = []
-    monkeypatch.setattr(rg, "route_deep_review",
-                        lambda vid, src, reason=None, db=None, **k:
+    # The divert routes a COPY of the filed folder (filed_copy_route); what
+    # is recorded is the folder the copy is taken from.
+    import mousereach.watcher.filed_copy_route as fcr
+    monkeypatch.setattr(fcr, "route_filed_copy",
+                        lambda vid, src, dest, reason=None, **k:
                         calls.append((vid, src)))
     return calls
 

@@ -1209,27 +1209,28 @@ class TestDLCStaleScope:
         scanner = ReprocessingScanner(temp_db, scratch_paths["NAS_ROOT"])
         return scanner.scan(mark_outdated=True)
 
-    def test_declared_pose_already_on_disk_means_no_gpu(
+    # Filed is final (2026-11-19): an older pose model never marks a filed
+    # video, whether or not the declared model's pose is on disk.
+    def test_declared_pose_already_on_disk_reruns_nothing(
             self, temp_db, scratch_paths, monkeypatch):
         self._archived_video(
             temp_db, scratch_paths, "20250626_CNT0107_P3",
             manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
             pose_scorer="DLC_resnet101_MPSAOct27shuffle3_100000")
         summary = self._scan(temp_db, scratch_paths, monkeypatch)
-        assert summary["pose_already_current"] == 1
+        assert summary["pose_already_current"] == 0
         row = temp_db.get_video("20250626_CNT0107_P3")
-        assert row["state"] == "outdated"
-        assert row["reprocess_scope"] == "segmentation"
+        assert row["state"] == "archived"
 
-    def test_no_declared_pose_still_needs_a_real_repose(
+    def test_no_declared_pose_is_never_reposed(
             self, temp_db, scratch_paths, monkeypatch):
         self._archived_video(
             temp_db, scratch_paths, "20250626_CNT0107_P4",
             manifest_scorer="DLC_resnet50_MPSAOct27shuffle1_100000",
             pose_scorer="DLC_resnet50_MPSAOct27shuffle1_100000")
         summary = self._scan(temp_db, scratch_paths, monkeypatch)
-        assert summary["pose_already_current"] == 0
-        assert temp_db.get_video("20250626_CNT0107_P4")["reprocess_scope"] == "full"
+        assert summary["outdated_full"] == 0
+        assert temp_db.get_video("20250626_CNT0107_P4")["state"] == "archived"
 
     def test_easy_tray_sessions_are_not_scheduled_at_all(
             self, temp_db, scratch_paths, monkeypatch):

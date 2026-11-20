@@ -47,6 +47,11 @@ or with a person's work lost:
    (review_gate.route_to_queue): deep review beats triage, a bundle already
    there is never overwritten, the move is recorded in this machine's watcher
    database, and a crystallized video is refused.
+ - Filed is final (lab rule 2026-11-19): finalize REFUSES a video that has been
+   filed -- the four algorithms are never re-run onto a filed video, so a new
+   version applies only to videos not filed yet. Run without finalize to
+   evaluate a new version on filed videos: everything stays in the work
+   folder and nothing in Analyzed is touched.
  - finalize needs this machine's watcher database: it refuses a crystallized
    video and a video the watcher is working on (any state but 'archived'), and
    refuses when the database cannot be read. Run it on the processing server.
@@ -159,10 +164,33 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
     return out
 
 
+FILED_IS_FINAL_SAYS = (
+    "it is filed, and filed is final: the four algorithms are never re-run onto "
+    "a filed video. Run without finalize to evaluate a new version (everything "
+    "stays in the work folder), or ask a person to reopen it "
+    "(mousereach-route-to-queue)")
+
+
+def _is_filed(video_id: str, row: Optional[Dict]) -> bool:
+    """True when the video has been filed: its watcher row says so (state
+    'archived', or a filing time), or -- with no row -- its features file is in
+    its filed folder. Never raises; a doubt counts as filed (refusing a
+    finalize is the safe side)."""
+    if row and (row.get("state") == "archived" or row.get("archived_at")):
+        return True
+    try:
+        from mousereach.archive.core import get_archive_destination
+        dest = get_archive_destination(video_id)
+        return bool(dest) and (Path(dest) / f"{video_id}_features.json").is_file()
+    except Exception:
+        return True
+
+
 def _finalize_refusal(video_id: str, action: str = "brought current",
                       tool: str = "bring-current",
                       require_record: bool = False,
-                      why_out: Optional[Dict] = None) -> Optional[str]:
+                      why_out: Optional[Dict] = None,
+                      refuse_filed: bool = False) -> Optional[str]:
     """Why finalize must not touch this video's filed results, or None.
     Reads this machine's watcher database (never creates it).
 
@@ -177,7 +205,14 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
     Also the review-bundle stager's check (review/staging.stage_video), with
     its own words (``action``, ``tool``) and ``require_record`` True: a
     bundle put into a review queue must have a watcher record to hold its
-    queue state, so a video the watcher does not know is refused there."""
+    queue state, so a video the watcher does not know is refused there.
+
+    ``refuse_filed`` True (bring-current's finalize): a FILED video is
+    refused (FILED_IS_FINAL_SAYS). Lab rule 2026-11-19, "filed is final":
+    finalize re-runs the four algorithms and supersedes the filed results,
+    which may happen only to a video not filed yet. The stager leaves it
+    False: staging a bundle is a person putting a video in front of a
+    reviewer, which the rule allows."""
     from mousereach.watcher.db import crystallized_refusal
     from mousereach.watcher.db_location import open_watcher_db_if_present
     db, why = open_watcher_db_if_present()
@@ -199,6 +234,10 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
         return ("the watcher database on this machine has no record of it, so its "
                 "queue state could not be recorded")
     state = (row or {}).get("state")
+    if refuse_filed and state in (None, "archived") and _is_filed(video_id, row):
+        if why_out is not None:
+            why_out["not_a_defect"] = "filed"
+        return FILED_IS_FINAL_SAYS
     if state not in (None, "archived"):
         if why_out is not None:
             why_out["not_a_defect"] = "watcher"
@@ -268,6 +307,8 @@ _NOT_A_DEFECT_SAYS = {
     "watcher": "Left to the watcher, which is working on it.",
     "no_db": "Nothing is wrong with the video: run bring-current for it on the "
              "machine whose watcher database holds it.",
+    "filed": "Left as it is: its filed results are final; the new version's "
+             "results for it are in the work folder only.",
 }
 
 
@@ -597,7 +638,7 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
         summary["error"] = f"not finalized: the gate answered '{decision}' ({reason})"
         return summary
     refusal_kind: Dict = {}
-    refusal = _finalize_refusal(video_id, why_out=refusal_kind)
+    refusal = _finalize_refusal(video_id, why_out=refusal_kind, refuse_filed=True)
     if refusal:
         summary["error"] = f"not finalized: {refusal}"
         kind = refusal_kind.get("not_a_defect")

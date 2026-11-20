@@ -13,9 +13,13 @@ gets exactly the same routing the pipeline uses itself.
 
 What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
-  2. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the watcher database -- all or
-     nothing (below),
+  2. puts a COPY of the video's bundle into the queue with a routing
+     manifest (watcher/filed_copy_route.py, then review_gate.route_to_queue),
+     updating the watcher database -- all or nothing (below). The filed
+     results stay in Analyzed, unchanged, until the video's new run is filed
+     and replaces them (lab rule 2026-11-19, "filed is final": a person's
+     command may reopen a filed video; the filed copy is never taken away
+     for it, and nothing automatic reopens a filed video),
   3. optionally flags specific segments (flagged_for_review=True with the
      given reason, triage_cleared cleared) in the BUNDLE's
      {video}_pellet_outcomes.json -- that is what the triage review tool
@@ -525,12 +529,14 @@ def route_video(video_id: str, queue: str, reason: str,
             return res
         try:
             try:
-                # All or nothing: the source is the FILED folder, and a filed
-                # generation must never be left half moved (a file still there
-                # would go on counting as a filed result).
-                bundle = route_to_queue(video_id, outcomes.parent, dest_root,
-                                        reason=reason, db=db, db_state=queue,
-                                        all_or_nothing=True)
+                # A COPY of the filed folder is routed; the filed results stay
+                # in Analyzed until the new run is filed and replaces them
+                # (watcher/filed_copy_route.py; lab rule 2026-11-19, "filed is
+                # final": a person may reopen a filed video, the filed copy is
+                # never taken away for it). All or nothing, as before.
+                from mousereach.watcher.filed_copy_route import route_filed_copy
+                bundle = route_filed_copy(video_id, outcomes.parent, dest_root,
+                                          reason=reason, db=db, db_state=queue)
             except AlreadyInQueueError as e:
                 # A bundle appeared between the check above and the move (or
                 # the check could not see it): nothing moved and nothing was

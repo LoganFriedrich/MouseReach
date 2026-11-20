@@ -84,6 +84,45 @@ def no_manifest_attention_items(video_ids) -> list:
     } for vid in sorted(video_ids)]
 
 
+# FILED IS FINAL (lab rule, 2026-11-19). Once a video is filed, what the four
+# algorithms decided for it -- the cuts (segmenter), the reaches (reach
+# detector), the pellet outcomes (outcome detector) and which reach caused
+# each one (assignment) -- is its final answer for good. A newer version of
+# any of them, or of the pose model they all stand on, applies only to videos
+# not filed yet. WHY: people are shown only what the algorithms could not
+# decide, and their answers are anchored in the frames of a video that does
+# not change; re-running the algorithms on a filed video can only contradict
+# settled answers. The ONE thing the version scan may still recompute on a
+# filed video is kinematics (pure measurement on settled frames), and with it
+# any human answer or ground truth the filed kinematics have not applied yet.
+# Re-running the algorithms on filed videos to EVALUATE a new version is
+# allowed, but never through here and never into Analyzed (the evaluation
+# tools write elsewhere). A person may still re-run one filed video on
+# purpose (the dashboard's Re-run, mousereach-route-to-queue,
+# mousereach-repose-videos); those carry a mark_reason or move the row
+# themselves, and the scan never changes them.
+KINEMATICS_COMPONENT = "kinematic_extractor"
+
+
+def filed_is_final(comparison: dict) -> tuple:
+    """``(comparison, kept)``: the version comparison of a FILED video with
+    every algorithm and pose-model difference taken out (kept, by name), so
+    only a kinematics difference can make it outdated. ``kept`` lists what a
+    newer declaration would have re-run before the 2026-11-19 rule ("filed is
+    final", block comment above): component names, with " (not recorded)"
+    for a stage the manifest never recorded. The input is not changed."""
+    stale = list(comparison.get("stale_components") or [])
+    unrec = list(comparison.get("unrecorded_components") or [])
+    kept = ([c for c in stale if c != KINEMATICS_COMPONENT]
+            + [f"{c} (not recorded)" for c in unrec if c != KINEMATICS_COMPONENT])
+    out = dict(comparison)
+    out["stale_components"] = [c for c in stale if c == KINEMATICS_COMPONENT]
+    out["unrecorded_components"] = [c for c in unrec if c == KINEMATICS_COMPONENT]
+    out["needs_full_reprocess"] = False
+    out["is_current"] = not out["stale_components"] and not out["unrecorded_components"]
+    return out, kept
+
+
 def earliest_stale_stage(stale_components) -> str:
     """The earliest post-DLC stage to re-run given the stale components (that
     stage + everything downstream re-runs; upstream is reused). Falls back to
@@ -366,6 +405,15 @@ class ReprocessingScanner:
             'failed_rerun_waiting': 0,
             'failed_rerun_waiting_videos': [],
             'unsupported_tray_videos': [],
+            # Filed videos a newer algorithm or pose model would have re-run
+            # before the 2026-11-19 rule (filed_is_final): not re-run, their
+            # filed results kept. Counted and named, so a version change never
+            # looks as if it covered them.
+            'filed_final_kept': 0,
+            'filed_final_kept_videos': [],
+            # 'outdated' rows the scan had marked for an algorithm re-run,
+            # narrowed to a kinematics-only re-run (the door below).
+            'narrowed_to_kinematics': 0,
         }
 
         self._deep_manifests = None     # one walk per scan, not per video
@@ -537,9 +585,11 @@ class ReprocessingScanner:
             #
             # ONE exception: a filed one with no features file has never had
             # its session file (FeatureExtractor.extract_session_only) -- every
-            # Easy/Flat video filed before 2026-10-23. It is re-run once from
-            # segmentation, its pose kept: whole-video span, reaches, session
-            # file. The work order runs Easy/Flat only when nothing else waits.
+            # Easy/Flat video filed before 2026-10-23. Its session file is made
+            # once by the kinematics step alone, from its filed reaches (scope
+            # 'kinematics'). Before the 2026-11-19 rule (filed_is_final) it was
+            # re-run from segmentation, which re-ran reach detection on a filed
+            # video. The work order runs Easy/Flat only when nothing else waits.
             if not is_supported_tray_type(f"{video_id}.mp4"):
                 summary['unsupported_tray'] += 1
                 summary['unsupported_tray_videos'].append(video_id)
@@ -547,13 +597,13 @@ class ReprocessingScanner:
                     summary['outdated'] += 1
                     summary['outdated_partial'] += 1
                     summary['outdated_videos'].append({
-                        'video_id': video_id, 'scope': 'segmentation',
+                        'video_id': video_id, 'scope': 'kinematics',
                         'stale_components': ['outcome_free_session_file']})
                     if mark_outdated and not full_only:
                         self.db.force_state(video_id, 'outdated',
-                                            reprocess_scope='segmentation',
+                                            reprocess_scope='kinematics',
                                             mark_reason=None)
-                        logger.info(f"Marked {video_id} as outdated (scope=segmentation, "
+                        logger.info(f"Marked {video_id} as outdated (scope=kinematics, "
                                     f"Easy/Flat with no session file)")
                 continue
 
@@ -611,6 +661,12 @@ class ReprocessingScanner:
                 # Human-authored segmentation is version-exempt (see helper).
                 comparison = self._drop_human_seg_staleness(
                     video_id, manifest_index, comparison)
+                # Filed is final: only kinematics may be re-run (filed_is_final).
+                comparison, kept = filed_is_final(comparison)
+                if kept:
+                    summary['filed_final_kept'] += 1
+                    summary['filed_final_kept_videos'].append(
+                        {'video_id': video_id, 'components': kept})
                 # A human review the archived kinematics have not applied must
                 # still be applied -- re-run so the reviewer's triage
                 # resolution flows into features/DB (the extractor applies it;
@@ -779,6 +835,28 @@ class ReprocessingScanner:
                 # before the exemption existed.
                 comparison = self._drop_human_seg_staleness(
                     video_id, manifest_index, comparison)
+                # Filed is final (filed_is_final): a mark this scan made for an
+                # algorithm or pose-model re-run of a filed video is no longer
+                # owed. While kinematics are still owed (a newer extractor, or
+                # an answer they have not applied) the mark is narrowed to a
+                # kinematics-only re-run; otherwise it is lifted below.
+                comparison, _kept = filed_is_final(comparison)
+                if (video.get('reprocess_scope') or '') != 'kinematics' and (
+                        not comparison['is_current']
+                        or self._pending_review_path(video_id, manifest, feats_mtime,
+                                                     review_index) is not None
+                        or self._pending_ground_truth(video_id, manifest, feats_mtime)):
+                    if mark_outdated:
+                        try:
+                            self.db.set_fields(video_id, reprocess_scope='kinematics')
+                            logger.info(f"Narrowed {video_id}'s re-run to kinematics only "
+                                        f"(was {video.get('reprocess_scope')!r}): a filed "
+                                        f"video's algorithms are never re-run")
+                        except Exception as e:
+                            logger.warning(f"{video_id}: could not narrow its re-run to "
+                                           f"kinematics ({e})")
+                    summary['narrowed_to_kinematics'] += 1
+                    continue
                 if not comparison['is_current']:
                     continue
                 if comparison.get('compat_used') and (video.get('mark_reason') or '').strip():
@@ -1063,13 +1141,20 @@ class ReprocessingScanner:
                     "pellet_outcomes.json found in the archive to route from",
                     video_id)
                 return
-            # All or nothing: the source is the filed folder (see
-            # review_routing.move_video_bundle, all_or_nothing).
-            route_deep_review(
-                video_id, outcomes.parent,
+            # A COPY is routed; the filed results stay in Analyzed until the
+            # re-cut video is filed again and replaces them (watcher/
+            # filed_copy_route.py). WHY this divert may reopen a filed video
+            # at all (lab rule 2026-11-19, 'filed is final'): it fires only on
+            # a review a PERSON saved on this filed video saying a segment
+            # shows another pellet (true_segment_num) -- a person's own
+            # prescription, never an algorithm's.
+            from mousereach.config import Paths
+            from mousereach.watcher.filed_copy_route import route_filed_copy
+            route_filed_copy(
+                video_id, outcomes.parent, Paths.DEEP_REVIEW,
                 reason="pending human review declares segment mislabel "
                        "(true_segment_num set) -- needs re-segmentation",
-                db=self.db, all_or_nothing=True)
+                db=self.db, db_state="deep_review")
             logger.info(
                 "%s: pending review declares a segment mislabel -- routed to "
                 "deep review instead of a kinematics-only re-run", video_id)

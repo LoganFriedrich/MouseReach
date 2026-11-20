@@ -7291,3 +7291,78 @@ budget every time no longer blocks the rest), `test_the_watcher_turn_uses_the_cy
 `test_work_items_run_between_send_slices` (the real watcher loop: never more than one slice of
 sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 `test_a_held_conflict_stays_red_in_a_pass_that_ran_out_of_time`.
+
+---
+
+## Update 2026-11-19 (filed is final)
+
+**The rule (lab decision 2026-11-19).** Once a video is filed, what the four algorithms decided
+for it -- its cuts, its reaches, its pellet outcomes and which reach caused each one -- is its
+final answer for good. A newer segmenter, reach detector, outcome detector, reach assignment or
+pose model applies only to videos that are not filed yet. Only the kinematics (pure measurement on
+settled frames) may be recalculated on a filed video, and a kinematics recalculation never holds
+the video and never asks a person anything. Nothing automatic ever takes a filed video back into a
+queue; a person may, and then the filed copy stays in Analyzed until the new run is filed and
+replaces it. WHY: people are only shown what the algorithms could not decide, and their answers are
+anchored in the frames of a video that does not change; re-running the algorithms on a filed video
+can only contradict settled answers.
+
+What this changes, place by place:
+
+- **The version scan** (`watcher/reprocessor.py`, `filed_is_final`). For a filed ('archived')
+  video only a newer kinematic extractor, a person's review or ground truth its kinematics have not
+  applied yet, or a missing session file (Easy/Flat) can mark it 'outdated' -- always with scope
+  'kinematics'. A newer algorithm or pose model never marks it; the scan counts such videos under
+  `filed_final_kept` and names them with the components a newer declaration would have re-run
+  (`filed_final_kept_videos`). Before, the scan marked them from the earliest stale stage ('full'
+  for a new pose model). Easy/Flat videos filed without their session file get it from the
+  kinematics step alone, from their filed reaches (before: re-run from segmentation).
+- **'outdated' rows the scan marked earlier** for an algorithm stage (no `mark_reason`): narrowed
+  to 'kinematics' while kinematics are still owed, otherwise put back to 'archived'
+  (`narrowed_to_kinematics` in the summary). A row a PERSON marked (dashboard Re-run,
+  `mousereach-repose-videos`, which always carry a `mark_reason`) is never changed.
+- **A filed video's kinematics-only re-run** (orchestrator `_filed_kinematics_only_run`,
+  `_filed_kinematics_refusal`): no quality triage, no hand-score comparison and NO review gate (the
+  gate used to run and could hold a filed video for a segment nobody had answered). It recomputes
+  no algorithm: if a filed output it measures (cuts, reaches, Pillar outcomes) is missing, or the
+  pose is unusable, the re-run is not done -- the row goes back to 'archived' with the reason in its
+  error message and on the machine's failed re-runs attention list
+  (`_restore_filed_after_failed_rerun`), and the filed results stand. Before: the missing output was
+  recomputed (re-running an algorithm on a filed video), and an unusable old-model pose was sent for
+  a new pose. If the extractor refuses (the filed decisions would change, a person's re-cut voided
+  an answer, an answer could not be applied), the same: given up, filed results stand -- never held,
+  never routed to triage, never retried into the same refusal.
+- **The re-pose round trip** (`watcher/repose.py`, `adopt_staged_reposes`): a declared-model pose
+  that turns up for an 'archived' row is never adopted (before: the filed video was re-run from
+  segmentation on it automatically). A filed video is re-posed only on a person's command
+  (`mousereach-repose-videos`, which parks the row 'outdated' / 'full' first).
+- **`mousereach-route-to-queue`** (a person's command) puts a COPY of the filed folder into the queue
+  (`watcher/filed_copy_route.py`): the files are copied, checksum-verified, into
+  `<queue>/.filed_copies/<video>/` and that copy is routed by the ordinary router, all or nothing.
+  The filed folder is not moved, renamed or written. Before: the filed files were moved into the
+  queue, so the video had no filed result until it was filed again.
+- **The mislabel divert** (version scan): fires only on a review a PERSON saved on the filed video
+  saying a segment shows another pellet, and now also routes a copy; the filed results stay.
+- **Bring-current** (`pipeline/reprocess_to_current.py`): finalize refuses a filed video
+  (`FILED_IS_FINAL_SAYS`); run without finalize to evaluate a new version (everything stays in the
+  work folder). The review-bundle stager, a person's tool, is not affected.
+- **Evaluation**: the version simulator (`eval/version_simulator.py`) evaluates from a temporary
+  folder of its own; before, it renamed its simulated reaches file over `<video>_reaches.json` in
+  the folder it was evaluating and wrote the original back afterwards. The other evaluation
+  commands (`mousereach-eval`, `-eval-direct`, `-algo-vs-human`, `-update-algo-ref`,
+  `-perf-eval`) read algorithm outputs and write only reports, never into Analyzed.
+
+Not changed: `mousereach-repose-videos` still moves the distrusted pose and the outputs made from it
+out of the filed folder into `Analyzed/Archive/<label>/` before the request is written. WHY: that
+pose carries the declared model's name, and the round trip treats a declared-model pose in the
+filed folder as "already satisfied" -- left there, it would re-run on the very pose the person
+distrusts. Keeping the filed results in place for it needs a way to mark a pose as distrusted;
+until then this command is the one person-prescribed path that takes the filed copy away.
+
+Tests: `tests/test_filed_is_final.py` (20 of its 21 fail on master a534f3c); tests describing the
+old behaviour were changed to the rule: test_filed_rerun_skips_checks, test_version_scan_start_stage,
+test_easy_flat_session_only, test_repose, test_reprocessor_archive_skip, test_version_scan_cache_on_disk,
+test_watcher_integration (TestDLCStaleScope), test_recut_voided_pellets_are_asked_again,
+test_route_cli_db, test_route_recheck_answered, test_unpicked_outcome_is_not_an_answer,
+test_unfinished_routes_are_finished, test_kinematics_only_rerun_keeps_filed_decisions,
+test_bring_current_keeps_the_watchers_rules.

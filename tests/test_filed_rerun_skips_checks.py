@@ -1,8 +1,9 @@
 """A filed video re-run only because a downstream calculation changed re-runs
-none of the four algorithms, no quality triage and no hand-score comparison
-(orchestrator.filed_rerun_reuses_analysis). The review gate still runs, and it
-can only ask about a segment no person has answered -- ground truth beside the
-video counts as an answer (triage_status.gt_resolved_segments).
+none of the four algorithms, no quality triage, no hand-score comparison and
+-- since the lab decision of 2026-11-19 ('triage has nothing to do with
+kinematics'; filed is final) -- no review gate either
+(orchestrator.filed_rerun_reuses_analysis). An output it would have to
+recompute ends the re-run instead, and the filed results stand.
 
 WHY: only the calculations that changed are recalculated, without re-running
 the four algorithms or triage. And a segment whose boundaries, causal reach
@@ -71,6 +72,9 @@ def rig(tmp_path, monkeypatch):
     # video is unresolvable): a Pillar run without it never reaches the gate.
     (folder / f"{VID}.mp4").write_bytes(b"x")
     monkeypatch.setattr(o, "resolve_pose_input", lambda *a, **k: pose)
+    # The pose stand-in is an empty file; the pose test is not what is tested.
+    import mousereach.pipeline.pose_check as pc
+    monkeypatch.setattr(pc, "check_pose", lambda *a, **k: (True, ""))
     # The video's filed folder, here empty: a kinematics-only re-run looks
     # there for the filed features it must keep (test_kinematics_only_rerun_
     # keeps_filed_decisions.py), and with none filed there is nothing to keep.
@@ -142,6 +146,9 @@ def rig(tmp_path, monkeypatch):
         calls.append("hand_scores")
         return True
     orch._hand_score_precheck = _precheck
+    restored = []
+    orch._restore_filed_after_failed_rerun = lambda vid, why: (
+        calls.append("restored"), restored.append(why))
 
     def file_it():
         """Bring the row to 'archived' the way the archive step does."""
@@ -164,26 +171,20 @@ def rig(tmp_path, monkeypatch):
         return list(calls)
 
     return type("Rig", (), {"orch": orch, "folder": folder, "run": staticmethod(run), "calls": calls,
-                            "file_it": staticmethod(file_it)})
+                            "file_it": staticmethod(file_it), "restored": restored})
 
 
 def test_a_filed_kinematics_only_rerun_runs_no_algorithm_triage_or_hand_score_check(rig):
     rig.file_it()
     calls = rig.run("kinematics")
-    assert calls == ["gate"]                          # only the gate; it held here
-    assert "kinematics" not in calls                  # held: nothing filed
+    assert calls == ["kinematics"]                    # no gate either (2026-11-19)
+    assert rig.orch.db.get_video(VID)["state"] == "processed"
 
 
-def test_a_filed_kinematics_only_rerun_the_gate_passes_is_extracted_and_processed(rig, monkeypatch):
-    import mousereach.watcher.review_gate as rg
-
-    def _clean(*a, **k):
-        rig.calls.append("gate")
-        return rg.DECISION_CLEAN
-    monkeypatch.setattr(rg, "run_gate", _clean)
+def test_a_filed_kinematics_only_rerun_is_extracted_and_processed_without_the_gate(rig):
     rig.file_it()
     calls = rig.run("kinematics")
-    assert calls == ["gate", "kinematics"]
+    assert calls == ["kinematics"]
     assert rig.orch.db.get_video(VID)["state"] == "processed"   # on to filing
     feats = json.loads((rig.folder / f"{VID}_features.json").read_text())
     assert feats == {"extractor": "new"}
@@ -213,12 +214,14 @@ def test_a_filed_rerun_that_recomputes_an_upstream_stage_goes_through_every_chec
     assert calls[2:] == ["triage", "hand_scores", "gate"]
 
 
-def test_a_kinematics_rerun_whose_reused_output_is_missing_is_checked(rig):
-    """A reused output that is not there is made again -- and then judged."""
+def test_a_kinematics_rerun_whose_reused_output_is_missing_is_given_up(rig):
+    """A filed video's algorithms are never re-run (filed is final): a reused
+    output that is not there ends the re-run, and the filed results stand."""
     rig.file_it()
     (rig.folder / f"{VID}_pellet_outcomes.json").unlink()
     calls = rig.run("kinematics")
-    assert "outcome" in calls and "gate" in calls
+    assert calls == ["restored"]
+    assert "pellet_outcomes" in rig.restored[0]
 
 
 def test_a_kinematics_rerun_of_a_never_filed_video_is_checked(rig):
@@ -249,19 +252,19 @@ def _mark_kinematics_rerun(rig):
     rig.orch.db.force_state(VID, "processing", reason="test re-run")
 
 
-def test_a_failed_kinematics_rerun_retried_runs_only_the_gate(rig):
+def test_a_failed_kinematics_rerun_retried_runs_only_kinematics(rig):
     rig.file_it()
     _mark_kinematics_rerun(rig)
     rig.orch.db.mark_failed(VID, "kinematics failed")
     rig.orch.db.update_state(VID, "processing")      # what the retry bucket does
     calls = _run_from_row(rig)
-    assert calls == ["gate"]
+    assert calls == ["kinematics"]
 
 
-def test_a_kinematics_rerun_picked_after_a_restart_runs_only_the_gate(rig):
+def test_a_kinematics_rerun_picked_after_a_restart_runs_only_kinematics(rig):
     rig.file_it()
     _mark_kinematics_rerun(rig)
-    assert _run_from_row(rig) == ["gate"]
+    assert _run_from_row(rig) == ["kinematics"]
 
 
 def test_a_kept_scope_of_an_upstream_stage_is_a_full_run(rig):
@@ -283,18 +286,18 @@ def test_a_video_held_for_hand_scores_is_checked_again(rig):
 
 
 def test_stale_outputs_clear_the_kept_scope_so_the_next_pick_recomputes(rig, monkeypatch):
+    """A run with checks whose gate finds stale outputs clears a kept scope.
+    (A kinematics-only re-run of a filed video runs no gate at all.)"""
     import mousereach.watcher.review_gate as rg
 
     def _stale(*a, **k):
         rig.calls.append("gate")
         return rg.DECISION_STALE
     monkeypatch.setattr(rg, "run_gate", _stale)
-    rig.file_it()
-    _mark_kinematics_rerun(rig)
-    assert _run_from_row(rig) == ["gate"]
+    rig.orch.db.set_fields(VID, reprocess_scope="kinematics")   # never filed
+    rig.orch.db.force_state(VID, "processing", reason="test")
+    _run_from_row(rig)
     assert rig.orch.db.get_video(VID)["reprocess_scope"] is None
-    calls = _run_from_row(rig)
-    assert calls[:4] == ["segmentation", "reach", "outcome", "assignment"]
 
 
 def test_a_review_return_clears_the_kept_scope_and_the_next_run_is_checked(rig, tmp_path, monkeypatch):
@@ -402,9 +405,9 @@ def test_a_recomputed_output_held_for_hand_scores_is_checked_after_a_restart(rig
     assert "triage" in calls and "hand_scores" in calls
 
 
-def test_a_recompute_that_fails_before_the_checks_is_checked_on_retry(rig, monkeypatch):
-    """The reach step writes its file and then crashes: the retry finds the
-    file and would reuse it, unjudged, under a kept 'kinematics' scope."""
+def test_a_kept_kinematics_scope_with_a_missing_output_recomputes_nothing(rig, monkeypatch):
+    """Under a kept 'kinematics' scope a missing reaches file used to be
+    recomputed (and judged on retry). Filed is final: nothing is recomputed."""
     import mousereach.reach.core.batch as reachb
     rig.file_it()
     _mark_kinematics_rerun(rig)
@@ -415,16 +418,10 @@ def test_a_recompute_that_fails_before_the_checks_is_checked_on_retry(rig, monke
         (rig.folder / f"{VID}_reaches.json").write_text("{}", encoding="utf-8")
         raise RuntimeError("reach step crashed after writing")
     monkeypatch.setattr(reachb, "process_single", _reach_writes_then_crashes)
-    with pytest.raises(RuntimeError):
-        _run_from_row(rig)
-    row = rig.orch.db.get_video(VID)
-    assert row["state"] == "failed" and row["reprocess_scope"] == "reach"
-
-    monkeypatch.setattr(reachb, "process_single",
-                        lambda *a, **k: rig.calls.append("reach") or {"total_reaches": 0})
-    rig.orch.db.update_state(VID, "processing")        # the retry
+    # Filed is final (2026-11-19): the missing reaches file is never
+    # recomputed for a filed video; the re-run is given up instead.
     calls = _run_from_row(rig)
-    assert "triage" in calls and "hand_scores" in calls
+    assert calls == ["restored"]
 
 
 def test_the_narrowed_scope_is_the_earliest_recomputed_stage():

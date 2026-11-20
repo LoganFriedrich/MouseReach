@@ -1952,3 +1952,12 @@ made, measured over the frames the person gave, and credited with the pellet
 Two exceptions: a typed reach longer than 300 frames is not added
 (`MAX_TYPED_REACH_FRAMES`), and none is added where ground truth marks its
 reach list complete (logged). See "A reach the list does not have" above.
+
+## Update 2026-11-19 (filed is final)
+
+A filed video never comes back to a review queue by itself: no version change, bench comparison or
+kinematics recalculation sends it. It comes back only when a person sends it
+(`mousereach-route-to-queue`, or a review answer saying a segment shows a different pellet saved on
+that filed video), and then the queue gets a COPY: the filed results stay in Analyzed until the
+video's new run is filed and replaces them. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19
+(filed is final)".

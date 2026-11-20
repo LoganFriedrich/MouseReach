@@ -438,3 +438,12 @@ Watcher-side only, no cascade behaviour changed: failures around the cascade's
 neighbours (assignment after it, feature extraction and database sync below it)
 now write `failed` rows to the step audit table instead of vanishing into
 warnings, so a run that half-happened is countable.
+
+## Update 2026-11-19 (filed is final)
+
+A new version of this algorithm is used only for videos that are not filed yet. A filed video's
+result from this step is final: the version scan never marks a filed video to run this step again,
+and a filed video's kinematics-only re-run never recomputes it (if the filed output is missing, that
+re-run is given up and the filed results stand). To see how a new version would do on filed videos,
+use the evaluation tools (or bring-current without finalize); they write outside Analyzed and never
+replace a filed file. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".

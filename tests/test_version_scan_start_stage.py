@@ -90,28 +90,31 @@ def test_a_manifest_missing_only_its_kinematics_version_reruns_kinematics_only(a
     assert "kinematic_extractor (not recorded)" in listed
 
 
-def test_an_unrecorded_stage_starts_the_rerun_at_its_own_stage(archive):
+# Filed is final (2026-11-19): an algorithm stage never starts a filed
+# video's re-run; only kinematics does (test_filed_is_final.py has more).
+
+def test_an_unrecorded_algorithm_stage_marks_nothing(archive):
     nas, cohort = archive
     _filed(cohort, dict(CURRENT, reach_detector="unknown"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks.get(STEM) == "reach"
+    assert STEM not in db.marks
 
 
-def test_an_unrecorded_stage_earlier_than_a_stale_one_wins(archive):
+def test_an_unrecorded_algorithm_stage_beside_a_stale_extractor_reruns_kinematics_only(archive):
     nas, cohort = archive
     _filed(cohort, dict(CURRENT, outcome_detector="", kinematic_extractor="4.9"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks.get(STEM) == "outcome"
+    assert db.marks.get(STEM) == "kinematics"
 
 
-def test_a_stale_assignment_starts_at_outcome_not_segmentation(archive):
+def test_a_stale_assignment_marks_nothing(archive):
     nas, cohort = archive
     _filed(cohort, dict(CURRENT, assignment="0.9"))
     db = DB(archived=[STEM])
     _scan(nas, db)
-    assert db.marks.get(STEM) == "outcome"
+    assert STEM not in db.marks
 
 
 def test_every_tracked_stage_has_a_start_stage():

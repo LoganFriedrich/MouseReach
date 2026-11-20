@@ -590,6 +590,16 @@ videos that need the hand-score check are held, in red, and filing keeps the
 rules it last read (or stops, with the reason in the watcher log, if it has
 none) until the file is fixed. INSTALL.md, Part 6, Step 4 shows how to create it.
 
+**Filed is final.** Once a video is filed, its cuts, reaches, pellet outcomes
+and causal reaches are its final answer: a newer algorithm or pose model is used
+only for videos not filed yet, and nothing automatic ever sends a filed video
+back to a review queue. Only its kinematics may be recalculated, and that never
+holds the video or asks you anything. You can still reopen one filed video on
+purpose (`mousereach-route-to-queue`, the dashboard's Re-run); its filed results
+stay in Analyzed until the new run is filed and replaces them. To try a new
+algorithm version on filed videos, use the evaluation tools -- they never write
+into Analyzed. (docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".)
+
 `filing` says which folder under `Analyzed` each project's finished videos go
 in, and how its cohort folders are named -- for example every project of one
 grant inside the grant's folder, one folder per cohort
