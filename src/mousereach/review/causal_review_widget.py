@@ -4068,7 +4068,8 @@ The notes box travels with the video.
             except Exception:
                 pass
             return
-        show_info(f"[OK] Cleared {stem}. The watcher will re-inject it into the pipeline.")
+        from mousereach.review.after_release import NEXT_STEP
+        show_info(f"[OK] Cleared {stem}. {NEXT_STEP}")
         # The return scan removes the bundle from the queue; advance to the next.
         try:
             self._load_next_video()

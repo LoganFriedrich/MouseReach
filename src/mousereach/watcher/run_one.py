@@ -34,7 +34,9 @@ WHAT IS REFUSED (nothing is run or moved; the reason is shown)
   * a crystallized (publication-locked) video;
   * a video the watcher on this machine does not know and that is not waiting
     in the posed folder (it has no record to run);
-  * a video not yet posed, quarantined, or with no file on this machine;
+  * a video not yet posed (except on a single machine, which poses it first
+    with its posing half's own steps -- see "A SINGLE MACHINE" below),
+    quarantined, or with no file on this machine;
   * when this machine is not the processing machine or a single machine
     (``standalone``, whose processing half is the processing server's
     program; a graphics-card PC set to analyse does so through its own
@@ -234,9 +236,12 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
             return _refuse(f"MouseReach is not set up on this machine ({e}). Use the "
                            f"Setup tab (mousereach-setup), then come back.")
         from mousereach.watcher.standalone import analyses_and_files, STANDALONE, split_config
-        if getattr(cfg, "mode", None) == STANDALONE:
+        single_machine = getattr(cfg, "mode", None) == STANDALONE
+        full_cfg = cfg
+        if single_machine:
             # A single machine: the run is its processing half, the processing
-            # server's own program (watcher/standalone.py).
+            # server's own program (watcher/standalone.py) -- after its posing
+            # half has posed the video, if it has no pose yet (below).
             cfg = split_config(cfg)[1]
         if not analyses_and_files(getattr(cfg, "mode", None)):
             return _refuse(
@@ -284,6 +289,10 @@ def run_one_video(video, progress: Optional[Callable[[str, str], None]] = None) 
         if root_logger.getEffectiveLevel() > logging.INFO:
             root_logger.setLevel(logging.INFO)
         try:
+            if single_machine:
+                why = _pose_on_this_machine(video_id, full_cfg, _p)
+                if why:
+                    return _refuse(why)
             return _drive(video_id, video, cfg, result, _p, _refuse)
         finally:
             root_logger.setLevel(old_level)
@@ -420,5 +429,221 @@ def _drive(video_id, video, cfg, result, _p, _refuse) -> Dict:
     return result
 
 
-__all__ = ["run_one_video", "where_refusal", "state_refusal", "queue_holding",
+# ---------------------------------------------------------------------------
+# A SINGLE MACHINE (watcher.mode "standalone"): the cut and the pose first.
+#
+# WHY: on a single machine a chosen video may not be posed yet (it waits in
+# the shared singles folder or this machine's pose queue), or may be a whole
+# multi-animal recording in the intake folder. The processing machine never
+# poses, so run_one_video used to refuse such a video ("no pose yet; the pose
+# is made on a graphics-card PC") -- on a single machine there is no other PC.
+# The posing half's OWN handlers do it here (DLCOrchestrator._dispatch_work,
+# the same calls its watcher makes): adopt the single, pose it, hand the pose
+# on to the posed folder; for a recording, cut it. Then the processing half
+# runs as for any posed video. Nothing here runs a step itself.
+# ---------------------------------------------------------------------------
+
+# Posing-half state -> its work type (DLCOrchestrator._select_work_item).
+POSE_WORK_FOR_STATE = {
+    "validated": "adopt_single",
+    "dlc_queued": "single_dlc",
+    "dlc_complete": "stage_to_nas",
+}
+
+
+def _posing_half(full_cfg):
+    """The posing half of a single machine, on its own database."""
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.watcher.orchestrator import DLCOrchestrator
+    from mousereach.watcher.standalone import split_config
+    pose_cfg = split_config(full_cfg)[0]
+    return DLCOrchestrator(pose_cfg, WatcherDB(Path(pose_cfg.db_path)))
+
+
+def _pose_on_this_machine(video_id: str, full_cfg, _p) -> Optional[str]:
+    """Pose ``video_id`` with the posing half if it has no pose yet. None when
+    the processing half can go on (posed and handed on now, or the posing half
+    has nothing to do for it); else why not (nothing more was run)."""
+    try:
+        orch = _posing_half(full_cfg)
+    except Exception as e:
+        return f"the posing half of this machine could not start ({e}); nothing was run."
+    db = orch.db
+    row = db.get_video(video_id)
+    if row is None:
+        # Not known yet: the posing half's own scan registers new videos in the
+        # shared singles folder and in this machine's pose queue.
+        _p("pose", "looking for it in the singles folder and the pose queue (the watcher's scan)")
+        try:
+            orch._scan_phase()
+        except Exception as e:
+            logger.warning(f"posing-half scan failed: {e}")
+        row = db.get_video(video_id)
+    if row is None:
+        return None                 # nothing to pose here: posed already, or not a single
+    for _ in range(len(POSE_WORK_FOR_STATE) + 1):
+        row = db.get_video(video_id) or {}
+        state = row.get("state")
+        work = POSE_WORK_FOR_STATE.get(state)
+        if work is None:
+            break
+        if orch._run_once_blocked(f"before its '{work}' step"):
+            return "stopped: the watcher is paused or a stop was requested; nothing more was run."
+        _p("pose", f"{work} (the posing half's own step)")
+        orch._dispatch_work({"type": work, "id": video_id, "data": row})
+        after = db.get_video(video_id) or {}
+        if after.get("state") == state:
+            return (f"its '{work}' step did not move it on (state still '{state}'): "
+                    f"{after.get('error_message') or 'see the log'}")
+    state = (db.get_video(video_id) or {}).get("state")
+    if state == "failed":
+        return (f"posing failed: {(db.get_video(video_id) or {}).get('error_message') or '?'} "
+                f"(this machine needs an NVIDIA graphics card and the DLC model named "
+                f"in its settings).")
+    if state == "dlc_running":
+        return "it is being posed right now; run it again when the pose is done."
+    return None
+
+
+def is_recording(video) -> bool:
+    """True for a file in the intake folder of multi-animal recordings."""
+    from mousereach.config import Paths
+    p = Path(str(video))
+    return bool(p.suffix) and _inside(p.parent, getattr(Paths, "MULTI_ANIMAL_SOURCE", None))
+
+
+def cut_recording(video, progress: Optional[Callable[[str, str], None]] = None) -> Dict:
+    """Cut one chosen multi-animal recording on a single machine, with the
+    posing half's own handler. Returns ``{"children": [video ids], "refused":
+    why or None}``; the children are then run one by one with run_one_video.
+    Never raises."""
+    out = {"children": [], "refused": None}
+
+    def _p(stage, msg=""):
+        if progress:
+            try:
+                progress(stage, msg)
+            except Exception:
+                pass
+
+    name = Path(str(video)).name
+    try:
+        from mousereach.config import WatcherConfig
+        from mousereach.watcher.standalone import STANDALONE
+        cfg = WatcherConfig.load()
+        if getattr(cfg, "mode", None) != STANDALONE:
+            out["refused"] = (f"{name} is a multi-animal recording. Recordings are cut on "
+                              f"a graphics-card PC (or a single machine); press 'Run the "
+                              f"pipeline now' there.")
+            return out
+        from mousereach.watcher import singleton
+        lock = singleton.acquire_watcher_lock()
+        if lock is None:
+            out["refused"] = "A watcher is already running on this machine; it cuts the recording by itself."
+            return out
+        try:
+            orch = _posing_half(cfg)
+            if orch._run_once_blocked("before cutting"):
+                out["refused"] = "The watcher is paused or a stop was requested; nothing was cut."
+                return out
+            row = orch.db.get_collage(name)
+            if row is None or row.get("state") not in ("stable", "cropped"):
+                _p("cut", "registering it (the watcher's scan)")
+                orch._scan_phase()
+                row = orch.db.get_collage(name)
+            if row is None:
+                out["refused"] = (f"{name} is not registered as a recording: check that it "
+                                  f"is in Unanalyzed/Multi-Animal and named "
+                                  f"YYYYMMDD_<animals>_<tray><run>.mp4 (a misnamed file is "
+                                  f"moved to Processing/Quarantine).")
+                return out
+            state = row.get("state")
+            if state == "stable":
+                _p("cut", "cutting it into single-animal videos (the posing half's own step)")
+                orch._dispatch_work({"type": "collage", "id": name, "data": row})
+                state = (orch.db.get_collage(name) or {}).get("state")
+            if state not in ("cropped", "stable"):
+                out["refused"] = (f"{name} is not ready to cut (state '{state}'): a "
+                                  f"recording is cut once it has stopped changing for "
+                                  f"{getattr(cfg, 'stability_wait_seconds', 60)} s.")
+                return out
+            out["children"] = [c["offspring_stem"] for c in orch._expected_children(name)]
+            _p("cut", f"{len(out['children'])} single-animal video(s)")
+        finally:
+            singleton.release_watcher_lock(lock)
+    except Exception as e:
+        logger.exception("cut_recording failed")
+        out["refused"] = f"could not cut {name}: {e}"
+    return out
+
+
+def run_chosen_videos(videos, progress: Optional[Callable[[str, str], None]] = None) -> list:
+    """Run each chosen file through the watcher's own steps: a recording in the
+    intake folder is cut first (single machine) and each of its videos run;
+    every other file goes to run_one_video. Returns one run_one_video summary
+    per video (a refused recording gives one summary carrying the refusal).
+    The Run Pipeline tab's "Run chosen videos..." calls this."""
+    results = []
+    for v in videos:
+        if is_recording(v):
+            cut = cut_recording(v, progress)
+            if cut["refused"]:
+                results.append({"video": Path(str(v)).name, "refused": cut["refused"],
+                                "stages": [], "held": None, "error": None, "done": False})
+                continue
+            for child in cut["children"]:
+                results.append(run_one_video(child, progress=progress))
+            continue
+        results.append(run_one_video(v, progress=progress))
+    return results
+
+
+def main(argv=None) -> int:
+    """mousereach-run-videos <file> [<file> ...]: run chosen videos now, through
+    the watcher's own steps (run_chosen_videos). The command-line twin of the
+    Run Pipeline tab's "Run chosen videos..." button."""
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="mousereach-run-videos",
+        description=("Run chosen videos now, through the watcher's own steps and checks "
+                     "(take in, segmentation, reaches, outcomes, causal reach, quality "
+                     "check, hand-score comparison when hand scores are set up, review "
+                     "gate, kinematics, filing). On a single machine a video with no pose "
+                     "yet is posed first, and a multi-animal recording in the intake "
+                     "folder is cut first. Not run (the reason is printed): a filed video "
+                     "(filed is final), a video held in a review queue, a crystallized "
+                     "one, or anything while a watcher runs on this machine. Everything "
+                     "waiting: mousereach-watch --once."))
+    ap.add_argument("videos", nargs="+", help="video files (or video names)")
+    args = ap.parse_args(argv)
+    bad = 0
+    for r in run_chosen_videos(args.videos,
+                               progress=lambda st, msg: print(f"  {st}: {_ascii(msg)}")):
+        line = chosen_summary_line(r)
+        print(_ascii(line))
+        if not (r.get("done") or r.get("held")):
+            bad += 1
+    return 1 if bad else 0
+
+
+def chosen_summary_line(r: dict) -> str:
+    """One line saying what happened to one chosen video (run_one_video's summary)."""
+    v = r.get("video") or "?"
+    if r.get("refused"):
+        return f"[NOT RUN] {v}: {r['refused']}"
+    if r.get("done"):
+        return f"[OK] {v}: filed"
+    if r.get("held"):
+        return f"[HELD] {v}: {r.get('hold_reason') or r['held']}"
+    if r.get("error"):
+        return f"[FAIL] {v}: {r['error']}"
+    return f"[?] {v}: now '{r.get('state_after')}'"
+
+
+def _ascii(text) -> str:
+    return str(text).encode("ascii", "replace").decode("ascii")
+
+
+__all__ = ["run_one_video", "run_chosen_videos", "chosen_summary_line", "cut_recording", "is_recording",
+           "where_refusal", "state_refusal", "queue_holding",
            "video_id_of", "WORK_FOR_STATE"]

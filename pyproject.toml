@@ -178,6 +178,8 @@ mousereach-quick-summary = "mousereach.export.quick_summary:main"
 mousereach-features-csv = "mousereach.export.features_csv:main"
 # The filed results at reach / pellet / session / day / animal level (export/results.py)
 mousereach-results = "mousereach.export.results:main"
+# Run chosen videos now through the watcher's own steps (watcher/run_one.py)
+mousereach-run-videos = "mousereach.watcher.run_one:main"
 
 # Kinematic Analysis Utilities
 mousereach-reach-export = "mousereach.kinematics.analysis.reach_export:main"

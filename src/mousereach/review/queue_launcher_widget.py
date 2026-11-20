@@ -354,8 +354,8 @@ Each tool opens in its own window and has its own ? guide.
                 show_error(f"Released {done}; {len(failures)} failed -- "
                            f"first: {failures[0]}.{note}")
             else:
-                show_info(f"Released {done} video(s) back into the pipeline. "
-                          f"The watcher picks them up within ~2 minutes.{note}")
+                from mousereach.review.after_release import NEXT_STEP
+                show_info(f"Released {done} video(s). {NEXT_STEP}{note}")
         except Exception as e:
             show_error(f"Release failed: {e}")
         self._refresh_counts()

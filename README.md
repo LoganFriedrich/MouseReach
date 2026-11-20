@@ -64,14 +64,13 @@ Launch with `mousereach` command. Available tabs:
 | **Pipeline Dashboard** | Overview of all videos and pipeline status |
 | **0 - Crop Videos** | Crop multi-animal collage to single animals |
 | **1 - DLC Analysis** | Run DeepLabCut pose estimation |
-| **2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. A box puts one animal's videos first (the watcher's own priority, kept until cleared); the old "Select Specific Files..." / "Reprocess All..." buttons are shown switched off until the lab decides what they should do |
+| **2 - Run Pipeline** | Run the pipeline by hand: one pass of this machine's watcher over everything waiting, in this machine's role. On the processing machine: the same steps, checks and review queues as the automatic watcher, and finished videos are filed. On a pose-only graphics-card PC: cutting and posing only (the analysis runs on the processing machine). The tab says which. No watcher needs to be running. "Run chosen videos..." runs the video files you pick now, through the same steps (`mousereach-run-videos`); on a single machine it poses a video first and cuts a multi-animal recording first. A filed, held or crystallized video is not run, with the reason shown. A box puts one animal's videos first (the watcher's own priority, kept until cleared) |
 | **Review Queues** | Buttons: Open Triage Review, Open Re-segmentation Review, Open Re-segmentation, Release finished videos -> back into pipeline, Show and resolve..., Refresh counts |
 | **4 - View Features** | Visualize kinematic features |
 | **GT Tool** | Create ground truth files (for evaluation; cuts, reaches and outcomes you determine there are also used as the video's results) |
 | **Watcher Control** | Run, monitor and configure this machine's watcher |
 | **Quarantine** | See files held because their names could not be read, correct a name and release the file back to the intake |
 | **Setup** | Set this machine's processing folder and the shared pipeline folder |
-| **Run All Steps** | Run the watcher's own steps for one chosen video (refuses a filed video or one in a review queue) |
 | **DLC Compare** | Compare two DLC models on a video |
 | **FP/FN Review** | Browse false/true positive and missed reach events (read-only) |
 

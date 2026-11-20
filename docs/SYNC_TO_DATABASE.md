@@ -96,7 +96,7 @@ It is called from three places:
 | `reach/core/reach_detector.py:1140-1141` | `_reaches.json` | **does nothing** |
 | `outcomes/core/pellet_outcome.py:1799-1800` | `_pellet_outcomes.json` | **does nothing** |
 
-The watcher (`watcher/orchestrator.py`), the Run All Steps tab (`pipeline/run_all.py`, which now runs the watcher's own steps, `watcher/run_one.py`) and the bring-current routine (`pipeline/reprocess_to_current.py`) used to be on this list, pushing the features file of a video they filed; none of them calls `sync_file_to_database` any more (bring-current's `sync_db` argument is accepted and ignored), and the database tool pulls filed results from Analyzed itself.
+The watcher (`watcher/orchestrator.py`), the Run Pipeline tab's "Run chosen videos..." (`pipeline/run_all.py`, which now runs the watcher's own steps, `watcher/run_one.py`) and the bring-current routine (`pipeline/reprocess_to_current.py`) used to be on this list, pushing the features file of a video they filed; none of them calls `sync_file_to_database` any more (bring-current's `sync_db` argument is accepted and ignored), and the database tool pulls filed results from Analyzed itself.
 
 The last two return immediately at the file-name check (`database.py:832-833`). They look like sync points and are not. They have never written anything.
 

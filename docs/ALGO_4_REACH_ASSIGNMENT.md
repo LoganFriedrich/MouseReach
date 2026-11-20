@@ -35,7 +35,7 @@ Nothing warned about that overwrite at the time, and version tracking would not 
 
 Production entry points, all of which run v2:
 
-- `assignment/run.py:32` `assign_reaches_for_video(...)` — the importable one-video step. Called from the watcher (`watcher/orchestrator.py:1080` and `:2010`), the manual full run (the Run All Steps tab, `pipeline/run_all.py`, through the watcher's own handlers, `watcher/run_one.py`), and the version-driven reprocess (`pipeline/reprocess_to_current.py:215-216`).
+- `assignment/run.py:32` `assign_reaches_for_video(...)` — the importable one-video step. Called from the watcher (`watcher/orchestrator.py:1080` and `:2010`), the manual full run (the Run Pipeline tab's "Run chosen videos...", `pipeline/run_all.py`, through the watcher's own handlers, `watcher/run_one.py`), and the version-driven reprocess (`pipeline/reprocess_to_current.py:215-216`).
 - `review/staging.py:327` calls `assign_reaches_v2` directly when building a review bundle, and writes the same filename at `staging.py:333`.
 
 `v1/features.py`, `v1/train.py` and `v1/overrides.py` are a machine-learning classifier from an old development effort. Apart from `v1/train.py` importing `v1/features.py`, nothing in `src/` imports them; only one-off development scripts outside this repository did. They do not run in any pipeline.
@@ -269,7 +269,7 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 - **A missing input** → warning logged, `None` returned, no file written (`run.py:52-59`).
 - **An exception during assignment, under the watcher** → caught and logged as a warning; the video continues through the pipeline (`orchestrator.py:1081-1082`, `:2015-2016`). On the second path the "assignment completed" step log at `:2013-2014` is skipped and no "failed" step is recorded either, so the watcher database shows the step started and never finished.
 - **Under `reprocess_to_current`** → the exception is caught along with the other algorithm steps, recorded in `summary["error"]`, and the function returns without writing a manifest (`reprocess_to_current.py:217-219`). It is not re-raised.
-- **Under the Run All Steps tab** (`run_all.py` -> `watcher/run_one.py`) → the same as under the watcher: the tab runs the watcher's own pipeline handler, which holds the video for a person at this step.
+- **Under the Run Pipeline tab's "Run chosen videos..."** (`run_all.py` -> `watcher/run_one.py`) → the same as under the watcher: the tab runs the watcher's own pipeline handler, which holds the video for a person at this step.
 - **In all of the no-file cases, the safety net does not fire.** `review/triage_status.py:93` applies the "touched outcome with no committed causal reach" rule only when the assignment document is not `None`. A video with *no* assignment file therefore contributes no triage from this stage and can pass the review gate with zero causal attribution recorded. **A video that fails this stage looks cleaner than one that succeeded with disagreements.**
 - **The triage-reduction pass failing** is silent in the logs by construction (`v2/assign.py:381-382`), though it is visible in the output file as a `triaged` reach with no `triage_reason`.
 
@@ -279,7 +279,7 @@ There is essentially none. Every threshold in both signals and in the triage-red
 
 | Setting | Where | Effect |
 |---|---|---|
-| Tray type in the video filename | `watcher/orchestrator.py:1062,1971` (the Run All Steps tab runs these) | Tray types `E` and `F` skip outcome detection **and** this stage entirely. No assignment file is produced for them. `reprocess_to_current.py:215-216` has no such check and runs the stage regardless. |
+| Tray type in the video filename | `watcher/orchestrator.py:1062,1971` (the Run Pipeline tab's "Run chosen videos..." runs these) | Tray types `E` and `F` skip outcome detection **and** this stage entirely. No assignment file is produced for them. `reprocess_to_current.py:215-216` has no such check and runs the stage regardless. |
 | `write=True` (default) | `run.py:37` | Set `False` to compute the result and return it without writing the file. |
 | `window=10` | `v2/assign.py:218` | **Has no effect.** It is accepted, documented as "kept for API symmetry" (`:238-240`), and never referenced in the function body. |
 | `cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. Never supplied by the pipeline's assignment step; supplied by the napari causal review tool (Update 2026-11-18). |

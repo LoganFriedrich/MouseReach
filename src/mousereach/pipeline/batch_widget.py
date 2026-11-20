@@ -2,8 +2,8 @@
 
 WHAT IT DOES
 ------------
-One button, "Run the pipeline now". It runs ONE pass of this machine's own
-watcher -- exactly what ``mousereach-watch --once`` and the Watcher Control
+Two buttons. "Run the pipeline now" (everything waiting) runs ONE pass of
+this machine's own watcher -- exactly what ``mousereach-watch --once`` and the Watcher Control
 tab's "Run Once" run -- and stops when nothing is left waiting. What that pass
 does depends on the role this machine is configured for (``watcher.mode`` in
 ~/.mousereach/config.json, shown on the tab):
@@ -25,6 +25,15 @@ On the processing machine (``processing_server``):
     segmentation), with its watcher record, as it would overnight;
   * a video that passed every check gets its kinematics and is filed;
   * videos coming back from review go on from where they were sent.
+
+"Run chosen videos..." asks for one or more video files and runs each one
+through the same steps, now (watcher/run_one.py: run_chosen_videos -- the
+watcher's own handlers for that one video, as the old Run All Steps tab did).
+On a single machine (``standalone``) a chosen video that has no pose yet is
+posed first by the machine's posing half, and a chosen multi-animal recording
+in the intake folder is cut first and each of its videos run. A filed video, a
+video held in a review queue and a crystallized one are refused with the
+reason (filed means final; a held video goes on once its review is finished).
 
 No automatic watcher has to be running. The pass refuses to start, with the
 reason shown, where the watcher itself would not start work: another watcher
@@ -55,22 +64,18 @@ the same file ``mousereach-watch-prioritize`` writes): the next passes take
 that animal's videos before any other, with every step, check and hold
 unchanged. That is how a person has chosen videos done now from a window.
 
-THE OLD CONTROLS ARE KEPT, SWITCHED OFF. "Select Specific Files...", "Clear
-Selection" and "Reprocess All..." are still on the tab, greyed out, each with
-a note saying why. They ran the chosen (or all) pose files through the old
-copy of the steps, wherever those files sat, with no checks, queue or filing;
-"Reprocess All" also deleted every segments, reaches and outcomes file in
-Processing, a person's hand-set cuts included. Wiring them to the watcher
-needs a decision from the lab owner that is still open: should the tab offer
-choosing specific videos again, and if so what should happen to a chosen video
-that is already filed, held in a review queue, or crystallized? Until it is
-decided they do nothing, and the note on the tab lists the per-video ways that
-keep every check: the animal-first box above, ``mousereach-watch-reprocess
-<video>`` (a failed video) and the version re-run (a filed video: declare new
-versions in the Watcher Control tab, or ``mousereach-version-check --mark``,
-which keeps every person's answers and cuts). The Run All Steps tab runs one
-chosen video through the watcher's own steps (watcher/run_one.py), with every
-check, and refuses a filed, held or crystallized video.
+THE OLD CONTROLS ARE GONE (2026-11-19). "Select Specific Files...", "Clear
+Selection" and "Reprocess All..." were kept greyed out until the lab owner
+decided whether chosen videos come back. The owner's answer (2026-11-19):
+everything must be runnable by hand, easily, from the window and the command
+line. So "Run chosen videos..." replaces the first two, running each chosen
+video through the watcher's own steps; what it does with a filed, held or
+crystallized video is what the watcher does (refuse, and say why). "Reprocess
+All" is not brought back: it deleted every segments, reaches and outcomes
+file in Processing, a person's hand-set cuts included, and filed results are
+final (a filed video is run again only by a person's explicit command, e.g.
+the dashboard's "Re-run video"). The separate Run All Steps tab, which ran one
+chosen video, is retired: this button does the same for one or many.
 
 ASCII-only console output (Windows cp1252). Qt widget text may use Unicode,
 but this module prints nothing to the terminal.
@@ -78,15 +83,28 @@ but this module prints nothing to the terminal.
 from __future__ import annotations
 
 import logging
+import threading
 
 from qtpy.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox,
     QTableWidget, QTextEdit, QHeaderView,
 )
 
+from qtpy.QtCore import QObject, Signal
+
 from mousereach.watcher.control_widget import WatcherControlWidget, status_headline
 
 logger = logging.getLogger(__name__)
+
+
+class _ChosenRelay(QObject):
+    """Carries lines from the chosen-videos thread to the tab (queued signals)."""
+    line = Signal(str)
+    done = Signal()
+
+
+# One line per chosen video: the same words as mousereach-run-videos.
+from mousereach.watcher.run_one import chosen_summary_line  # noqa: E402
 
 
 RUN_PIPELINE_INTRO = (
@@ -133,30 +151,21 @@ def role_explanation(mode, also_process=False) -> str:
     return f"This machine's role ({mode}) is not one the pipeline knows."
 
 RUN_PIPELINE_BUTTON_TEXT = "Run the pipeline now"
+RUN_CHOSEN_BUTTON_TEXT = "Run chosen videos..."
 
-# Shown on the tab. WHY: the old tab's "Select Specific Files...", "Clear
-# Selection" and "Reprocess All..." are kept but switched off until the lab
-# owner decides what they should do (module docstring); a person who used
-# them must be told, on the screen, why and what to use instead.
+# Shown under the two buttons (module docstring).
 SELECTION_NOTE = (
-    "Running only chosen videos: \"Run the pipeline now\" works on everything "
-    "waiting on this machine. To have chosen videos done first, put their animal "
-    "first in the box above, then press the button: the watcher takes that "
-    "animal's videos before any other, with every check. The old \"Select "
-    "Specific Files...\", \"Clear Selection\" and \"Reprocess All...\" buttons "
-    "are switched off: they skipped the watcher's checks, and what they should do "
-    "with a filed or held video is still to be decided. A failed video: "
-    "mousereach-watch-reprocess <video>. A filed video: the version re-run. The "
-    "Run All Steps tab runs one chosen video now, through the watcher's own "
-    "steps with every check (it refuses a filed video, a video held in a review "
-    "queue and a crystallized one)."
+    "\"Run the pipeline now\" runs everything waiting on this machine. \"Run "
+    "chosen videos...\" asks for video files and runs each one now, through the "
+    "same steps with every check (on a single machine a video with no pose yet is "
+    "posed first, and a multi-animal recording in the intake folder is cut "
+    "first). A filed video, a video held in a review queue and a crystallized one "
+    "are not run, and the reason is shown: filed results are final, and a held "
+    "video goes on by itself once its review is finished. After you finish a "
+    "review, press \"Run the pipeline now\" to take the video back (the automatic "
+    "watcher does it by itself). Same as: mousereach-watch --once (everything) and "
+    "mousereach-run-videos <file> ... (chosen)."
 )
-
-# The tooltip on each switched-off old button.
-OLD_CONTROL_TIP = (
-    "Switched off: this ran pose files through an older copy of the steps that "
-    "skipped the watcher's checks. Whether it comes back, and what it should do "
-    "with a filed or held video, is still to be decided. See the note below.")
 
 PRIORITY_INTRO = (
     "Do one animal's videos first: type the animal (e.g. ABC0101) and press "
@@ -234,16 +243,23 @@ class UnifiedPipelineWidget(WatcherControlWidget):
         pl.addWidget(self.priority_label)
         root.addWidget(prio)
 
-        # The old tab's controls, kept and switched off (module docstring).
-        old = QHBoxLayout()
-        self.select_btn = QPushButton("Select Specific Files...")
-        self.clear_btn = QPushButton("Clear Selection")
-        self.reprocess_btn = QPushButton("Reprocess All...")
-        for b in (self.select_btn, self.clear_btn, self.reprocess_btn):
-            b.setEnabled(False)
-            b.setToolTip(OLD_CONTROL_TIP)
-            old.addWidget(b)
-        root.addLayout(old)
+        # Chosen videos, through the same steps (module docstring).
+        self.chosen_btn = QPushButton(RUN_CHOSEN_BUTTON_TEXT)
+        self.chosen_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        self.chosen_btn.setToolTip(
+            "Pick one or more video files; each is run now through the watcher's own "
+            "steps (the same as mousereach-run-videos).")
+        self.chosen_btn.clicked.connect(self._pick_and_run_chosen)
+        root.addWidget(self.chosen_btn)
+        self._chosen_log = QTextEdit()
+        self._chosen_log.setReadOnly(True)
+        self._chosen_log.setMaximumHeight(140)
+        self._chosen_log.setPlaceholderText("What happened to each chosen video appears here.")
+        root.addWidget(self._chosen_log)
+        self._chosen_thread = None
+        self._chosen_relay = _ChosenRelay()
+        self._chosen_relay.line.connect(self._chosen_log.append)
+        self._chosen_relay.done.connect(self._chosen_finished)
 
         selection = QLabel(SELECTION_NOTE)
         selection.setWordWrap(True)
@@ -274,6 +290,53 @@ class UnifiedPipelineWidget(WatcherControlWidget):
         more.setStyleSheet("color: #888;")
         root.addWidget(more)
         root.addStretch()
+
+    # ------------------------------------------------------ chosen videos
+    def _pick_and_run_chosen(self):
+        from qtpy.QtWidgets import QFileDialog
+        start = ""
+        try:
+            from mousereach.config import Paths
+            start = str(Paths.NAS_ROOT or "")
+        except Exception:
+            pass
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Choose videos to run", start, "Videos (*.mp4 *.avi *.mkv)")
+        if files:
+            self.run_chosen(files)
+
+    def run_chosen(self, files) -> None:
+        """Run ``files`` on a background thread (watcher/run_one.py:
+        run_chosen_videos); each line of what happens is shown on the tab."""
+        if self._chosen_thread is not None and self._chosen_thread.is_alive():
+            self._chosen_log.append("A run of chosen videos is still going; wait for it.")
+            return
+        relay = self._chosen_relay
+
+        def _work():
+            from mousereach.watcher.run_one import run_chosen_videos
+            try:
+                results = run_chosen_videos(
+                    list(files), progress=lambda st, msg: relay.line.emit(f"  {st}: {msg}"))
+                for r in results:
+                    relay.line.emit(chosen_summary_line(r))
+            except Exception as e:
+                relay.line.emit(f"[FAIL] {e}")
+            relay.done.emit()
+
+        self._chosen_log.append(f"Running {len(files)} chosen file(s)...")
+        self.chosen_btn.setEnabled(False)
+        self._chosen_thread = threading.Thread(target=_work, daemon=True,
+                                               name="run-chosen-videos")
+        self._chosen_thread.start()
+
+    def _chosen_finished(self):
+        self.chosen_btn.setEnabled(True)
+        self._chosen_log.append("Done.")
+        try:
+            self._refresh()
+        except Exception:
+            pass
 
     def _show_priority(self):
         """Say which animal goes first now, if any."""
@@ -343,7 +406,8 @@ class UnifiedPipelineWidget(WatcherControlWidget):
 
 
 __all__ = ["UnifiedPipelineWidget", "RUN_PIPELINE_INTRO", "RUN_PIPELINE_BUTTON_TEXT",
-           "SELECTION_NOTE", "OLD_CONTROL_TIP", "PRIORITY_INTRO", "role_explanation"]
+           "RUN_CHOSEN_BUTTON_TEXT", "SELECTION_NOTE", "PRIORITY_INTRO",
+           "role_explanation", "chosen_summary_line"]
 
 
 def main():

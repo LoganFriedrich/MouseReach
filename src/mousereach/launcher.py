@@ -412,20 +412,9 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
-    # Load Run All Steps: runs the watcher's own steps, gates and holds for one
-    # chosen video, and refuses a filed video or one held in a review queue
-    tprint("  Run All Steps...", end=" ")
-    try:
-        from mousereach.pipeline.run_all_widget import RunAllStepsWidget
-        runall_widget = RunAllStepsWidget(viewer)
-        dw = viewer.window.add_dock_widget(runall_widget, name="Run All Steps", area="right")
-        widgets_loaded.append(("runall", runall_widget))
-        dock_widgets.append(dw)
-        print("OK")
-    except ImportError as e:
-        print(f"SKIP ({e})")
-    except Exception as e:
-        print(f"ERROR ({e})")
+    # (The Run All Steps tab is retired, 2026-11-19: "Run chosen videos..." on
+    # the Run Pipeline tab runs one or many chosen videos through the same
+    # watcher steps -- pipeline/batch_widget.py.)
 
     # Load DLC Model Comparison viewer (standalone tool, not a pipeline step)
     tprint("  DLC Model Compare...", end=" ")
