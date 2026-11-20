@@ -7532,3 +7532,23 @@ Tests: `tests/test_recut_every_boundary_is_a_persons_call.py` (new); fixtures in
 files now write `boundary_calls` for a complete hand save; `test_boundary_review_saves_a_persons_cuts`
 gains the unreviewed-boundary case.
 
+## Update 2026-11-19 (review windows claim the video they show)
+
+WHY: MRR-02d -- two review windows could be handed the same video (each picks by priority and a
+random draw, with nothing saying another window had it open): work done twice, and on a pellet both
+answered the later save won. The lab owner approved (2026-11-19) a claims folder
+`REVIEW_ROOT/.review_claims` with one marker per open review window.
+
+WHAT IS BUILT: `review/review_claims.py` -- `claim`, `release`, `touch`, `holder`, `release_all`
+(at exit). Marker `<REVIEW_ROOT>/.review_claims/<video>.review`, created by
+`watcher/claim_marker.take` (exclusive create; holder `<host>/<user>`, per process). The triage /
+re-segmentation review window claims in `_pick_eligible` (a bundle another window holds is skipped)
+and in `load_from_manifest` (a deliberate open of a held video warns and opens); the claim is let go
+on the next pick, Browse, a failed load and `closeEvent`; every saved answer touches it. A claim of
+the same login whose process ended is taken over; any claim untouched for `IDLE_AFTER_S` (1 hour, by
+the file server's clock) is broken. The segmentation fixer claims in `_load_bundle` and skips a held
+video. The folder is created by the first window that claims (nothing creates it at install); the
+return scan does not read it.
+
+Tests: `tests/test_review_window_claims_its_video.py`.
+

@@ -226,6 +226,33 @@ def ground_truth_answered(stem, dirs, current_segments, human: bool) -> set:
     except Exception:
         return set()
 
+def _let_claim_go(bundle) -> None:
+    """Release this window's review claim on ``bundle`` (review_claims,
+    MRR-02d: one review window per video). Never raises."""
+    if bundle is None:
+        return
+    try:
+        from . import review_claims
+        review_claims.release(bundle)
+    except Exception as err:
+        logger.debug("Could not release the review claim on %s: %s", bundle, err)
+
+
+def _claim_for_pick(window, b) -> bool:
+    """Claim bundle ``b`` before it is handed to the reviewer of ``window``;
+    False when another review window holds it (review_claims, MRR-02d: two
+    windows were handed the same video). The bundle the window already shows
+    is let go first, so a window holds one claim at a time."""
+    from . import review_claims
+    cur = getattr(window, "_bundle_dir", None)
+    if cur is not None and Path(cur) != Path(b):
+        _let_claim_go(cur)
+    if review_claims.claim(b):
+        return True
+    logger.info("Skipped %s: another review window has it open (%s)", Path(b).name,
+                review_claims.holder(b) or "unknown")
+    return False
+
 
 def open_triaged_indices(indices, segments, records) -> list:
     """The triaged segments a person has NOT already answered -- the only ones
@@ -836,6 +863,7 @@ The notes box travels with the video.
                 if seen is None:
                     seen = self._reviewed_this_session = set()
                 seen.add(str(left))
+            _let_claim_go(left)
             self._bundle_dir = None
             self._manifest = None
             self._load_video(Path(path))
@@ -883,11 +911,28 @@ The notes box travels with the video.
                 f"manifest's path ({manifest.get('canonical_video_path')}) and "
                 f"no {stem}.mp4 inside the bundle folder ({bundle_dir}).")
             return
+        # One review window per video (review_claims, MRR-02d): the bundle
+        # left is let go, this one claimed. A video another window has open is
+        # still opened when it was asked for by name -- the person is told.
+        prev = getattr(self, "_bundle_dir", None)
+        if prev is not None and Path(prev) != bundle_dir:
+            _let_claim_go(prev)
+        from . import review_claims
+        if not review_claims.claim(bundle_dir):
+            show_warning("Another review window has %s open (%s). Answers saved "
+                         "in both are merged, the later one winning on a pellet "
+                         "both answered." % (bundle_dir.name,
+                                             review_claims.holder(bundle_dir) or "unknown"))
         self._manifest = dict(manifest)
         self._bundle_dir = bundle_dir
         self._queue_pending_dir = bundle_dir.parent
         self._load_video(video)
         self._update_routing_banner()
+
+    def closeEvent(self, event):
+        """Closing the window lets its video go (review_claims)."""
+        _let_claim_go(getattr(self, "_bundle_dir", None))
+        super().closeEvent(event)
 
     def _update_routing_banner(self):
         """Say WHY this video is in deep review and what the right action is.
@@ -1156,6 +1201,7 @@ The notes box travels with the video.
             self._review_records = {}
             self._segment_list = []
             self._current_seg_idx = 0
+            _let_claim_go(failed_bundle)
             self._bundle_dir = None
             self._manifest = None
             try:
@@ -3369,7 +3415,7 @@ The notes box travels with the video.
         pool = list(candidates)
         while pool:
             b, tier_n = _pick_by_priority(pool)
-            if self._bundle_eligible(b, root):
+            if self._bundle_eligible(b, root) and _claim_for_pick(self, b):
                 return b, tier_n
             pool.remove(b)
             cache = getattr(self, "_pool_cache", None)
@@ -3522,6 +3568,14 @@ The notes box travels with the video.
         if not self.video_path or not self._video_stem:
             show_warning("No video loaded")
             return
+        # Still working this video: keep this window's claim on it fresh
+        # (review_claims.IDLE_AFTER_S).
+        if getattr(self, "_bundle_dir", None) is not None:
+            try:
+                from . import review_claims
+                review_claims.touch(self._bundle_dir)
+            except Exception:
+                pass
 
         # Collect current segment's answers if not already saved
         record = self._collect_answers()
