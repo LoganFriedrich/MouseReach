@@ -78,7 +78,8 @@ def test_a_causal_answer_without_its_frames_checked_is_not_recorded():
            "human": {"outcome": "retrieved",
                      "causal_reach": {"start": 1200, "end": 1215, "reach_id": 2}},
            "answers": {}}
-    assert "tick 'Checked'" in io.answer_problem(rec)
+    assert "were not recorded" in io.answer_problem(rec)
+    assert "Checked" not in io.answer_problem(rec)
     rec["human"]["causal_reach_bounds"] = {"start": 1215, "end": 1200}
     assert "before its first frame" in io.answer_problem(rec)
     rec["human"]["causal_reach_bounds"] = {"start": 2100, "end": 2110}
@@ -118,12 +119,10 @@ def test_the_window_always_shows_the_causal_reachs_frames_to_check():
     rp = w._q_widgets["_reach_picker"]
     w._q_widgets["_outcome_combo"].setCurrentText("retrieved")
     # The reach nearest the interaction frame is pre-picked; its frames are
-    # shown, not yet checked.
+    # shown, and naming it confirms them (no separate tick since 2026-11-20).
     assert (rp["bounds_start"].value(), rp["bounds_end"].value()) == (1200, 1215)
-    assert not rp["bounds_checked"].isChecked()
-    assert w._collect_answers() is None and "Checked" in w._answer_problem
+    assert rp["bounds_checked"].isHidden()
     rp["bounds_end"].setValue(1218)
-    rp["bounds_checked"].setChecked(True)
     rec = w._collect_answers()
     assert rec["human"]["causal_reach_bounds"] == {"start": 1200, "end": 1218}
     assert _calls(rec) == {(1, "miss"), (2, "causal"), (3, "miss")}

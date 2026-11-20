@@ -2467,10 +2467,8 @@ The notes box travels with the video.
         # checked by the person when a reach is named (owner rule 2026-11-19:
         # "a causal answer always includes the person checking that reach's
         # start/end, even if not asked"). Filled with the picked reach's frames;
-        # the person corrects them if needed and ticks Checked. Saved as
-        # human.causal_reach_bounds (causal_review_io.CAUSAL_BOUNDS_KEY); an
-        # answer naming a touched pellet's reach without the tick is not
-        # recorded (answer_problem).
+        # the person corrects them if needed; naming the reach confirms them.
+        # Saved as human.causal_reach_bounds (causal_review_io.CAUSAL_BOUNDS_KEY).
         bounds_box = QGroupBox("Causal reach: its first and last frames (correct them only if they are wrong)")
         bounds_row = QHBoxLayout()
         bounds_box.setLayout(bounds_row)
@@ -2518,8 +2516,8 @@ The notes box travels with the video.
         return w
 
     def _fill_causal_bounds(self, rp: Dict, frames=None) -> None:
-        """Put the named reach's first/last frame in the bounds row and clear
-        the Checked tick: a different reach must be checked again. With no
+        """Put the named reach's first/last frame in the bounds row (and reset
+        the hidden legacy tick). With no
         reach named the row is greyed out."""
         if not rp or "bounds_start" not in rp:
             return
@@ -3074,8 +3072,8 @@ The notes box travels with the video.
                         logger.warning('Could not restore a saved reach answer %s, so its row is blank: %s', hc, err)
                         pass
 
-        # The causal reach's checked frames: as saved (ticked), else the
-        # restored reach's own frames, unticked.
+        # The causal reach's confirmed frames: as saved, else the restored
+        # reach's own frames.
         rp = self._q_widgets.get("_reach_picker") or {}
         if "bounds_start" in rp:
             saved_b = human.get("causal_reach_bounds")

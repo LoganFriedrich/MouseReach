@@ -1078,22 +1078,25 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
                 "long. Check the two frame numbers and type them again."
                 % (typed[1] - typed[0] + 1, typed[0], typed[1]))
     if cr is not None and human.get("outcome") in _TOUCHED_OUTCOMES:
-        # A causal answer includes the person checking that reach's first and
-        # last frame (owner rule 2026-11-19; comment at REACH_CALLS_KEY): the
-        # reach's frames are what its kinematics are computed over.
+        # A causal answer includes the reach's first and last frame (owner rule
+        # 2026-11-19; comment at REACH_CALLS_KEY): the reach's frames are what
+        # its kinematics are computed over. Since 2026-11-20 naming the reach
+        # IS the confirmation of its frames (no separate tick), so the review
+        # window always records them; this message is reached only by a record
+        # written some other way without them.
         b = human.get(CAUSAL_BOUNDS_KEY)
         if not b:
-            return ("Check the first and last frame of the reach you named as the one "
-                    "that touched pellet %s (frames %d-%d): correct them under 'Causal "
-                    "reach: its first and last frames' if needed, then tick 'Checked'."
-                    % (rec.get("pellet_num") or n, cr[0], cr[1]))
+            return ("The first and last frame of the reach you named as the one that "
+                    "touched pellet %s (frames %d-%d) were not recorded. Name the reach "
+                    "again; if its frames are wrong, enter it as a manual reach with the "
+                    "right frames." % (rec.get("pellet_num") or n, cr[0], cr[1]))
         try:
             bs, be = int(b["start"]), int(b["end"])
         except (KeyError, TypeError, ValueError):
             bs, be = 1, 0
         if be < bs:
             return ("The causal reach's last frame (%s) is before its first frame (%s). "
-                    "Correct them, then tick 'Checked'." % (b.get("end"), b.get("start")))
+                    "Correct them." % (b.get("end"), b.get("start")))
         if _reach_outside((bs, be), span):
             return ("The causal reach's checked frames (%d-%d) are outside segment %s, "
                     "which runs from frame %d to %d." % (bs, be, n, span[0], span[1]))

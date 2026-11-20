@@ -7575,9 +7575,11 @@ separate work):
   frames as part of the answer.
 - `answer_problem` refuses a touched answer whose causal reach's frames were not checked, or whose
   checked frames are reversed or outside the segment.
-- Review window: the reach picker always shows "Causal reach: its first and last frames (always
-  check)" (filled from the picked/typed/pinned reach, a Checked tick to set); `_collect_answers_unchecked`
-  passes the segment's reaches and the checked frames; `_restore_answers` puts saved frames back ticked.
+- Review window: the reach picker always shows "Causal reach: its first and last frames (correct
+  them only if they are wrong)" (filled from the picked/typed/pinned reach); `_collect_answers_unchecked`
+  passes the segment's reaches and the checked frames; `_restore_answers` puts saved frames back.
+  Since 2026-11-20 (be69199) there is no Checked tick: naming the reach confirms its frames (the
+  box stays in the code, hidden, and no longer gates the answer).
 
 Old answers are unchanged: they keep no `reach_calls` / `causal_reach_bounds`, and are still accepted
 as stored; a person changing one must check the frames.

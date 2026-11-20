@@ -124,19 +124,18 @@ The reach list is narrowed by `assignment.v2.triage_reduction.reduce_triaged_seg
 
 Until that date a typed reach was swapped for any detected reach touching it by a single frame, and a reach the detector missed was never added, so its pellet's credit was lost or landed on a neighbouring reach.
 
-**The causal reach's first and last frame -- always checked (since 2026-11-19).** Under the reach list
-is a row "Causal reach: its first and last frames (always check)": two frame boxes, filled with the
-frames of the reach currently picked (or typed, or pinned), and a box to tick, "Checked: these are
-its first and last frames". Whenever a reach is named as the one that moved the pellet, step to its
-first and last frame, correct the numbers if the detector got them wrong, and tick Checked. Picking
-another reach refills the frames and clears the tick. An answer naming a reach without the tick is
-not recorded ("Check the first and last frame of the reach you named ..."); nor are checked frames
-whose last frame comes before the first, or that lie outside the segment. With `untouched` (or no
+**The causal reach's first and last frame (since 2026-11-19; no tick since 2026-11-20).** Under the
+reach list is a row "Causal reach: its first and last frames (correct them only if they are wrong)":
+two frame boxes, filled with the frames of the reach currently picked (or typed, or pinned). Naming a
+detected reach as the one that moved the pellet IS your statement that it is this reach with these
+frames -- there is no separate "Checked" box to tick any more. If the detector's frames are wrong,
+correct them in the two boxes, or enter the reach as a manual reach with the right frames. Picking
+another reach refills the frames. Frames whose last frame comes before the first, or that lie
+outside the segment, are not recorded. With `untouched` (or no
 reach) the row is greyed out: an untouched pellet has no reach whose frames anyone judges. Why (owner
 rule): "a causal answer always includes the person checking that reach's start/end, even if not
 asked" -- the causal reach's frames are what its kinematics are computed over. A saved answer
-opened again shows its checked frames, ticked; an answer saved before this date shows the reach's
-own frames unticked, and must be ticked only if it is changed.
+opened again shows its saved frames; an answer saved before 2026-11-19 shows the reach's own frames.
 
 **Every reach of the segment is recorded (since 2026-11-19).** Saving an answer also writes the call
 on every reach the detector found in the segment: the reach named is `causal`, every other one a
