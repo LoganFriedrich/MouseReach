@@ -169,6 +169,14 @@ def resolve_triaged_outcomes(
             n_left += 1
             skipped_list.append((sn, "no_gt"))
             continue
+        # A ground-truth entry that is no decided answer ("uncertain", or
+        # marked undetermined) does not lift the triage: the pellet stays for
+        # a person (causal_review_io.gt_outcome_is_answer).
+        from mousereach.review.causal_review_io import gt_outcome_is_answer
+        if not gt_outcome_is_answer(gt):
+            n_left += 1
+            skipped_list.append((sn, "gt_undecided"))
+            continue
 
         gt_outcome = gt.get("outcome")
         gt_ifr = gt.get("interaction_frame")

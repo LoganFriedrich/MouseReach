@@ -219,6 +219,7 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
     ``(False, set())``, which leaves the previous behaviour exactly as it was."""
     try:
         from .causal_review_io import (_seg_span, _too_short, find_gt,
+                                       gt_outcome_is_answer,
                                        index_gt_outcomes_by_segment,
                                        segmentation_is_human, segments_from_segmentation)
         p = find_gt(video_id, extra_dirs=tuple(d for d in extra_dirs if d))
@@ -239,7 +240,12 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
     oo = (gt.get("outcomes") or {}).get("exhaustive")
     by_seg, _ = index_gt_outcomes_by_segment(gt, current_segments,
                                              human_segmentation=bool(human_segmentation))
-    out: Set[int] = {sn for sn, seg in by_seg.items() if seg.get("determined") is not False}
+    # A segment counts as answered by ground truth only when its outcome is a
+    # decided answer (gt_outcome_is_answer): "uncertain" marked determined is
+    # not one, so the segment is left to the review answers -- the same rule
+    # the kinematics apply (truth_resolver), so the gate never passes a pellet
+    # the kinematics then write as undecided.
+    out: Set[int] = {sn for sn, seg in by_seg.items() if gt_outcome_is_answer(seg)}
     # "Fully certified" is COMPUTED here, never taken from a stored flag. WHY:
     # a fully certified video passes the gate as clean even with a failed
     # segmentation, and its ground truth stands in for every element -- so the
@@ -265,7 +271,8 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
         want = {int(s["segment_num"])
                 for s in ((gt.get("outcomes") or {}).get("segments") or [])
                 if isinstance(s, dict) and s.get("segment_num") is not None}
-    determined = {sn for sn, seg in by_seg.items() if seg.get("determined") is True}
+    determined = {sn for sn, seg in by_seg.items()
+                  if seg.get("determined") is True and gt_outcome_is_answer(seg)}
     full = bool(rr and oo and want and want <= determined)
     return full, out
 

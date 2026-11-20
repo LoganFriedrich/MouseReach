@@ -7,6 +7,11 @@ INDEPENDENTLY by taking the HIGHEST layer that has a call:
 
     GT  >  causal review  >  triage review  >  algo
 
+A layer "has a call" only when it gave a decided answer: a ground-truth outcome
+marked determined but valued "uncertain" (causal_review_io.gt_outcome_is_answer)
+is no call, so the next layer's answer is applied (owner rule 2026-11-20: when
+human answers disagree, the highest answer wins; a video is never held over it).
+
 Any element no human layer touched keeps its algo value ("unconflicted algo
 persists"). This is the single place production kinematics obtains its truth --
 the feature extractor calls resolve_truth_layers() instead of applying causal
@@ -276,7 +281,8 @@ def _seg_overrides_from_gt(gt: Optional[dict], current_segments=None,
     (causal_review_io.index_gt_outcomes_by_segment) -- never by bare number,
     which a re-cut reassigns. Without ``current_segments``, or for a GT file
     without its own segmentation, the number is used."""
-    from mousereach.review.causal_review_io import index_gt_outcomes_by_segment
+    from mousereach.review.causal_review_io import (gt_outcome_is_answer,
+                                                    index_gt_outcomes_by_segment)
     oc = (gt or {}).get("outcomes") or {}
     out: Dict[int, dict] = {}
     by_seg, notes = index_gt_outcomes_by_segment(gt, current_segments,
@@ -284,11 +290,13 @@ def _seg_overrides_from_gt(gt: Optional[dict], current_segments=None,
     for n in notes:
         logger.warning("ground-truth re-anchoring: %s", n)
     for sn, seg in sorted(by_seg.items()):
-        if seg.get("determined") is False:
+        # Only a DECIDED answer is a ground-truth call: an entry marked
+        # undetermined, or determined as "uncertain", leaves the pellet to
+        # the next layer (a review's answer, else the algorithm) --
+        # causal_review_io.gt_outcome_is_answer says why.
+        if not gt_outcome_is_answer(seg):
             continue
         ho = seg.get("outcome")
-        if ho is None:
-            continue
         # No causal_reach_id: the id a ground-truth file stores was copied
         # from the algorithm's reach list of the run it was made on, and no
         # tool lets a person set it. The causal reach is found by frames

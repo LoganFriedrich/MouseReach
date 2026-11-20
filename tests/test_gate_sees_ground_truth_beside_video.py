@@ -43,7 +43,11 @@ def _gt(folder, segs, full=False):
     (folder / f"{VID}_unified_ground_truth.json").write_text(json.dumps({
         "reaches": {"exhaustive": full},
         "outcomes": {"exhaustive": full,
-                     "segments": [{"segment_num": n, "determined": True} for n in segs]}}),
+                     # an outcome a person decided: a determined entry with no
+                     # outcome (or "uncertain") is no answer
+                     # (causal_review_io.gt_outcome_is_answer)
+                     "segments": [{"segment_num": n, "determined": True, "outcome": "untouched"}
+                                  for n in segs]}}),
         encoding="utf-8")
 
 
