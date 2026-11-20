@@ -101,6 +101,40 @@ def write_whole_video_span(dlc_path: Path, video_id: str, output_path: Path) -> 
             'dlc_path': dlc_path, 'success': True, 'whole_video_span': True}
 
 
+def _ground_truth_cuts(output_path: Path, video_id: str) -> Optional[Dict]:
+    """Write the cuts a person determined in the video's ground-truth file
+    over ``output_path`` when they are due, and return this step's result for
+    them (None when nothing was written).
+
+    WHY (owner decision D5-6, 2026-11-19): what a person said is the correct
+    result for every step after it. A ground-truth file whose cuts are all
+    determined is a person's segmentation, so it is applied exactly as the
+    segmentation fixer's cuts are (review/hand_cuts.apply_ground_truth_cuts:
+    marked ``boundary_source: "human"``, outputs of the old cuts archived and
+    removed, answers on pellets whose frames moved asked again). Reach
+    detection, outcomes, reach assignment and kinematics then run on them.
+    A failure to apply them is logged and the step goes on with the cuts it
+    has -- the same result as before this rule, never a lost video."""
+    try:
+        from mousereach.review.hand_cuts import apply_ground_truth_cuts
+        note = apply_ground_truth_cuts(output_path, video_id)
+    except Exception as e:
+        print(f"[segmentation] {video_id}: ground-truth cuts could not be applied ({e}); "
+              f"keeping the cuts in {output_path.name}")
+        return None
+    if not note:
+        return None
+    print(f"[segmentation] {note}")
+    try:
+        n = len(json.loads(output_path.read_text(encoding="utf-8")).get("boundaries") or [])
+    except Exception:
+        n = 0
+    return {'video_name': video_id, 'status': 'good', 'n_boundaries': n,
+            'interval_cv': 0.0, 'anomalies': [], 'output_file': str(output_path),
+            'success': True, 'preserved_human_boundaries': True,
+            'applied_ground_truth_cuts': True}
+
+
 def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
                    previous_cuts: Optional[Path] = None) -> Dict:
     """
@@ -144,6 +178,11 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
             with open(output_path, 'r') as f:
                 existing = json.load(f)
             if existing.get('boundary_source') == 'human':
+                # A person's cuts are kept -- unless the video's ground truth
+                # holds newer cuts a person determined (_ground_truth_cuts).
+                applied = _ground_truth_cuts(output_path, video_id)
+                if applied:
+                    return dict(applied, dlc_path=dlc_path)
                 return {
                     'video_name': video_id,
                     'status': 'good',
@@ -164,6 +203,14 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
                           previous_from=(previous_cuts if previous_cuts and not output_path.exists()
                                          else None))
         
+        # A person's cuts from the ground-truth tool replace the segmenter's
+        # (_ground_truth_cuts says why). Done after the segmenter has written
+        # its file, so the file keeps the segmenter's diagnostics and the
+        # replaced cuts are recorded as the ones the person's replaced.
+        applied = _ground_truth_cuts(output_path, video_id)
+        if applied:
+            return dict(applied, dlc_path=dlc_path)
+
         # Categorize based on what actually matters:
         # - Did we find exactly 21 boundaries?
         # - Are the intervals reasonably consistent?
@@ -191,6 +238,11 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
         }
         
     except Exception as e:
+        # The segmenter could not cut this video; a person's cuts from the
+        # ground-truth tool still can (they need no pose-derived cut search).
+        applied = _ground_truth_cuts(output_path, video_id)
+        if applied:
+            return dict(applied, dlc_path=dlc_path)
         return {
             'video_name': video_id,
             'status': 'failed',

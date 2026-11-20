@@ -107,6 +107,17 @@ class ReachFeatures:
     # or None (no causal reach, or one from an old outcome file).
     causal_reach_source: Optional[str] = None
 
+    # What THIS reach did to the pellet, when it is known (reach_outcome_of):
+    # the pellet's outcome on the causal reach, "missed" on every other reach
+    # of a pellet whose causal reach is known or that nothing touched, None
+    # while the pellet's causal reach is not known. reach_outcome_source says
+    # who settled it: 'human_review' / 'ground_truth' (a person named the
+    # causal reach, said untouched, or listed the reach as a miss),
+    # 'reach_assignment' (the algorithm named the causal reach), 'algo' (the
+    # algorithm's untouched call).
+    reach_outcome: Optional[str] = None
+    reach_outcome_source: Optional[str] = None
+
     # Extended kinematic feature set (flat dict; keys are stable column names).
     # Populated by FeatureExtractor for v2 outputs. See REACH_KINEMATIC_DATA_DICTIONARY.md.
     extended: Optional[Dict[str, float]] = None
@@ -285,6 +296,46 @@ def causal_reach_owned_by_person(seg: dict) -> bool:
             return True
         return seg.get('causal_reach_source') in ('ground_truth', 'human_review')
     return False
+
+
+_PERSON = ('human_review', 'ground_truth')
+
+
+def reach_outcome_of(reach: dict, outcome_data: dict) -> Tuple[Optional[str], Optional[str]]:
+    """(reach_outcome, reach_outcome_source) for one reach of a pellet (the
+    ReachFeatures fields say what they mean).
+
+    WHY (owner rule 2026-11-19): a person naming the causal reach of a pellet
+    also answers every other reach of it -- they all missed, whether or not
+    anyone watched them -- and "untouched" means every reach missed. One
+    answered reach of fifty is fifty known reach outcomes; the results must
+    carry them, not leave every other reach blank. A reach a person's record
+    lists as a miss (person_missed_reaches) is a person's miss even where the
+    pellet's causal reach came from the algorithm."""
+    outcome = outcome_data.get('outcome')
+    cid = outcome_data.get('causal_reach_id')
+    crs = outcome_data.get('causal_reach_source')
+    osrc = outcome_data.get('outcome_source') or 'algo'
+    rid = reach.get('reach_id')
+    if cid is not None and rid == cid and outcome in _TOUCHED:
+        return outcome, (crs or 'algo')
+    try:
+        rs, re_ = int(reach.get('start_frame')), int(reach.get('end_frame'))
+        listed = any(rs <= int(e) and int(s) <= re_
+                     for s, e in (outcome_data.get('person_missed_reaches') or []))
+    except (TypeError, ValueError):
+        listed = False
+    if outcome == 'untouched' or (outcome == 'abnormal_exception' and osrc in _PERSON):
+        # No reach moved the pellet. A person's "abnormal_exception" (a
+        # non-reach event marked, no reach named) says the same.
+        return 'missed', (osrc if osrc in _PERSON else ('human_review' if listed else 'algo'))
+    if outcome in _TOUCHED and cid is not None:
+        if listed or crs in _PERSON:
+            return 'missed', (crs if crs in _PERSON else 'human_review')
+        return 'missed', 'reach_assignment'
+    if listed:
+        return 'missed', 'human_review'
+    return None, None
 
 
 def pair_segments_by_number(reach_segments, outcome_segments):
@@ -871,6 +922,11 @@ class FeatureExtractor:
                     window=(seg_first, seg_last),
                 )
 
+                # What this reach did (reach_outcome_of): a known miss on
+                # every reach of a decided pellet but its causal reach.
+                reach_features.reach_outcome, reach_features.reach_outcome_source = \
+                    reach_outcome_of(reach, outcome_data)
+
                 # Set contextual flags
                 reach_features.segment_num = seg_num
                 reach_features.is_first_reach = (i == 0)
@@ -1051,11 +1107,30 @@ class FeatureExtractor:
         if causal_reach_id is not None and causal_reach_id == reach_id:
             features.causal_reach = True
             features.outcome = outcome_data['outcome']
-            features.interaction_frame = outcome_data.get('interaction_frame')
+            # The contact frame is attached to the causal reach only when it
+            # lies inside that reach's frames (owner decision D5-3, 2026-11-19:
+            # "contact frame doesn't matter. it's an artifact"; nothing may
+            # depend on it for a reach a person picked). WHY: the frame comes
+            # from the outcome algorithm, and when a person names a different
+            # causal reach (or gives that reach's frames) the algorithm's
+            # contact frame stays behind on the pellet -- it was attached to
+            # the person's reach anyway, so the export carried a contact frame
+            # outside the reach it is exported with and every at-contact
+            # measure of that reach was empty. Now such a frame is simply not
+            # this reach's: interaction_frame None, at-contact measures empty
+            # by rule, the reach and its causal credit unaffected. A reach the
+            # algorithm picked always holds its frame (reach assignment picks
+            # the reach containing it), so nothing changes there.
+            _ifr = outcome_data.get('interaction_frame')
+            try:
+                _inside = _ifr is not None and int(start_frame) <= int(_ifr) <= int(end_frame)
+            except (TypeError, ValueError):
+                _inside = False
+            features.interaction_frame = _ifr if _inside else None
 
             # Get reach features from outcome data
             reach_features_dict = outcome_data.get('reach_features', {})
-            if reach_features_dict:
+            if reach_features_dict and _inside:
                 features.distance_to_interaction = reach_features_dict.get('distance_to_interaction')
 
         # Convert extent to mm

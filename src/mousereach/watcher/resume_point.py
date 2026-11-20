@@ -165,6 +165,19 @@ def current_start(processing_dir, video_id: str, wanted: str, declared: dict,
     from .review_gate import ASSIGNMENT_FAILED_KEY
 
     seg_doc = _read_json(folder / f"{video_id}_segments.json") or {}
+    # Cuts a person determined in the ground-truth tool that the segments
+    # file does not hold yet (review/hand_cuts.ground_truth_cuts_due): the run
+    # starts at segmentation, which writes them as the video's cuts, and every
+    # later step runs on them. WHY: a video released from a review queue on
+    # its ground truth would otherwise resume after the gate and be filed with
+    # the segmenter's cuts the person corrected (owner decision D5-6).
+    try:
+        from mousereach.review.hand_cuts import ground_truth_cuts, ground_truth_cuts_due
+        _gt_why = ground_truth_cuts_due(seg_doc, ground_truth_cuts(video_id, (folder,)))
+    except Exception:
+        _gt_why = None
+    if _gt_why:
+        return "segmentation", _gt_why
     human_cuts = seg_doc.get("boundary_source") == "human"
     for step, suffix, key, component in _STEP_OUTPUT:
         if RUN_STAGES.index(step) >= RUN_STAGES.index(wanted):

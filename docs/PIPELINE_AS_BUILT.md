@@ -4070,7 +4070,8 @@ kinematics over the ground truth's frames (`reach_source` = `ground_truth`). Rea
 not read ground truth at all, so starting the re-run there would recompute the same algorithm reaches
 and add nothing -- while turning a filed video's re-run into a full one with every check. Ground
 truth's pellet outcomes are layered the same way. Ground-truth SEGMENT boundaries are not applied by
-the kinematics step (or by any step of the pipeline): a re-cut is done in the re-segmentation tools.
+the kinematics step: since 2026-11-19 the segmentation step applies them to an unfiled video (see
+"Update 2026-11-19 (human answers feed every later step)"); a filed video's cuts are final.
 
 **For an operator.** Nothing to do: ground truth saved beside a filed video reaches its features at
 the next version scan (about every half hour). If the re-run cannot apply it, the video is offered
@@ -7579,3 +7580,56 @@ as stored; a person changing one must check the frames.
 Tests: `tests/test_triage_answer_records_every_reach.py` (8 of 8 fail on the commit before); fixtures
 in four existing test files add the checked frames to complete causal answers.
 
+## Update 2026-11-19 (human answers feed every later step)
+
+Owner decision: what a person said is the correct result, and every step after it -- reach detection,
+outcomes, reach assignment, kinematics and the database -- uses it; nothing downstream works out again
+what a person decided. A filed video is final: none of this changes a filed video's results.
+
+**Ground-truth cuts are a person's cuts.** When every cut in a video's `<video>_unified_ground_truth.json`
+is determined, the segmentation step (`segmentation/core/batch.process_single`) writes those cuts as the
+video's cuts through the segmentation fixer's own save (`review/hand_cuts.apply_ground_truth_cuts`):
+`boundary_source: "human"`, `cuts_source: "ground_truth"`, `corrected_by` (who determined them),
+`corrected_at` (when they were written), `algo_boundaries` (the cuts they replaced), `ground_truth_file`
+and `ground_truth_determined_at`. The replaced segments file and every output of the old cuts are archived
+to `_archived/segmentation_before_human_fix_<time>/` and removed, so reach detection, outcomes, reach
+assignment and kinematics run again on the person's cuts; answers given on pellets whose frames moved are
+asked again (the re-cut rule). Not applied: a file with any undetermined cut (the tool seeds its list with
+the algorithm's cuts); cuts identical to the segments file's; a fixer save newer than the ground truth's
+newest determination; a folder in the filed tree; a video locked for a publication; Easy/Flat trays. Also
+applied when the segmenter fails on the video. A video returning from a review queue starts at
+segmentation when its ground truth has cuts its segments file does not hold
+(`watcher/resume_point.current_start`).
+
+**The contact frame is never attached to a reach it is not in (owner decision D5-3).** "Contact frame
+doesn't matter. It's an artifact": nothing may depend on it for a reach a person picked. The features
+step puts the pellet's `interaction_frame` on the causal reach only when the frame lies inside that
+reach; otherwise the reach's `interaction_frame` and `distance_to_interaction` are null and its
+`*_at_contact_*` measures are empty. Before, the algorithm's contact frame stayed on the pellet when a
+person picked a different reach, and was exported with that reach although it lay outside it. A reach
+the algorithm picked always holds its frame (reach assignment picks the reach containing it), so
+nothing changes there. No extractor version change: filed videos keep their files until a kinematics
+re-run happens for another reason.
+
+**Triage answers are the results (owner rules 2026-11-19).** The review records the triage window
+saves are read by the truth layering (`review/truth_resolver.py`) and the features step:
+
+* `human.causal_reach` = {reach_id, start, end} names the causal reach (unchanged).
+  `human.causal_reach_bounds` = {start, end} are that reach's frames as the person checked them (the
+  window always asks; also read from the `human.reach_calls` entry called causal with `bounds: human`):
+  `_apply_reviewed_bounds` puts them on the reach (detector frames kept as
+  `algo_start_frame`/`algo_end_frame`, `reach_source: human_review`, apex outside dropped, extent
+  cleared), so its kinematics are measured over the person's frames; for a reach the detector missed
+  they are its frames. A reach whose frames ground truth determined keeps them.
+* `human.reach_calls` = [{reach_id, start, end, call: causal|miss, detected, bounds}, ...]: the call on
+  every reach of the pellet the answer settles; each `miss` is a person's known miss.
+* Every reach in the features file carries `reach_outcome` and `reach_outcome_source`
+  (`feature_extractor.reach_outcome_of`): the causal reach the pellet's outcome; every other reach of a
+  pellet whose causal reach is known, or that is untouched, `missed`; null while the causal reach is not
+  known. The source is the person's (`human_review`/`ground_truth`) when a person named the causal
+  reach, answered untouched or listed the reach; else `reach_assignment` / `algo`.
+
+The four algorithms' own files (`_reaches.json`, `_pellet_outcomes.json`, `_reach_assignments.json`)
+stay the algorithms' calls: they are what the evaluation of each algorithm compares a person's answer
+with. The person's answer is applied where the result is made (the features file), which is what the
+exports and the database read.

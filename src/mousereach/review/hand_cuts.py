@@ -310,6 +310,164 @@ def commit_hand_cuts(seg_path, video_stem: str, seg: dict, archive_dir) -> List[
     return removed
 
 
+# ---------------------------------------------------------------------------
+# Ground truth's cuts are a person's cuts
+# ---------------------------------------------------------------------------
+# WHY (owner decision D5-6, 2026-11-19): "What a human said is correct and is
+# what the algorithms that come after ... should use as the correct result."
+# The ground-truth tool (review/ground_truth_widget.py) lets a person set or
+# confirm every cut, and saves each one with ``determined: true`` in
+# ``<video>_unified_ground_truth.json``. Before this those cuts were used only
+# to evaluate the segmenter: the production cuts stayed the algorithm's, so
+# reaches, outcomes, reach assignment and kinematics were computed on frames a
+# person had said belong to another pellet. A ground-truth file whose cuts are
+# ALL determined now sets the video's cuts exactly as the segmentation fixer
+# does (mark_as_hand_cuts + commit_hand_cuts): ``boundary_source: "human"``,
+# everything computed from the old cuts archived and removed, answers given on
+# pellets whose frames moved asked again. A file with any cut nobody
+# determined is not a statement about the cuts (the tool seeds its list with
+# the algorithm's) and is not applied.
+GT_CUTS_SOURCE = "ground_truth"
+
+
+def ground_truth_cuts(video_stem: str, extra_dirs=()) -> Optional[dict]:
+    """The cuts a person determined in the video's ground-truth file, or None.
+
+    Returns ``{"boundaries": [...], "determined_by": "a, b", "determined_at":
+    <newest determined_at>, "path": <file>}`` only when the file has at least
+    one cut and EVERY cut is determined (older files say ``verified``). The
+    file is found as every other step finds it (causal_review_io.find_gt: the
+    folders given first, then the configured ground-truth roots). An
+    unreadable file returns None and says so in the log; the segmenter's own
+    cuts then stand, exactly as before this rule existed."""
+    from mousereach.review.causal_review_io import find_gt
+    try:
+        path = find_gt(video_stem, extra_dirs=tuple(d for d in extra_dirs if d))
+    except Exception as e:
+        print("[hand_cuts] %s: looking for ground truth failed (%s); its cuts are not "
+              "applied" % (video_stem, e))
+        return None
+    if path is None:
+        return None
+    try:
+        gt = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except Exception as e:
+        print("[hand_cuts] %s: ground-truth file %s could not be read (%s); its cuts "
+              "are not applied" % (video_stem, Path(path).name, e))
+        return None
+    raw = ((gt or {}).get("segmentation") or {}).get("boundaries") or []
+    if not raw:
+        return None
+    frames, who, when = [], set(), []
+    for b in raw:
+        if not isinstance(b, dict):
+            return None
+        if not b.get("determined", b.get("verified", False)):
+            return None
+        try:
+            frames.append(int(b["frame"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        by = b.get("determined_by", b.get("verified_by"))
+        if by:
+            who.add(str(by))
+        at = b.get("determined_at", b.get("verified_at"))
+        if at:
+            when.append(str(at))
+    return {
+        "boundaries": sorted(frames),
+        "determined_by": ", ".join(sorted(who)) or gt.get("last_modified_by")
+                         or gt.get("created_by") or "unknown",
+        "determined_at": max(when) if when else (gt.get("last_modified_at") or None),
+        "path": Path(path),
+    }
+
+
+def _when(value) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def ground_truth_cuts_due(seg: Optional[dict], gt_cuts: Optional[dict]) -> Optional[str]:
+    """Why ``gt_cuts`` (ground_truth_cuts) should now be written over the
+    segments file ``seg``, or None when they should not.
+
+    * No ground-truth cuts, or the segments file already holds exactly them:
+      nothing to do.
+    * The segments file holds the SEGMENTER's cuts: the ground truth is a
+      person's statement and replaces them.
+    * It holds a PERSON's cuts from the segmentation fixer: both are a
+      person's word, so the newer one stands -- the ground truth only when its
+      newest determination is later than the fixer's save (``corrected_at``).
+      WHY not "ground truth always wins": a person who re-cuts a video in the
+      fixer after making its ground truth has corrected their earlier cuts.
+    * It holds cuts written from an earlier version of the ground-truth file
+      (``cuts_source: ground_truth``) and the file has changed since: the
+      file's current cuts replace them."""
+    if not gt_cuts:
+        return None
+    seg = seg or {}
+    have = [int(b) for b in (seg.get("boundaries") or []) if isinstance(b, (int, float))]
+    if have == list(gt_cuts["boundaries"]):
+        return None
+    if seg.get("boundary_source") != "human":
+        return "the ground truth's cuts replace the segmenter's"
+    if seg.get("cuts_source") == GT_CUTS_SOURCE:
+        return "the ground-truth file's cuts changed since they were applied"
+    fixed, gt_at = _when(seg.get("corrected_at")), _when(gt_cuts.get("determined_at"))
+    if fixed is None or (gt_at is not None and gt_at > fixed):
+        return "the ground truth's cuts are newer than the cuts saved in the segmentation fixer"
+    return None
+
+
+def apply_ground_truth_cuts(seg_path, video_stem: str, extra_dirs=()) -> Optional[str]:
+    """Write the ground truth's cuts as the video's cuts when they are due
+    (ground_truth_cuts_due), through the fixer's own save. Returns words for
+    the log when they were written, else None.
+
+    Never in the filed tree or on a video locked for a publication
+    (save_refusal's first rules): a filed video's results are final (owner
+    decision 2026-11-19), so this applies to videos processed from now on.
+    Easy/Flat trays are never cut (segmentation/core/batch.process_single
+    returns before calling this)."""
+    seg_path = Path(seg_path)
+    gt_cuts = ground_truth_cuts(video_stem, extra_dirs=(seg_path.parent,) + tuple(extra_dirs))
+    if not gt_cuts:
+        return None
+    try:
+        seg = json.loads(seg_path.read_text(encoding="utf-8-sig")) if seg_path.is_file() else {}
+    except Exception:
+        seg = {}
+    why = ground_truth_cuts_due(seg, gt_cuts)
+    if why is None:
+        return None
+    from mousereach.pipeline.analyzed_tree import filed_tree_refusal
+    if filed_tree_refusal(seg_path.parent):
+        print("[hand_cuts] %s: filed; its ground truth's cuts are not applied (a filed "
+              "video's results are final)" % video_stem)
+        return None
+    try:
+        from mousereach.pipeline.publication_lock import lock_refusal
+        if lock_refusal(video_stem, "applying ground-truth cuts"):
+            return None
+    except Exception:
+        return None
+    old = [int(b) for b in (seg.get("boundaries") or []) if isinstance(b, (int, float))]
+    new = mark_as_hand_cuts(seg, gt_cuts["boundaries"], old, gt_cuts["determined_by"])
+    new["cuts_source"] = GT_CUTS_SOURCE
+    new["ground_truth_file"] = gt_cuts["path"].name
+    new["ground_truth_determined_at"] = gt_cuts["determined_at"]
+    new.setdefault("video_name", video_stem)
+    removed = commit_hand_cuts(seg_path, video_stem, new, archive_dir_for(seg_path))
+    moved = sum(1 for a, b in zip(old, gt_cuts["boundaries"]) if a != b) + abs(
+        len(old) - len(gt_cuts["boundaries"]))
+    return ("%s: %s (%d cut(s) differ; determined by %s); %d output(s) of the old cuts "
+            "archived and removed" % (video_stem, why, moved, gt_cuts["determined_by"],
+                                      len(removed)))
+
+
 def asked_again_note(bundle: Path, stem: str) -> str:
     """Words for the status line when saving these cuts voided answers a
     person gave on the old cuts: those pellets are asked again in triage after
