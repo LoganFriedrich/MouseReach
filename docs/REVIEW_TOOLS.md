@@ -979,7 +979,8 @@ reasons, and each has its tool:
   or added by you. A video that cannot leave the queue because an earlier save
   left boundaries unanswered is listed again, with the line "N of M boundaries
   were saved without being explicitly accepted or moved"; the answers already
-  given are kept and the walk starts at the first boundary left.
+  given are kept and the walk starts at boundary 1, showing every boundary in
+  order (those already answered keep their answer).
 - **Something else is wrong with the whole video** (escalated for a reason
   that is not boundaries, or you need to re-judge every segment's outcome).
   Press **Open Re-segmentation Review**. It walks every segment of the video asking the

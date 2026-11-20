@@ -204,3 +204,12 @@ def test_save_is_refused_while_a_boundary_is_unwalked(tmp_path, monkeypatch):
     W._save(w)
     assert _Box.calls and "3 of 4" in _Box.calls[0][1]
     assert (b / f"{STEM}_segments.json").read_text(encoding="utf-8") == before
+
+
+def test_loading_a_video_starts_the_walk_at_boundary_1():
+    # Owner rule (2026-11-20): the walk always starts at boundary 1, even when
+    # earlier calls are carried over; those keep their answer.
+    import inspect
+    src = inspect.getsource(W._load_bundle)
+    assert "self._gw_idx = 0" in src
+    assert "self._gw_idx = self._first_uncalled_idx()" not in src

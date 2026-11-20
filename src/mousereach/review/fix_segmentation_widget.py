@@ -208,8 +208,8 @@ EVERY BOUNDARY MUST BE ANSWERED BEFORE SAVING: "Save these cuts" refuses,
 and says which frames are left, until every boundary has been accepted
 (Confirm), moved, removed, or added by you. A cut you add by hand counts as
 answered. A video saved before this rule with boundaries left unanswered is
-listed here again; the boundaries already answered are kept and the walk
-starts at the first one left. "Back to the algorithm's cuts" clears every
+listed here again; the boundaries already answered keep their answer and
+the walk starts at boundary 1. "Back to the algorithm's cuts" clears every
 answer.
 
 IF A BOUNDARY WAS MISSED (a segment looks double-length in the table, or
@@ -809,12 +809,14 @@ automatic.
             logger.warning("Could not read the earlier boundary calls of %s: %s", stem, err)
             kept = {}
         self._calls = {f: r for f, r in kept.items() if f in self.boundaries}
-        self._gw_idx = self._first_uncalled_idx()
+        # The walk always starts at boundary 1 (owner rule): the person sees
+        # every cut in order; ones already answered keep their answer.
+        self._gw_idx = 0
         self._gw_load()
         if self._calls:
             self.gw_status.setText(
-                "%d of %d boundaries were already accepted or moved by a person; "
-                "the walk starts at the first one nobody has called."
+                "%d of %d boundaries were already accepted or moved by a person "
+                "and keep that answer; the walk starts at boundary 1."
                 % (len(self._calls), len(self.boundaries)))
 
     def closeEvent(self, event):
