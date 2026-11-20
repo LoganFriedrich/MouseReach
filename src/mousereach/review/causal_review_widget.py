@@ -535,7 +535,10 @@ and settle it).
   video, so your answer wins -- the box only asks you to be sure.
 * Wrong pellet, or wrong cuts: do not answer. Press "Escalate: bad
   segmentation -> re-segmentation"; the cuts are fixed there.
-* "Flag Session" marks the whole mouse+day session for mandatory review.
+* "Flag Session" records a note on the whole mouse+day session (who,
+  when, and the text in the notes box as the reason). It is only a note:
+  nothing is moved or held, and you stay on this video. The note is
+  carried into the session's results so it can be found later.
 
 Navigation: play/speed buttons and frame steps (keyboard: Space play/pause,
 b reverse, arrows 1 frame, Shift-arrows 10, Ctrl-arrows 100, 1-6 speed).
@@ -732,12 +735,13 @@ The notes box travels with the video.
         self._save_next_video_btn.setEnabled(False)
         footer_layout.addWidget(self._save_next_video_btn)
 
-        self._flag_session_btn = QPushButton("Flag Session (needs review)")
+        self._flag_session_btn = QPushButton("Flag Session (note)")
         self._flag_session_btn.setStyleSheet("background: #5a3a16; color: white;")
         self._flag_session_btn.setToolTip(
-            "Mark this mouse+day session (every P# of this date) as "
-            "must-be-human-reviewed -- e.g. a cage artifact affecting every "
-            "video shot that day."
+            "Record a note on this mouse+day session (every P# of this date) "
+            "-- e.g. a cage artifact affecting every video shot that day. The "
+            "notes box is the reason. Only a note: nothing is moved or held; "
+            "it is carried into the session's results so it can be found later."
         )
         self._flag_session_btn.clicked.connect(self._flag_session)
         self._flag_session_btn.setEnabled(False)
@@ -3047,31 +3051,31 @@ The notes box travels with the video.
         return pd.parent if pd is not None else None
 
     def _flag_session(self):
-        """Flag this video's whole mouse+day session, and DIVERT this video to
-        the deep-review queue.
+        """Record a note on this video's whole mouse+day session: who, when,
+        and the notes box as the reason. Then save the review. Nothing else.
 
-        The flag alone used to be the whole action, and it did the opposite of
-        what the button promises: the only reader of flagged_sessions.json was
-        the pool filter, which EXCLUDED flagged sessions -- so pressing "needs
-        review" made the video disappear from the review queue. Nothing else in
-        the pipeline reads that file: not the gate, not the return scan, not
-        kinematics, not the database.
+        WHAT IT DOES NOT DO (lab decision 2026-11-19, D5-10 -- "flags are there
+        so we could in theory find them. I don't know that we need to
+        necessarily have a predestined role for them"): it moves no video,
+        holds none, sends none to re-segmentation, and leaves none out of
+        anything. Until then the button also moved the video on screen to the
+        re-segmentation queue, while its name promised to mark the whole
+        session (D4-8, D7-14); neither is what a flag is for. The person stays
+        on this video and goes on reviewing it.
 
-        So the flag is now provenance ("a human said this whole session is
-        suspect, here is who and why") and the video moves somewhere a human
-        will actually meet it. Same mechanism as _escalate_to_deep_review; the
-        difference is the reason recorded, and that the session is marked too so
-        the note survives for its other P#s."""
+        Where the note is found: flagged_sessions.json in the review root (the
+        record), and the ``session_flag`` field of every features file of the
+        session made from then on (orchestrator.with_session_flag), which the
+        database integrator reads as a marker."""
         if not self._video_stem:
             return
         bundle = getattr(self, "_bundle_dir", None)
         root = self._review_root()
         if not bundle or root is None:
-            # No queue bundle on screen (a video opened with Browse): record
-            # nothing and move nothing. WHY before the flag is written: the
-            # session note used to fall back to the video's own folder -- for a
-            # video opened by hand possibly a filed folder, where nobody reads
-            # it and nothing MouseReach does may write.
+            # No queue bundle on screen (a video opened with Browse): nothing
+            # is recorded. WHY: the note used to fall back to the video's own
+            # folder -- for a video opened by hand possibly a filed folder,
+            # where nobody reads it and nothing the review tools do may write.
             show_info("No bundle loaded: nothing was flagged or moved.")
             self._status_label.setText(
                 f"[NOT FLAGGED] {self._video_stem}: no queue bundle loaded")
@@ -3087,102 +3091,17 @@ The notes box travels with the video.
         except Exception as e:
             show_error(f"Could not flag session: {e}")
             return
-
         try:
-            if self._save_review() is False:
-                return   # take another look: the flag is recorded, the video is not moved
+            saved = self._save_review()
         except Exception as e:
-            # The save failed, so the person's answers exist only on screen.
-            # WHY stop (the rule _clear_deep_review follows): moving anyway
-            # sent the video on and loaded the next one, and the answers were
-            # lost without a word. Stay on this video so they can be saved.
-            logger.error("flag session: %s did not save, so it was not moved: %s",
+            logger.error("flag session: %s flagged, but the review did not save: %s",
                          self._video_stem, e)
-            show_error(f"Session {key} is flagged, but your answers did not save, so "
-                       f"{self._video_stem} was NOT moved: {e}. Press Flag "
-                       f"Session again once saving works.")
-            self._status_label.setText(
-                f"[NOT MOVED] {self._video_stem}: the review did not save")
+            show_error(f"Session {key} is flagged, but your answers did not save: {e}")
             return
-        # Everything below -- setting an old clear aside and the move -- runs
-        # under the video's bundle claim, the one the watcher's return scan
-        # takes before it touches a bundle. WHY: this button moved a queue
-        # bundle with no claim, so the scan could be returning or diverting
-        # the same folder at that moment. When another program holds it,
-        # nothing is touched and the person is told to press again.
-        from mousereach.watcher import review_gate as _rg
-        stem = self._video_stem
-        if not _rg.take_bundle_claim(stem):
-            show_error(f"Session {key} is flagged, but {stem} was NOT moved: "
-                       f"{_rg.BUSY_MESSAGE}.")
-            self._status_label.setText(f"[NOT MOVED] {stem}: another program is moving it")
-            return
-        try:
-            # Called through the class so stand-in windows in the tests need
-            # no extra attribute.
-            moved = CausalReviewWidget._flag_session_divert(self, key, Path(bundle), reason)
-        finally:
-            _rg.release_bundle_claim(stem)
-        if moved:
-            self._load_next_video()
-
-    def _flag_session_divert(self, key, bundle, reason) -> bool:
-        """The move part of Flag Session, run under the bundle claim. True
-        when the window should go on to the next video."""
-        # Flagging means a person found a new problem, exactly like Escalate:
-        # an earlier re-segmentation clear travelling with the bundle would let
-        # the return scan release the video straight back on the same cuts. Set
-        # it aside (renamed, kept on record) BEFORE the move, as Escalate does;
-        # if that fails, the video is not moved -- it would only bounce back.
-        try:
-            from mousereach.watcher.review_gate import supersede_deep_review_clear
-            supersede_deep_review_clear(self._video_stem, Path(bundle))
-        except Exception as e:
-            show_error(f"Flagged session {key}, but the earlier re-segmentation clear "
-                       f"of {self._video_stem} could not be set aside, so the video "
-                       f"was NOT moved: {e}")
-            logger.exception("flag session: could not set aside the earlier clear")
-            return False
-        from mousereach.config import Paths
-        from mousereach.watcher.review_routing import same_path
-        deep_root = getattr(Paths, "DEEP_REVIEW", None)
-        if deep_root and same_path(Path(bundle).parent, deep_root):
-            # Already in the re-segmentation queue, which is where this button
-            # sends a video: nothing to move. The session flag is recorded and
-            # an earlier clear is set aside (above), so the video stays here
-            # until its cuts are set again. WHY not route: routing a bundle
-            # onto its own folder used to delete its files (review_routing.
-            # _safe_move); and saying "moved" would not be true. Judged by the
-            # folder the bundle is in, not by the window's mode -- a window can
-            # be opened on this queue without re-segmentation mode.
-            show_info(f"Session {key} flagged. {self._video_stem} is already in the "
-                      f"re-segmentation queue, so it stays there; any earlier clear "
-                      f"was set aside, so it waits until its cuts are set again.")
-            self._status_label.setText(
-                f"[FLAG] Session {key} flagged -- {self._video_stem} already in "
-                f"re-segmentation.")
-            return True
-        # The move is recorded in the watcher database as 'deep_review', so
-        # the folder and the database agree (_watcher_db_for_move says why).
-        db, db_note = self._watcher_db_for_move()
-        try:
-            from mousereach.watcher.review_gate import route_to_queue
-            report = {}
-            route_to_queue(
-                self._video_stem, Path(bundle), Paths.DEEP_REVIEW,
-                reason=(f"reviewer flagged session {key}"
-                        + (f" -- {reason}" if reason else "")),
-                db=db, db_state="deep_review", report=report)
-        except Exception as e:
-            show_error(f"Flagged session {key}, but could not divert "
-                       f"{self._video_stem} to the re-segmentation queue: {e}")
-            logger.exception("flag session: divert to deep review failed")
-            return False
-        show_info(f"Session {key} flagged; {self._video_stem} moved to the "
-                  f"re-segmentation queue." + (db_note or _record_note(report)))
-        self._status_label.setText(
-            f"[FLAG] Session {key} flagged -- {self._video_stem} -> re-segmentation.")
-        return True
+        if saved is False:
+            return       # the save asked for another look; the flag is recorded
+        show_info(f"Session {key} flagged (a note only: nothing was moved or held).")
+        self._status_label.setText(f"[FLAG] Session {key} flagged -- note recorded")
 
     @staticmethod
     def _watcher_db_for_move():

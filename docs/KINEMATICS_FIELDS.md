@@ -673,3 +673,12 @@ or asks anyone anything. If the kinematics cannot be made from the filed cuts, r
 without changing them, the recalculation is given up and the filed features file stays as it was
 (the video is listed on the machine's failed re-runs list with the reason). See
 docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
+
+## Update 2026-11-19: `session_flag` (top level of every features file)
+
+`session_flag` is the note a person made with the review window's Flag Session button on this
+video's mouse+day session -- `{"session_key", "reason", "flagged_by", "flagged_at"}` -- or null when
+the session is not flagged. It is a marker only: nothing in MouseReach acts on it, and a reader
+should not leave a flagged session out or treat it differently because of it (lab decision
+2026-11-19). Written by the kinematics step from `<NAS>/Processing/Review/flagged_sessions.json`;
+a filed video gets it through a kinematics-only recalculation when its session is flagged later.

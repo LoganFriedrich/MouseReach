@@ -368,3 +368,12 @@ recalculated, without changing the filed decisions). When a person reopens a fil
 files stay in Analyzed until the new run is filed and replaces them; an integrator that leaves out a
 filed video whose newer run waits in a review queue keeps doing so. See docs/PIPELINE_AS_BUILT.md,
 "Update 2026-11-19 (filed is final)".
+
+## Update 2026-11-19 (session flags)
+
+Every features file now carries `session_flag`: the note a person made with the review window's
+Flag Session button on the video's mouse+day session (`flagged_by`, `flagged_at`, `reason`,
+`session_key`), or null. Export it as a marker column; do not leave a flagged session out or treat
+it differently because of it (lab decision 2026-11-19: a flag is only recorded so it can be found).
+Filed videos receive it through a kinematics-only recalculation when their session is flagged later.
+See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (session flags are only recorded)".

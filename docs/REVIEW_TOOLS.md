@@ -1752,6 +1752,16 @@ WHY it was removed rather than left alone: a SQLite database in WAL mode on a sh
 
 ### The session flag button (FIXED 2026-08-28 -- it used to do the opposite of what it says)
 
+> **Superseded 2026-11-19 -- Flag Session is only a note now.** The button is called
+> "Flag Session (note)". It records who flagged the mouse+day session, when, and the notes box as
+> the reason (`Processing/Review/flagged_sessions.json`), saves the review, and **does nothing
+> else**: no video is moved, held or left out, the clear marker is not touched, and you stay on the
+> same video. The note is found later in the `session_flag` field of every features file of that
+> session (the database integrator reads it as a marker); a filed video of the session gets the
+> note through a kinematics-only recalculation. WHY (lab decision 2026-11-19): "flags are there so
+> we could in theory find them" -- they have no predestined role. The text below describes the
+> button from 2026-08-28 to 2026-11-19, when it also moved the video to re-segmentation.
+
 **Now:** pressing "Flag Session (needs review)" saves the current review, records the
 session in `Processing/Review/flagged_sessions.json` as provenance, and **routes the
 video to the re-segmentation queue** via `route_to_queue`, then advances to the next video.

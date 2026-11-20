@@ -508,6 +508,12 @@ class ReprocessingScanner:
                     f"video(s) with no local row; "
                     f"{len(summary['adopt_no_mp4'])} manifest-without-mp4 stem(s)")
 
+        # A person's session flags (review window, Flag Session), read once
+        # per scan: a flag made after a filed video's kinematics owes it a
+        # kinematics-only re-run, so the flag reaches its features file
+        # (_pending_session_flag says why).
+        self._session_flags = self._load_session_flags()
+
         # Get all archived videos from DB
         archived = self.db.get_videos_in_state('archived')
         logger.info(f"Scanning {len(archived)} archived videos for version compliance")
@@ -632,7 +638,8 @@ class ReprocessingScanner:
                     review_path = self._pending_review_path(
                         video_id, None, feats_mtime, review_index)
                     gt_pending = self._pending_ground_truth(video_id, None, feats_mtime)
-                    if review_path is None and not gt_pending:
+                    flag_pending = self._pending_session_flag(video_id, feats_mtime)
+                    if review_path is None and not gt_pending and not flag_pending:
                         summary['no_manifest'] += 1
                         # Named only when the listing shows its features file
                         # filed and no manifest beside it. A video the listing
@@ -651,6 +658,7 @@ class ReprocessingScanner:
                     summary['no_manifest_review'] += 1
                     owed = (['human_review'] if review_path is not None else [])
                     owed += (['ground_truth'] if gt_pending else [])
+                    owed += (['session_flag'] if flag_pending else [])
                     self._mark_kinematics_rerun(
                         video_id, owed + ['no manifest'], summary,
                         mark_outdated, full_only)
@@ -678,6 +686,10 @@ class ReprocessingScanner:
                 # is owed the same kinematics-only re-run: the feature
                 # extractor applies ground truth over the algorithm's answers.
                 gt_pending = self._pending_ground_truth(video_id, manifest, feats_mtime)
+                # A person's session flag made after these kinematics: owed
+                # the same kinematics-only re-run, so it reaches the features
+                # file (_pending_session_flag).
+                flag_pending = self._pending_session_flag(video_id, feats_mtime)
 
                 # EXCEPTION: a pending review that declares a segment mislabel
                 # (true_segment_num set) must NOT drive a kinematics-only re-run
@@ -694,7 +706,8 @@ class ReprocessingScanner:
                         self._divert_mislabel_to_deep_review(video_id)
                     continue
 
-                if comparison['is_current'] and not review_pending and not gt_pending:
+                if (comparison['is_current'] and not review_pending and not gt_pending
+                        and not flag_pending):
                     summary['current'] += 1
                     # A failed re-run whose reason has since gone away (the
                     # declaration now counts the filed results current) is
@@ -759,6 +772,8 @@ class ReprocessingScanner:
                             stale.append('human_review')
                         if gt_pending:
                             stale.append('ground_truth')
+                        if flag_pending:
+                            stale.append('session_flag')
                     else:
                         # version-current, only a newer human review or ground
                         # truth to apply -> re-run just kinematics (the
@@ -766,6 +781,7 @@ class ReprocessingScanner:
                         scope = 'kinematics'
                         stale = ['human_review'] if review_pending else []
                         stale += ['ground_truth'] if gt_pending else []
+                        stale += ['session_flag'] if flag_pending else []
                         summary['review_triggered'] += 1
 
                     if scope == 'full':
@@ -880,6 +896,8 @@ class ReprocessingScanner:
                     continue  # a re-run is still owed for the review
                 if self._pending_ground_truth(video_id, manifest, feats_mtime):
                     continue  # a re-run is still owed for the ground truth
+                if self._pending_session_flag(video_id, feats_mtime):
+                    continue  # a re-run is still owed for a session flag
                 if mark_outdated:
                     try:
                         self.db.update_state(video_id, 'archived',
@@ -916,6 +934,48 @@ class ReprocessingScanner:
         self._save_caches(manifest_index, review_index)
 
         return summary
+
+    def _load_session_flags(self) -> dict:
+        """{session key: flag record} from the review root's
+        flagged_sessions.json (causal_review_io.flag_session writes it), read
+        fresh. Empty when there is none or it cannot be read (logged)."""
+        try:
+            from mousereach.review.causal_review_io import load_flagged_sessions
+            return dict(load_flagged_sessions(
+                Path(self.nas_root) / "Processing" / "Review", use_cache=False))
+        except Exception as e:
+            logger.warning(f"could not read the flagged sessions ({e}); no session "
+                           f"flag owes a re-run this scan")
+            return {}
+
+    def _pending_session_flag(self, video_id: str, feats_mtime: dict) -> bool:
+        """True when a person flagged this video's session (Flag Session in
+        the review window) AFTER its features file was written, so the filed
+        features do not carry the flag yet.
+
+        WHY (lab decision 2026-11-19, D5-10): a flag changes nothing and holds
+        nothing; it is only recorded where it can be found later -- the
+        ``session_flag`` field of the video's features file, which the
+        database integrator reads (orchestrator.with_session_flag). Writing it
+        there for a filed video is a kinematics-only re-run, the one re-run
+        filed videos may have. Compared by time: the flag's flagged_at (this
+        machine's local clock, as written) against the features file's
+        modified time from this scan's listing. A video the listing did not
+        show is not judged (False)."""
+        rec = (getattr(self, "_session_flags", None) or {})
+        if not rec:
+            return False
+        try:
+            from mousereach.review.causal_review_io import session_key
+            flag = rec.get(session_key(video_id))
+            if not flag or video_id not in feats_mtime:
+                return False
+            from datetime import datetime
+            flagged = datetime.fromisoformat(str(flag.get("flagged_at"))).timestamp()
+            return flagged > float(feats_mtime[video_id])
+        except Exception as e:
+            logger.debug(f"{video_id}: could not compare its session flag ({e})")
+            return False
 
     def _pending_ground_truth(self, video_id: str, manifest=None,
                               feats_mtime=None) -> bool:

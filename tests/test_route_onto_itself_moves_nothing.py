@@ -110,9 +110,8 @@ def test_flag_session_in_the_resegmentation_queue_keeps_every_file(
 
     after = _contents(bundle)
     assert not errors
-    # Every file still there, byte for byte; the earlier clear is set aside
-    # (renamed, kept), so the video waits for its cuts to be set again.
-    assert {k: v for k, v in after.items() if "_deep_review_cleared" not in k} == before
-    assert not clear.exists()
-    assert any("_deep_review_cleared_superseded_" in k for k in after)
-    assert any("already in the re-segmentation queue" in m for m in said)
+    # Every file still there, byte for byte, the clear too: Flag Session is
+    # only a note since 2026-11-19 and touches nothing.
+    assert {k: v for k, v in after.items() if k != clear.name} == before
+    assert clear.exists()
+    assert any("nothing was moved" in m for m in said)

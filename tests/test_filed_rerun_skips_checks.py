@@ -187,7 +187,7 @@ def test_a_filed_kinematics_only_rerun_is_extracted_and_processed_without_the_ga
     assert calls == ["kinematics"]
     assert rig.orch.db.get_video(VID)["state"] == "processed"   # on to filing
     feats = json.loads((rig.folder / f"{VID}_features.json").read_text())
-    assert feats == {"extractor": "new"}
+    assert feats == {"extractor": "new", "session_flag": None}   # no session flag
 
 
 def test_a_new_video_goes_through_every_check(rig):

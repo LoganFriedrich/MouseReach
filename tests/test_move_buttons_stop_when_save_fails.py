@@ -60,4 +60,4 @@ def test_flag_session_stays_on_the_video_when_the_save_fails(tmp_path, monkeypat
     monkeypatch.setattr(rg.Paths, "DEEP_REVIEW", tmp_path / "deep", raising=False)
     crw.CausalReviewWidget._flag_session(w)
     assert moved == [] and advanced == []
-    assert errors and "NOT moved" in errors[0]
+    assert errors and "did not save" in errors[0]

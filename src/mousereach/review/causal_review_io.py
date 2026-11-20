@@ -2952,13 +2952,18 @@ def is_session_flagged(video_stem: str, review_root: Path) -> bool:
 def flag_session(video_stem: str, review_root: Path, reason: str = "",
                  flagged_by: Optional[str] = None,
                  lock_wait_s: Optional[float] = None) -> str:
-    """Flag the video's whole session (mouse+day) as must-be-human-reviewed.
+    """Record a person's flag on the video's whole session (mouse+day):
+    who, when and why.
 
-    Idempotent: re-flagging the same session updates the record. Returns the
-    session key. Videos already GT'd/reviewed are still honored -- the flag only
-    forces review of the ones that aren't yet resolved. ``lock_wait_s``: how
-    long to wait for another writer's lock (the review window passes
-    GUI_LOCK_WAIT_S); IndexLockBusy after that.
+    A NOTE, nothing more (lab decision 2026-11-19, D5-10: "flags are there so
+    we could in theory find them"). It holds no video, moves none, leaves none
+    out and asks nobody anything. It is found later in every features file of
+    the session (orchestrator.with_session_flag stamps it as
+    ``session_flag``), which is where a database integrator reads it as a
+    marker. Idempotent: re-flagging the same session updates the record.
+    Returns the session key. ``lock_wait_s``: how long to wait for another
+    writer's lock (the review window passes GUI_LOCK_WAIT_S); IndexLockBusy
+    after that.
     """
     key = session_key(video_stem)
     p = _flagged_sessions_path(review_root)
@@ -2967,7 +2972,6 @@ def flag_session(video_stem: str, review_root: Path, reason: str = "",
         "reason": reason,
         "flagged_by": flagged_by or _get_username(),
         "flagged_at": _get_timestamp(),
-        "requires_human_review": True,
     }
 
     def change(doc):

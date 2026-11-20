@@ -134,6 +134,37 @@ def archived_pose_candidates(video_id: str, declared, archive_dir) -> list:
     return list(iter_files(archive_dir, pattern))
 
 
+def with_session_flag(features: dict, video_id: str) -> dict:
+    """``features`` with a ``session_flag`` key: the record a person made with
+    the review window's Flag Session button for this video's mouse+day
+    session (who flagged it, when, why -- causal_review_io.flag_session), or
+    None when the session is not flagged.
+
+    WHY (lab decision 2026-11-19, D5-10): "flags are there so we could in
+    theory find them". A flag holds nothing and changes nothing -- no video is
+    held, moved, left out or treated differently because of it. It is only
+    recorded where a reader of the results finds it: in every features file of
+    the session, which the database integrator pulls, so it can carry the
+    flag as a marker column. Read fresh from the review root's
+    flagged_sessions.json each time (a review window in another process may
+    have written it since). Never raises: a flag file that cannot be read
+    stamps None and logs why (the next kinematics run stamps it again)."""
+    record = None
+    try:
+        from mousereach.review.causal_review_io import (load_flagged_sessions,
+                                                        session_key)
+        root = getattr(Paths, "REVIEW_ROOT", None)
+        if root:
+            record = load_flagged_sessions(root, use_cache=False).get(
+                session_key(video_id))
+    except Exception as e:
+        logger.warning(f"{video_id}: could not read the flagged sessions ({e}); "
+                       f"its features say no flag")
+    out = dict(features)
+    out["session_flag"] = record
+    return out
+
+
 def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
                                 recomputed_stages) -> bool:
     """Whether this run is a re-run of a FILED video that recomputed none of
@@ -622,7 +653,7 @@ class BaseOrchestrator:
             # left a truncated features file in Processing.
             from mousereach.pipeline.fsutil import write_json_atomic
             write_json_atomic(Path(processing_dir) / f"{video_id}_features.json",
-                              features.to_dict(), indent=2)
+                              with_session_flag(features.to_dict(), video_id), indent=2)
             if record_kinematic_version(video_id, processing_dir, extractor.VERSION,
                                             review_path=None) is False:
                 # See _make_features: no provenance stamp, no filing.
@@ -719,7 +750,7 @@ class BaseOrchestrator:
             # previous one -- instead of the old file or the new one whole.
             from mousereach.pipeline.fsutil import write_json_atomic
             write_json_atomic(processing_dir / f"{video_id}_features.json",
-                              features.to_dict(), indent=2)
+                              with_session_flag(features.to_dict(), video_id), indent=2)
 
             # The manifest was composed before this ran, so it still says
             # kinematics never happened. Stamp the truth -- including WHICH
