@@ -146,7 +146,7 @@ def _fixer(boundaries):
     stub = SimpleNamespace(
         boundaries=list(boundaries), original_boundaries=list(boundaries),
         _calls={}, _removed_calls=[], _gw_idx=0, candidates=[],
-        gw_header=_Text(), gw_q=_Text(), gw_status=_Text(), status=_Text(),
+        gw_header=_Text(), gw_plain=_Text(), gw_q=_Text(), gw_status=_Text(), status=_Text(),
         gw_yes=_Check(True), gw_no=_Check(False), gw_spin=_Spin(), gw_cands=None,
         _refresh_candidates=lambda: None, _refresh_segments=lambda: None,
         _goto=lambda f: None, _gw_fill_candidate_row=lambda *a, **k: None)
