@@ -693,12 +693,13 @@ class BaseOrchestrator:
         (_hold_without_kinematics).
 
         ``keep_filed_decisions``: this run is a kinematics-only re-run of a
-        filed video (filed_rerun_reuses_analysis). It may recompute
-        measurements only: the extractor is handed the filed features file and
-        refuses (KinematicsProblem, so the run is held and the filed results
-        stand) when the reaches, outcomes or causal reaches would come out
-        different from the filed ones, unless an answer the filed results have
-        not applied yet decides them (kinematics/core/filed_decisions.py)."""
+        filed video (filed_rerun_reuses_analysis). The extractor is handed the
+        filed features file: every person's answer that applies now is
+        applied, and every outcome and causal reach no person decides stays as
+        filed (filed_decisions.settle_against_filed). It is never refused for
+        a difference from the filed results (owner rule 2026-11-21: a person's
+        answer is always applied; only an ALGORITHM never re-decides a filed
+        video)."""
         processing_dir = Path(processing_dir)
         # Provenance is part of filing: a video is not filed without the
         # manifest of THIS run. One that could not be written was set aside
@@ -786,8 +787,14 @@ class BaseOrchestrator:
                                    "on the provenance manifest")
 
             feat_duration = time.time() - step_start
+            # What a filed video's kinematics-only re-run wrote differently from
+            # the filed results (a person's answer applied, or a filed decision
+            # kept), in the processing log where a person can find it.
+            _diff = list(getattr(extractor, "changes_from_filed", None) or [])
             self.db.log_step(video_id, 'feature_extraction', 'completed',
-                             message=f"segments={features.n_segments}",
+                             message=(f"segments={features.n_segments}"
+                                      + (("; differs from the filed results: "
+                                          + "; ".join(_diff))[:2000] if _diff else "")),
                              duration=feat_duration)
             logger.info(f"Feature extraction complete: {video_id} ({feat_duration:.1f}s)")
             # No database push here: a database integrator pulls features
@@ -826,41 +833,82 @@ class BaseOrchestrator:
     @staticmethod
     def _filed_decisions_to_keep(video_id: str) -> dict:
         """The extractor arguments that make a kinematics-only re-run keep the
-        filed decisions the ALGORITHMS made: the filed features file, and the
-        kinds of a person's answer that may change them -- always both
-        (REVIEW and GROUND_TRUTH). Empty when the video has no filed features
-        file now (its filed results were moved aside, e.g. by a re-pose):
-        then there is nothing filed to keep.
-
-        WHY both, always (owner rule, 2026-11-21): "a human's answer is
-        ALWAYS applied, including to filed videos. 'Filed is final' only
-        protects filed results from algorithm re-runs." Before, only the
-        kinds the version scan counted as not yet applied
-        (filed_decisions.owed_human_layers: a review or ground truth newer
-        than what the filed manifest records) were allowed to change a filed
-        decision. A ground-truth file the manifest already recorded as
-        applied, but whose reaches the filing run had not used (the rule that
-        layers ground-truth reaches changed later), then held the re-run for
-        good, and the person's answer never reached the filed results. Now a
-        change a person's answer makes is always written; a change only an
-        algorithm makes (outcome detection, reach assignment, a filed answer
-        that is no longer found) still holds the run and the filed results
-        stand. owed_human_layers is still read, for the log line only."""
+        filed decisions no person's answer changes: the filed features file
+        (filed_decisions.settle_against_filed). Empty when the video has no
+        filed features file now (its filed results were moved aside, e.g. by
+        a re-pose): then there is nothing filed to keep."""
         from mousereach.archive.core import get_archive_destination
-        from mousereach.kinematics.core.filed_decisions import (GROUND_TRUTH, REVIEW,
-                                                                owed_human_layers)
+        from mousereach.kinematics.core.filed_decisions import owed_human_layers
         filed_dir = Path(get_archive_destination(video_id))
         filed = filed_dir / f"{video_id}_features.json"
         if not filed.is_file():
             logger.warning(f"{video_id}: kinematics-only re-run, but no filed features "
                            f"file in {filed_dir}; nothing filed to keep")
             return {}
+        # Read for the log line only: every person's answer is applied, newer
+        # than the filed run or not (filed_decisions.settle_against_filed).
         newer = owed_human_layers(video_id, filed_dir)
-        logger.info(f"{video_id}: kinematics-only re-run keeps the filed reaches, "
-                    f"outcomes and causal reaches the algorithms decided; a person's "
-                    f"answer (review, ground truth) is applied whenever it differs "
-                    f"(newer than the filed run: {', '.join(sorted(newer)) or 'none'})")
-        return {"keep_filed": filed, "owed": frozenset({REVIEW, GROUND_TRUTH})}
+        logger.info(f"{video_id}: kinematics-only re-run: every person's answer is "
+                    f"applied, everything else stays as filed (answers newer than the "
+                    f"filed run: {', '.join(sorted(newer)) or 'none'})")
+        return {"keep_filed": filed}
+
+    def _apply_answers_before_filing(self, video_id: str, folder) -> bool:
+        """The archive step's last check before it files: is every person's
+        answer for this video IN the features file about to be filed
+        (kinematics/core/answers_applied.py)? True: file it. When one is
+        missing, the features file is made again here, with the answer
+        applied, and checked again -- filing never completes while an answer
+        is missing, and nobody is asked anything. False (the row says why)
+        only when the features file could not be made again, or still lacks
+        the answer after that; the video is not filed then.
+
+        WHY here (owner rule 2026-11-21; 66 filed videos): answers
+        can arrive between the kinematics step and filing, a ground-truth file
+        can sit where the kinematics step did not look, and a run can have
+        applied an answer to the wrong pellet under an older rule. The
+        kinematics step's own lookups cannot vouch for any of that; a check of
+        the file that is about to be filed can."""
+        try:
+            from mousereach.kinematics.core.answers_applied import unapplied_answers
+            missing = unapplied_answers(video_id, folder)
+        except Exception as e:
+            missing = [f"the check could not run ({e})"]
+        if not missing:
+            return True
+        logger.warning(f"{video_id}: not filed yet: the features file lacks a person's "
+                       f"answer ({'; '.join(missing)[:500]}) -- making it again with "
+                       f"the answer applied")
+        self.db.log_step(video_id, 'archive', 'started',
+                         message=("a person's answer is not in the features file; "
+                                  "applying it before filing: " + "; ".join(missing))[:2000])
+        from mousereach.watcher.locate import resolve_pose_input
+        pose = resolve_pose_input(None, video_id, folder)
+        if pose is None:
+            why = "no pose file beside the results, so the answer could not be applied"
+        else:
+            try:
+                row = self.db.get_video(video_id) or {}
+            except Exception:
+                row = {}
+            keep = bool(row.get('archived_at')) and (row.get('reprocess_scope') == 'kinematics')
+            why = self._make_features(video_id, Path(folder), pose, False,
+                                      keep_filed_decisions=keep)
+            if isinstance(why, RoutedToReview):
+                return False        # a new run's voided answer, asked again in triage
+            if not why:
+                try:
+                    from mousereach.kinematics.core.answers_applied import unapplied_answers
+                    still = unapplied_answers(video_id, folder)
+                except Exception as e:
+                    still = [f"the check could not run ({e})"]
+                if not still:
+                    logger.info(f"{video_id}: the person's answer is applied; filing")
+                    return True
+                why = "still not in the features file after making it again: " + "; ".join(still)
+        self._hold_without_kinematics(
+            video_id, f"a person's answer could not be applied before filing ({why})")
+        return False
 
     def _hold_without_kinematics(self, video_id: str, why: str) -> None:
         """Mark a video failed because it has no features file, so it is not
@@ -6465,6 +6513,9 @@ class DLCOrchestrator(BaseOrchestrator):
         if refuse_filing_without_features(self.db, video_id, local_results):
             self._clear_archive_backoff(video_id)
             return False
+        if not self._apply_answers_before_filing(video_id, local_results):
+            self._clear_archive_backoff(video_id)
+            return False
         logger.info(f"Archiving locally processed {video_id} to NAS")
         self.db.update_state(video_id, 'archiving')
         self.db.log_step(video_id, 'archive', 'started')
@@ -9574,6 +9625,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # (_hand_score_precheck), so a 'processed' video has passed it.
 
         if refuse_filing_without_features(self.db, video_id, self.processing_dir):
+            self._clear_archive_backoff(video_id)
+            return False
+        # Every person's answer must be in what is filed; one that is not is
+        # applied now, before anything moves (_apply_answers_before_filing).
+        if not self._apply_answers_before_filing(video_id, self.processing_dir):
             self._clear_archive_backoff(video_id)
             return False
 

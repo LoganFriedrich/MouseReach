@@ -3291,6 +3291,8 @@ for a person instead of re-decided (next section).
 
 ## Update 2026-11-17: a kinematics-only re-run keeps the filed decisions
 
+**Superseded on 2026-11-21** ("Update 2026-11-21: a person's answer is always applied", at the end of this file): such a re-run is no longer held. Every person's answer is applied; what no person decides stays as filed. Kept below as the record of what the hold was and why it was removed.
+
 **The rule.** When a filed video is re-run for its kinematics only (re-run scope
 `kinematics`: a new kinematic extractor, or a person's answer saved after filing), the
 re-run may recompute MEASUREMENTS -- speeds, paths, seconds. It must come out with exactly
@@ -4054,9 +4056,11 @@ reached its features only if some other reason happened to re-run the video.
   kinematics were made with it as it is now:
   1. the manifest has the stamp: the file's content against the stamp; a `null` stamp (no ground
      truth applied) means a file filed now is owed, whatever its dates say;
-  2. a manifest from before the stamp: the file's own `last_modified_at` against the manifest's
-     `created_at`;
-  3. only when either is missing: the file's modified time against the features file's.
+  2. a manifest from before the stamp: owed (since 2026-11-21). Until then the file's own
+     `last_modified_at` was compared with the manifest's `created_at` (and, failing either, the
+     files' modified times), and an older file counted as applied -- which is how ground truth
+     that a run never found stayed out of filed results ("Update 2026-11-21: a person's answer is
+     always applied").
 - If not, the video is marked 'outdated' for a **kinematics-only** re-run, listed with
   `ground_truth` among its reasons (also for a video with no manifest). After the re-run the stamp
   matches and the video is not marked again; a later change marks it once more. A marked video
@@ -7768,7 +7772,125 @@ the disagreement recorded), before the decision commands were retired.
 Tests: `tests/test_label_mismatch_hold.py` (rewritten: no hold, a recorded
 sheet error still files, the CLI refuses decisions).
 
+
+## Update 2026-11-21: a person's answer is always applied
+
+**The rule (owner, 2026-11-21).** An answer a person gives -- ground truth, a
+deep-review (re-segmentation) answer, a triage answer -- is ALWAYS applied,
+automatically, with no hold, no queue and no question. When answers about the
+same pellet disagree, the highest wins: ground truth > deep review > triage. A
+ground-truth "uncertain" is no answer (a lower layer's concrete answer stands).
+An answer applies to the pellet whose frames it was given about, as long as that
+pellet's frames have not changed since (re-cut rule). Naming a pellet's causal
+reach also makes every other reach of that pellet a miss; picking a detected
+reach confirms its frames. "Filed is final" protects filed results from
+ALGORITHM re-runs only -- never from a person's answer.
+
+**What the pipeline does now -- three places.**
+
+1. **Before filing (every video).** The archive step checks the features file it
+   is about to file: is every person's answer for this video in it? If one is
+   missing (an answer saved after the kinematics step, ground truth sitting
+   beside the filed results, anything), the step makes the features file again
+   right there, with the answer applied, checks again, and files. Nobody is
+   asked. Only if the file cannot be made again (no pose file, an unreadable
+   answer file) is the video held as "not filed: no kinematics (a person's
+   answer could not be applied before filing (...))", and the failed-video retry
+   runs it again later; it is never filed without the answer.
+   (`ProcessingOrchestrator._apply_answers_before_filing`, called by both filing
+   paths: the processing server's `_archive_to_nas` and a processing GPU node's
+   `_archive_locally_processed`.)
+
+2. **A filed video's kinematics-only re-run never holds.** Per pellet: a person's
+   answer that applies now decides the outcome and the causal reach, whether or
+   not the filed results already had it; an outcome or causal reach no person
+   decides stays exactly as filed (the causal reach found again by its frames),
+   so no algorithm re-decides a filed video. The reach list is the filed reaches
+   file with a person's reaches applied. A re-cut that voided an earlier answer
+   is not asked again here: the filed decision stands on that pellet. What
+   differs from the filed results is written in the processing log
+   (`feature_extraction completed: ...; differs from the filed results: pellet 3:
+   outcome displaced_sa -> untouched (a person's answer: ground_truth); pellet 7:
+   outcome kept as filed (retrieved; worked out now: triaged, no person's answer
+   decides it)`). Until 2026-11-21 such a run was HELD whenever a difference was
+   not explained by an answer the scan counted as "owed", and the row went back
+   to 'archived' on a failed re-runs list for a person; the answer was never
+   applied. (`kinematics/core/filed_decisions.settle_against_filed`.)
+
+3. **The version scan finds every filed video that lacks an answer.** As before,
+   it re-runs a filed video's kinematics when a review or ground truth was saved
+   or changed after filing (by the content fingerprints in the manifest). Two
+   additions:
+   - a manifest with NO ground-truth record (made before the record existed) and
+     a ground-truth file beside the video: owed. Before, "the file is older than
+     the manifest" counted as applied.
+   - **the content check**: for a filed video with a review or ground truth that
+     the records call applied, the scan reads the filed features file and checks
+     that every answer is in it (outcome, causal reach by frames, every reach a
+     person placed). One that lacks an answer is marked 'outdated' for a
+     kinematics-only re-run, with the reason "a person's answer is not in the
+     filed features file: <pellets>" in `mark_reason` (which keeps the scan's
+     two-way door from lifting the mark). Each scan checks at most 150 videos
+     (a few small files each); a checked video is not checked again until its
+     features file, review or ground truth changes, so the first pass over the
+     whole archive is spread over several half-hourly scans. The scan summary
+     counts `answers_checked`, `answers_check_deferred` and `answers_missing`.
+   (`kinematics/core/answers_applied.unapplied_answers`,
+   `ReprocessingScanner._answers_missing`, `pipeline.manifest.ground_truth_applied`.)
+
+**Saving an answer for a filed video.** Nothing to press and nothing to clear:
+save it in the triage window, the re-segmentation tools or the ground-truth tool
+as usual. The watcher's version scan (at start and every 30 minutes) marks the
+video for a kinematics-only re-run, and the re-run (about a minute) applies the
+answer to the filed results. No algorithm runs again. One exception remains: a
+review that says a segment is really another pellet (a mislabel) still sends the
+video to the re-segmentation queue, because that answer asks for new cuts, which
+only a person can set.
+
+**Why (the 66 filed videos, 2026-11-20).** The 2.6.0 kinematics
+recalculation found 66 filed videos whose features lacked answers people had
+given. Two paths let them be filed that way:
+- *Ground truth beside the filed results that the run never found.* The
+  extractor looked for ground truth in the folder it ran in and in an index of
+  the processing tree, never beside the filed video. These videos were re-run in
+  early November; their ground truth sat in Analyzed, so the run applied none,
+  and the manifest predated the ground-truth record, so the scan's time rule
+  called the older file applied (25 of the 66). Closed: the extractor also looks
+  in the video's filed folder, and a missing record counts as not applied.
+- *Answers the filed results carry on the wrong pellet, or not at all, while the
+  manifest says the review was applied.* An older rule matched review answers by
+  pellet NUMBER; after re-cuts or renumbering, an answer landed on the
+  neighbouring pellet (a causal reach from the next pellet's frames, an outcome
+  copied from a record about other frames). The stamp says only that a run SAW
+  the review, so nothing ever looked again (the other 41). Closed: the content
+  check reads the features file itself, before filing and in the scan.
+Tests that reproduce both: `tests/test_human_answers_always_applied.py`
+(`test_a_run_finds_ground_truth_filed_beside_the_video`,
+`test_the_version_scan_reruns_a_filed_video_whose_features_lack_an_answer`; both
+fail on the code before this change), and in
+`tests/test_version_scan_start_stage.py`
+`test_ground_truth_older_than_a_manifest_without_a_stamp_is_owed`.
+
+**What a person may notice.** Filed videos with an answer their results lacked
+are re-run for kinematics over the following hours (a one-off wave; the content
+check paces it). Their numbers in the database change at the next nightly
+import, only where a person's answer says so. Recordings whose videos have
+ground truth but no ground-truth record in the manifest are not counted complete
+(and so not retired from the intake) until that re-run has stamped it.
+
+**Where it lives.** `kinematics/core/answers_applied.py` (the content check),
+`kinematics/core/filed_decisions.py` (`settle_against_filed`),
+`kinematics/core/feature_extractor.py` (`resolve_decisions`: the extractor's
+decisions without the pose, shared by the extractor and the check; ground truth
+looked for beside the filed video), `watcher/orchestrator.py`
+(`_apply_answers_before_filing`, `_make_features`), `watcher/reprocessor.py`
+(`_answers_missing`), `pipeline/manifest.py` (`ground_truth_applied`). Tests:
+`tests/test_human_answers_always_applied.py`,
+`tests/test_kinematics_only_rerun_keeps_filed_decisions.py`,
+`tests/test_version_scan_start_stage.py`.
 ## Update 2026-11-21: a person's answer is always applied to a filed video
+
+**Superseded the same day** by "Update 2026-11-21: a person's answer is always applied" (above): a change only an algorithm would make no longer stops the re-run either -- the filed decision is simply kept -- so no kinematics-only re-run of a filed video is ever given up over a difference. Kept as the record of the intermediate step.
 
 **What changed.** When the watcher recalculates the kinematics of a FILED video
 (a kinematics-only re-run, e.g. after a new kinematics extractor version), it

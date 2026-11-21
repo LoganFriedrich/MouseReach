@@ -1,8 +1,12 @@
-"""A kinematics-only re-run of a filed video recomputes measurements and keeps
-the filed decisions: the reaches (by frames), the reaches left out, each
-pellet's outcome and its causal reach. A change is written only when an answer
-the filed results have not applied yet decides it; anything else holds the run
-for a person, and the filed results stand (kinematics/core/filed_decisions.py).
+"""A kinematics-only re-run of a filed video recomputes measurements, applies
+EVERY person's answer that applies now, and keeps every outcome and causal
+reach no person decides as filed. It is never held for a difference from the
+filed results (owner rule 2026-11-21: "a human's answer is always applied,
+including to filed videos; filed is final only protects filed results from
+algorithm re-runs"; kinematics/core/filed_decisions.settle_against_filed).
+Until 2026-11-21 such a run was held whenever a change was not explained by an
+answer the version scan counted as not yet applied -- and the answer was then
+never applied (66 filed videos).
 
 WHY: the extractor works the decisions out again from the filed files (reaches,
 outcomes, assignment, every review copy, the ground truth). When the rules
@@ -124,15 +128,18 @@ def test_with_nothing_changed_the_measurements_are_written(dirs):
     assert _reach_frames(feats) == [(20, 30), (120, 135)]
 
 
-def test_ground_truth_the_filing_run_did_not_apply_holds_the_run(dirs):
-    from mousereach.kinematics.core.feature_extractor import KinematicsProblem
+def test_ground_truth_the_filing_run_did_not_apply_is_applied_owed_or_not(dirs):
+    """Ground truth the filing run did not apply is applied, though nothing
+    marks it as owed (the manifest's stamps said it was applied)."""
     proc, filed, pose = dirs
     _ground_truth(proc)
-    with pytest.raises(KinematicsProblem) as e:
-        _rerun(proc, filed, pose)
-    msg = str(e.value)
-    assert "pellet 1" in msg and "displaced_sa -> untouched" in msg
-    assert "1 filed gone, 1 new by ground_truth" in msg
+    ex = FeatureExtractor()
+    feats = ex.extract(pose, proc / f"{VID}_reaches.json", proc / f"{VID}_pellet_outcomes.json",
+                       keep_filed=filed / f"{VID}_features.json")
+    seg = feats.to_dict()["segments"][0]
+    assert seg["outcome"] == "untouched"
+    assert (118, 140) in _reach_frames(feats) and (120, 135) not in _reach_frames(feats)
+    assert any("displaced_sa -> untouched" in c for c in ex.changes_from_filed)
 
 
 def test_ground_truth_the_filed_results_owe_is_applied(dirs):
@@ -144,10 +151,11 @@ def test_ground_truth_the_filed_results_owe_is_applied(dirs):
     assert (118, 140) in _reach_frames(feats) and (120, 135) not in _reach_frames(feats)
 
 
-def test_a_filed_answer_no_longer_applied_holds_the_run(dirs, monkeypatch):
-    """A person's answer is in the filed results; if the re-run would not
-    apply it any more, the answer would be lost silently. Held instead."""
-    from mousereach.kinematics.core.feature_extractor import KinematicsProblem
+def test_a_filed_decision_no_person_decides_now_stays_as_filed(dirs, monkeypatch):
+    """A person's answer is in the filed results but no longer found by the
+    re-run (e.g. answered on cuts that have since moved). Nothing decides the
+    pellet now, so the filed decision stands -- the algorithm does not decide
+    a filed video again -- and the run is not held."""
     proc, filed, pose = dirs
     review = proc / f"{VID}_causal_review.json"
     review.write_text(json.dumps({
@@ -166,9 +174,14 @@ def test_a_filed_answer_no_longer_applied_holds_the_run(dirs, monkeypatch):
     assert answered.to_dict()["segments"][0]["outcome"] == "retrieved"
     (filed / f"{VID}_features.json").write_text(json.dumps(answered.to_dict()), encoding="utf-8")
     review.unlink()                     # the answer is no longer found by the re-run
-    with pytest.raises(KinematicsProblem) as e:
-        _rerun(proc, filed, pose)
-    assert "retrieved -> displaced_sa (by algo)" in str(e.value)
+    ex = FeatureExtractor()
+    feats = ex.extract(pose, proc / f"{VID}_reaches.json", proc / f"{VID}_pellet_outcomes.json",
+                       keep_filed=filed / f"{VID}_features.json")
+    seg = feats.to_dict()["segments"][0]
+    assert seg["outcome"] == "retrieved"
+    assert any("outcome kept as filed (retrieved" in c for c in ex.changes_from_filed)
+    causal = [r for r in seg["reaches"] if r["reach_id"] == seg["causal_reach_id"]]
+    assert [(r["start_frame"], r["end_frame"]) for r in causal] == [(120, 135)]
 
 
 def test_renumbered_reach_ids_are_not_a_change():
@@ -199,22 +212,18 @@ def test_owed_answers_are_read_by_the_version_scans_rules(dirs, monkeypatch):
     assert owed_human_layers(VID, filed) == frozenset({"ground_truth", "human_review"})
 
 
-def test_the_watcher_holds_a_kinematics_only_rerun_that_would_change_the_filed_results(
+def test_the_watcher_applies_the_answer_in_a_kinematics_only_rerun(
         dirs, tmp_path, monkeypatch):
     """The watcher's kinematics step of a filed video's kinematics-only
-    re-run: no features file, and the reason says what would have changed.
-    The change here is an ALGORITHM's (the reach assignment now names reach
-    2): since 2026-11-21 a person's answer is always applied, so only an
-    algorithm change still holds the run."""
+    re-run writes the features with the person's answer and goes on to
+    filing; nothing is held, nobody is asked."""
     import mousereach.archive.core as arch
     from mousereach.watcher.db import WatcherDB
     from mousereach.watcher.orchestrator import ProcessingOrchestrator
     proc, filed, pose = dirs
     monkeypatch.setattr(arch, "get_archive_destination", lambda vid: filed)
     (proc / f"{VID}_processing_manifest.json").write_text("{}", encoding="utf-8")
-    (proc / f"{VID}_reach_assignments.json").write_text(json.dumps(
-        {"video_id": VID, "reaches": [{"reach_id": 2, "segment_num": 1, "is_causal": True}]}),
-        encoding="utf-8")
+    _ground_truth(proc)
     o = ProcessingOrchestrator.__new__(ProcessingOrchestrator)
     o.db = WatcherDB(db_path=tmp_path / "w.db")
     o.db.export_to_central_db = lambda vid: None
@@ -224,13 +233,9 @@ def test_the_watcher_holds_a_kinematics_only_rerun_that_would_change_the_filed_r
     o.db.force_state(VID, "processing", reason="test")
     o._extract_features_and_finish(VID, pose, False, 1.0, keep_filed_decisions=True)
     row = o.db.get_video(VID)
-    assert row["state"] == "failed"
-    assert "kinematics-only re-run" in row["error_message"]
-    assert "causal reach frames 20-30 -> frames 120-135" in row["error_message"]
-    assert not (proc / f"{VID}_features.json").exists()
-    # The filed results are untouched.
-    assert json.loads((filed / f"{VID}_features.json").read_text())["segments"][0][
-        "outcome"] == "displaced_sa"
+    assert row["state"] == "processed"
+    written = json.loads((proc / f"{VID}_features.json").read_text())
+    assert written["segments"][0]["outcome"] == "untouched"
 
 
 # ---------------------------------------------------------------------------
@@ -425,20 +430,38 @@ def test_owed_ground_truth_without_a_complete_reach_list_removes_no_reach():
     assert fd.changes_not_owed(filed, fresh, owed={"human_review"})
 
 
-def test_a_reach_gone_for_another_reason_holds_the_run_though_ground_truth_is_owed(dirs):
-    """Outcome-only ground truth saved after filing is owed; the re-run also
-    loses the filed causal reach for a reason that is not the ground truth.
-    The outcome change is the ground truth's and would be fine; the lost reach
-    and the changed causal reach are not, so nothing is written."""
-    from mousereach.kinematics.core.feature_extractor import KinematicsProblem
+def test_a_reach_gone_for_another_reason_does_not_stop_the_answer(dirs):
+    """Outcome-only ground truth; the re-run also finds a filed reach gone for
+    a reason that is not the ground truth. The person's outcome is applied
+    anyway, and the line for the log says what else differs."""
     proc, filed, pose = dirs
     _outcomes_only_ground_truth(proc)
     _drop_detected_reach(proc, 1)
-    with pytest.raises(KinematicsProblem) as e:
-        _rerun(proc, filed, pose, owed={"ground_truth"})
-    msg = str(e.value)
-    assert "pellet 1" in msg and "1 filed gone" in msg
-    assert "displaced_sa -> untouched" not in msg      # the owed outcome is not the problem
+    ex = FeatureExtractor()
+    feats = ex.extract(pose, proc / f"{VID}_reaches.json", proc / f"{VID}_pellet_outcomes.json",
+                       keep_filed=filed / f"{VID}_features.json")
+    assert feats.to_dict()["segments"][0]["outcome"] == "untouched"
+    note = " ".join(ex.changes_from_filed)
+    assert "displaced_sa -> untouched (a person's answer: ground_truth)" in note
+    assert "1 filed not here now" in note
+
+
+def test_an_algorithm_answer_that_differs_from_the_filed_one_is_not_written(dirs):
+    """The reach assignment now names another reach than the filed results
+    did, and no person decided it: the filed causal reach stays (an algorithm
+    never re-decides a filed video), and nothing is held."""
+    proc, filed, pose = dirs
+    (proc / f"{VID}_reach_assignments.json").write_text(json.dumps(
+        {"video_id": VID, "reaches": [{"reach_id": 2, "segment_num": 1, "is_causal": True}]}),
+        encoding="utf-8")
+    ex = FeatureExtractor()
+    feats = ex.extract(pose, proc / f"{VID}_reaches.json", proc / f"{VID}_pellet_outcomes.json",
+                       keep_filed=filed / f"{VID}_features.json")
+    seg = feats.to_dict()["segments"][0]
+    assert seg["outcome"] == "displaced_sa"
+    causal = [r for r in seg["reaches"] if r["reach_id"] == seg["causal_reach_id"]]
+    assert [(r["start_frame"], r["end_frame"]) for r in causal] == [(20, 30)]
+    assert any("causal reach kept as filed" in c for c in ex.changes_from_filed)
 
 
 def test_complete_ground_truth_that_leaves_a_reach_out_is_applied(dirs):
@@ -459,14 +482,13 @@ def test_complete_ground_truth_that_leaves_a_reach_out_is_applied(dirs):
     assert feats.to_dict()["segments"][0]["outcome"] == "untouched"
 
 
-def test_a_filed_kinematics_only_rerun_always_applies_a_persons_answer(rig):
-    """Owner rule 2026-11-21: a person's answer is always applied to a filed
-    video; only algorithm changes are held. So the watcher counts both kinds
-    of answer as owed on every kinematics-only re-run, even when the filed
-    manifest already records them as applied."""
+def test_a_filed_kinematics_only_rerun_passes_no_owed_kinds(rig):
+    """Since 2026-11-21 every person's answer is applied on a filed video's
+    kinematics-only re-run, so the watcher no longer passes which kinds are
+    owed (filed_decisions.settle_against_filed)."""
     seen = rig.run("kinematics")
     assert len(seen) == 1
-    assert set(seen[0].get("owed")) == {"ground_truth", "human_review"}
+    assert "owed" not in seen[0]
 
 
 def test_the_watcher_applies_ground_truth_the_filed_manifest_already_records(

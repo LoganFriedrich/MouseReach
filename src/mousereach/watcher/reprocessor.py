@@ -21,6 +21,10 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# mark_reason of a filed video marked for a kinematics-only re-run because its
+# features file lacks a person's answer (ReprocessingScanner._answers_missing).
+ANSWERS_MISSING_REASON = "a person's answer is not in the filed features file: "
+
 # The ground-truth file's name ending (pipeline.manifest.GROUND_TRUTH_SUFFIX).
 GROUND_TRUTH_SUFFIX = "_unified_ground_truth.json"
 
@@ -270,6 +274,11 @@ class ReprocessingScanner:
         # opened the review on every pass to read one field -- about half of
         # a warm pass.
         self._reviewed_at_cache: dict = {}
+        # Filed videos whose features file was checked to carry every person's
+        # answer (answers_applied.unapplied_answers), keyed by video ->
+        # fingerprint of what was checked (_answers_fingerprint). Re-checked
+        # only when the features file, the review or the ground truth changes.
+        self._answers_ok: dict = {}
         # Rebuilt at the start of every scan (see _deep_manifest_index): the
         # tree changes between passes, so this one is never persisted.
         self._deep_manifests: Optional[dict] = None
@@ -298,6 +307,7 @@ class ReprocessingScanner:
                                       for path, size, m, d in doc["review_sha"]}
             self._reviewed_at_cache = {(path, size, m): r
                                        for path, size, m, r in doc["reviewed_at"]}
+            self._answers_ok = {v: fp for v, fp in (doc.get("answers_ok") or [])}
             logger.info("Version scan: %d manifests and %d review entries kept "
                         "from the last run (%s)", len(self._manifest_cache),
                         len(self._review_sha_cache) + len(self._reviewed_at_cache), p)
@@ -328,6 +338,8 @@ class ReprocessingScanner:
                               if not manifest_index or v in manifest_index],
                 "review_sha": [[*k, d] for k, d in self._review_sha_cache.items() if keep(k)],
                 "reviewed_at": [[*k, r] for k, r in self._reviewed_at_cache.items() if keep(k)],
+                "answers_ok": [[v, fp] for v, fp in self._answers_ok.items()
+                               if not manifest_index or v in manifest_index],
             }
             tmp = p.with_name(p.name + ".tmp")
             tmp.write_text(json.dumps(doc), encoding="utf-8")
@@ -414,6 +426,13 @@ class ReprocessingScanner:
             # 'outdated' rows the scan had marked for an algorithm re-run,
             # narrowed to a kinematics-only re-run (the door below).
             'narrowed_to_kinematics': 0,
+            # Filed videos whose features file lacks a person's answer though
+            # the manifest says it was applied (answers_applied): marked for a
+            # kinematics-only re-run that applies it.
+            'answers_checked': 0,
+            'answers_check_deferred': 0,
+            'answers_missing': 0,
+            'answers_missing_videos': [],
         }
 
         self._deep_manifests = None     # one walk per scan, not per video
@@ -690,6 +709,14 @@ class ReprocessingScanner:
                 # the same kinematics-only re-run, so it reaches the features
                 # file (_pending_session_flag).
                 flag_pending = self._pending_session_flag(video_id, feats_mtime)
+                # The CONTENT check (kinematics/core/answers_applied.py): a
+                # person's answer that the filed features file does not carry,
+                # though the stamps above say it was applied. Only for a video
+                # nothing else already re-runs, and within this pass's budget.
+                answers_missing = None
+                if not (review_pending or gt_pending or flag_pending):
+                    answers_missing = self._answers_missing(
+                        video_id, manifest_index, feats_mtime, review_index, summary)
 
                 # EXCEPTION: a pending review that declares a segment mislabel
                 # (true_segment_num set) must NOT drive a kinematics-only re-run
@@ -706,7 +733,20 @@ class ReprocessingScanner:
                         self._divert_mislabel_to_deep_review(video_id)
                     continue
 
-                if (comparison['is_current'] and not review_pending and not gt_pending
+                if answers_missing:
+                    # Kinematics only, whatever else is stale: the answer is
+                    # applied now; the version difference is the next scan's
+                    # business. mark_reason keeps the two-way door below from
+                    # lifting the mark (it re-checks only the stamps, which
+                    # say "applied").
+                    summary['answers_missing'] += 1
+                    summary['answers_missing_videos'].append(
+                        {'video_id': video_id, 'missing': answers_missing})
+                    self._mark_kinematics_rerun(
+                        video_id, ['person_answer_not_in_features'], summary,
+                        mark_outdated, full_only,
+                        mark_reason=ANSWERS_MISSING_REASON + "; ".join(answers_missing)[:400])
+                elif (comparison['is_current'] and not review_pending and not gt_pending
                         and not flag_pending):
                     summary['current'] += 1
                     # A failed re-run whose reason has since gone away (the
@@ -1000,7 +1040,7 @@ class ReprocessingScanner:
             return False
 
     def _mark_kinematics_rerun(self, video_id, stale, summary, mark_outdated,
-                               full_only) -> None:
+                               full_only, mark_reason=None) -> None:
         """Count, and when marking, mark a filed video 'outdated' for a
         kinematics-only re-run (scope 'kinematics'): the feature extractor
         applies the saved human answers; no algorithm and no quality or
@@ -1018,9 +1058,56 @@ class ReprocessingScanner:
             return
         if mark_outdated:
             self.db.force_state(video_id, 'outdated', reprocess_scope='kinematics',
-                                mark_reason=None)
+                                mark_reason=mark_reason)
             logger.info(f"Marked {video_id} as outdated (scope=kinematics, "
                         f"stale: {list(stale)})")
+
+    # How many filed videos one scan checks for a person's answer missing from
+    # their features file (answers_applied). Each check reads a handful of
+    # small files over the share; the work loop waits while a scan runs, so
+    # the first pass over a large archive is spread over several scans (one
+    # every half hour). A checked video is not checked again until its
+    # features file, review or ground truth changes.
+    ANSWERS_CHECK_BUDGET = 150
+
+    def _answers_fingerprint(self, video_id, feats_mtime, review_index):
+        rv = (review_index or {}).get(video_id)
+        gt = getattr(self, "_filed_gt", {}).get(video_id)
+        return json.dumps([(feats_mtime or {}).get(video_id),
+                           [str(rv[0]), rv[1], rv[2]] if rv else None,
+                           [str(gt[0]), gt[1]] if gt else None], default=str)
+
+    def _answers_missing(self, video_id, manifest_index, feats_mtime, review_index,
+                         summary) -> list:
+        """The person's answers this filed video's features file does not carry
+        (answers_applied.unapplied_answers), or [] -- also when the video has
+        no review and no ground truth (nothing to carry), when it was checked
+        before and nothing changed since, or when this pass's budget is spent
+        (it is checked on a later pass). Never raises."""
+        try:
+            has_review = (review_index is None or video_id in review_index)
+            has_gt = video_id in getattr(self, "_filed_gt", {})
+            if not (has_review or has_gt):
+                return []
+            fp = self._answers_fingerprint(video_id, feats_mtime, review_index)
+            if self._answers_ok.get(video_id) == fp:
+                return []
+            if summary['answers_checked'] >= self.ANSWERS_CHECK_BUDGET:
+                summary['answers_check_deferred'] += 1
+                return []
+            m = (manifest_index or {}).get(video_id)
+            if m is None:
+                return []
+            summary['answers_checked'] += 1
+            from mousereach.kinematics.core.answers_applied import unapplied_answers
+            missing = unapplied_answers(video_id, Path(m).parent)
+            if not missing:
+                self._answers_ok[video_id] = fp
+            return missing
+        except Exception as e:
+            logger.warning(f"{video_id}: could not check whether its features file "
+                           f"carries every person's answer ({e}); checked again next scan")
+            return []
 
     def _pending_review_path(self, video_id: str, manifest=None,
                              feats_mtime=None, review_index=None):

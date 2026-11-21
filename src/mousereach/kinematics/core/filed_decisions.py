@@ -27,25 +27,20 @@ they were filed (the extractor then looked for ground truth only in the
 processing tree), and a review answer that newer review matching places on a
 different pellet than the filing run did.
 
-THE RULE: in a kinematics-only re-run of a filed video, the reaches (their
-frames), the reaches left out of the measurements, each pellet's outcome and
-its causal reach must come out exactly as filed -- except where an answer the
-filed kinematics have NOT applied decides them (reason 2 above). Anything else
-is not written: the extractor raises KinematicsProblem with the changes in
-words, the watcher holds the run, and the filed results stand untouched
-(orchestrator._restore_filed_after_failed_rerun puts the row back to
-'archived' with the reason and lists it for a person). Nothing is re-decided
-silently, and nothing a person decided is dropped silently.
+THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied, including
+to filed videos; 'filed is final' only protects filed results from algorithm
+re-runs"): in a kinematics-only re-run of a filed video, every person's answer
+that applies now decides what it decides -- whether or not the filed results
+had it, and whatever the manifest says -- and every outcome and causal reach
+no person decides stays exactly as filed. Nothing is held and nobody is asked:
+settle_against_filed does it and says, in words, what differs from the filed
+results (the watcher writes that to its processing log).
 
-WHICH ANSWERS COUNT AS OWED (owner rule, 2026-11-21: "a human's answer is
-ALWAYS applied, including to filed videos; 'filed is final' only protects
-filed results from algorithm re-runs"): the watcher's kinematics-only re-run
-(orchestrator._filed_decisions_to_keep) passes BOTH kinds, REVIEW and
-GROUND_TRUTH, every time -- not only the ones owed_human_layers finds newer
-than the filed manifest. So any change a person's answer makes is written;
-only a change no person's answer explains (an algorithm's, or a filed answer
-that is no longer found) holds the run. owed_human_layers is kept for the
-version scan and for the log line.
+History: from 2026-11-17 any difference not explained by an answer the version
+scan counted as owed HELD the run (changes_not_owed + hold_message, kept below
+for the record and their tests); earlier on 2026-11-21 every answer was
+counted as owed but an algorithm difference still held it. Both left a
+person's answer unapplied whenever anything else differed.
 
 Pure functions over plain dicts; never touches a file except
 owed_human_layers, which only reads.
@@ -240,6 +235,129 @@ def changes_not_owed(filed: Dict[int, dict], fresh: Dict[int, dict],
         if words:
             problems.append("pellet %d: %s" % (k, "; ".join(words)))
     return problems
+
+
+HUMAN = (REVIEW, GROUND_TRUTH)
+_TOUCHED = ("retrieved", "displaced_sa", "displaced_outside")
+_UNDECIDED = (None, "triaged", "uncertain")
+
+
+def settle_against_filed(filed_doc, pairs) -> List[str]:
+    """Settle a kinematics-only re-run of a FILED video against its filed
+    features file. Never refuses. Returns what differs from the filed results,
+    one line per pellet, in words for the log (empty: nothing differs).
+
+    THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied,
+    including to filed videos; 'filed is final' only protects filed results
+    from ALGORITHM re-runs"), per pellet, for each of its two decisions:
+
+      * a person's answer that applies to this pellet NOW decides it --
+        ground truth > deep review > triage, by the truth layering
+        (review.truth_resolver), on pellets whose frames are unchanged. It is
+        written whether or not the filed results had applied it, and whether
+        or not the filed manifest says so.
+      * otherwise the FILED decision stands: the outcome as filed, and the
+        causal reach as filed (found again by its frames). A re-run never
+        re-decides what no person decided -- that would be the algorithm
+        deciding a filed video again.
+
+    ``pairs`` are the extractor's (reach segment, outcome segment) pairs AFTER
+    the truth layering and the reach-assignment merge; the outcome segments
+    are changed IN PLACE where the filed decision stands. The reach list is
+    not pinned: it is the filed reaches file (the filed reach detector's own
+    output) with a person's reaches applied; a filed reach that is not there
+    now was placed by an answer the current rules put on another pellet, and
+    the line says so.
+
+    WHY this replaced the hold (changes_not_owed + hold_message): the hold
+    refused the whole re-run when any change could not be explained by an
+    answer the version scan counted as not yet applied. A person's answer
+    that the filed results lacked was then never applied (66 filed
+    videos on 2026-11-20), and each such video sat on a list for a person --
+    the queue the owner rule forbids."""
+    from mousereach.kinematics.core.feature_extractor import (
+        causal_reach_owned_by_person, split_reaches_by_ignore_windows)
+    filed = decisions_of_features(filed_doc)
+    filed_src = {}
+    for g in (filed_doc or {}).get("segments") or []:
+        try:
+            filed_src[int(g.get("segment_num"))] = g
+        except (TypeError, ValueError):
+            continue
+    notes: List[str] = []
+    for sd, od in pairs:
+        k = int(sd["segment_num"])
+        a = filed.get(k)
+        if a is None:
+            notes.append("pellet %d: not in the filed results; written as worked out now" % k)
+            continue
+        fseg = filed_src.get(k) or {}
+        measured, left_out = split_reaches_by_ignore_windows(sd.get("reaches") or [],
+                                                             od.get("abnormal_ranges"))
+        left_out = list(sd.get("excluded_reaches") or []) + left_out
+        words = []
+        # -- the outcome ---------------------------------------------------
+        if od.get("outcome_source") in HUMAN:
+            if od.get("outcome") != a["outcome"]:
+                words.append("outcome %s -> %s (a person's answer: %s)" % (
+                    a["outcome"], od.get("outcome"), od.get("outcome_source")))
+        elif od.get("outcome") != a["outcome"]:
+            words.append("outcome kept as filed (%s; worked out now: %s, no person's "
+                         "answer decides it)" % (a["outcome"], od.get("outcome")))
+            od["outcome"] = a["outcome"]
+            src = fseg.get("outcome_source")
+            od["outcome_source"] = src if src in HUMAN + ("algo",) else "algo"
+            if fseg.get("reviewed_by"):
+                od["reviewed_by"] = fseg.get("reviewed_by")
+            od["outcome_kept_as_filed"] = True
+        # -- the causal reach ----------------------------------------------
+        now = _causal_frames(od.get("causal_reach_id"), measured, left_out)
+        if causal_reach_owned_by_person(od) and od.get("outcome_source") in HUMAN \
+                or od.get("causal_reach_source") in HUMAN:
+            if now != a["causal"]:
+                words.append("causal reach %s -> %s (a person's answer)" % (
+                    _fmt(a["causal"]), _fmt(now)))
+        elif od.get("outcome") not in _TOUCHED:
+            if od.get("causal_reach_id") is not None:
+                od["causal_reach_id"] = None
+                od.pop("causal_reach_source", None)
+            if a["causal"] is not None and od.get("outcome_source") not in HUMAN:
+                words.append("causal reach %s -> none (outcome %s)" % (
+                    _fmt(a["causal"]), od.get("outcome")))
+        elif now != a["causal"]:
+            want = a["causal"]
+            hit = None
+            if isinstance(want, tuple) and len(want) == 2 and isinstance(want[0], int):
+                hit = next((r for r in list(measured) + list(left_out)
+                            if isinstance(r, dict) and _window(r) == want), None)
+            if hit is not None:
+                words.append("causal reach kept as filed (%s; worked out now: %s)" % (
+                    _fmt(want), _fmt(now)))
+                od["causal_reach_id"] = hit.get("reach_id")
+                src = fseg.get("causal_reach_source")
+                od["causal_reach_source"] = src if src else "reach_assignment"
+                od["causal_reach_kept_as_filed"] = True
+            elif want is None:
+                # The filed results named no causal reach for a touched pellet
+                # (the merge of the filed reach assignment was missed then);
+                # the filed assignment's answer fills the gap -- no decision
+                # the filed results made is changed.
+                words.append("causal reach none -> %s (the filed results named none; "
+                             "the filed reach assignment's)" % _fmt(now))
+            else:
+                words.append("causal reach %s -> %s (the filed one is not among this "
+                             "pellet's reaches now)" % (_fmt(want), _fmt(now)))
+        # -- the reaches ---------------------------------------------------
+        fresh_w = sorted(w for w in (_window(r) for r in measured) if w)
+        if fresh_w != a["reaches"]:
+            gone = sorted(set(a["reaches"]) - set(fresh_w))
+            new = sorted(set(fresh_w) - set(a["reaches"]))
+            words.append("reaches: %d filed not here now%s, %d new%s" % (
+                len(gone), (" (first: %s)" % _fmt(gone[0])) if gone else "",
+                len(new), (" (first: %s)" % _fmt(new[0])) if new else ""))
+        if words:
+            notes.append("pellet %d: %s" % (k, "; ".join(words)))
+    return notes
 
 
 def hold_message(problems: List[str], owed: Iterable[str] = ()) -> str:

@@ -301,6 +301,14 @@ Version tracking (added by migration, db.py:331)
                           carrying a reason. That is the whole point of the
                           column: nothing else distinguishes "a person said
                           re-run this" from "the scanner noticed a version".
+                          ONE scanner mark carries a reason too (since
+                          2026-11-21): "a person's answer is not in the filed
+                          features file: <pellets>" -- the content check found
+                          a person's answer the filed results lack although
+                          the manifest says it was applied
+                          (kinematics/core/answers_applied.py). The reason keeps
+                          the door from lifting the mark, because the door
+                          re-checks only the manifest, which says "applied".
   crystallized_at, crystallized_by, crystallized_label
                           locked against reprocessing; only
                           mousereach-uncrystallize unlocks it (force_state

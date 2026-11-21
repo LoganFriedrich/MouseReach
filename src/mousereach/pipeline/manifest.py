@@ -325,44 +325,39 @@ def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
     video was filed reached its features only if some other reason happened
     to re-run it -- the scan compared only the causal review.
 
-    In order, like the review's rule (reprocessor._pending_review_path):
-      1. the manifest's ``applied_ground_truth`` stamp (record_kinematic_version)
-         -- the sha256 of the ground-truth file the feature extractor found and
-         applied -- against the file's content. A stamp of null means the
-         extractor looked and applied NO ground truth: a file filed beside the
-         video now is owed (False);
-      2. a manifest with no stamp: the file's own ``last_modified_at`` against
-         the manifest's ``created_at`` (ISO strings sort as times);
-      3. only when either is missing: the file's modified time against the
-         features file's.
-    An error answers True (applied): a file that cannot be read must not
-    re-run a filed video on every scan."""
+    Only the manifest's ``applied_ground_truth`` stamp (record_kinematic_
+    version) can say yes: the sha256 of the ground-truth file the feature
+    extractor found and applied, against the file's content now. A stamp of
+    null means the extractor looked and applied NO ground truth, and a
+    manifest with NO stamp (made before the stamp existed) cannot say which
+    ground truth its kinematics were made with: either way a file filed
+    beside the video now is owed (False), and the kinematics-only re-run
+    that follows stamps it, so it is owed once.
+
+    WHY no time rule any more (2026-11-21): "the file is older than the
+    manifest, so it was applied" was how 25 filed videos kept ground
+    truth their kinematics never carried -- the run had not looked where the
+    file was (beside the filed results), and the manifest predated the
+    stamp. A person's answer is always applied (owner rule); being unsure is
+    a reason to apply it, never a reason not to.
+
+    An error reading the file answers True (applied): a file that cannot be
+    read must not re-run a filed video on every scan."""
     try:
         if (manifest and 'applied_ground_truth' in manifest
                 and manifest['applied_ground_truth'] is None):
             return False        # the extractor applied none; one is filed now
         stamp = (manifest or {}).get('applied_ground_truth') or {}
-        if stamp.get('sha256'):
-            from mousereach.pipeline.fsutil import sha256_file
-            key = ("gt", str(gt_path), gt_mtime)
-            digest = sha_cache.get(key) if (sha_cache is not None and gt_mtime is not None) else None
-            if digest is None:
-                digest = sha256_file(gt_path)
-                if sha_cache is not None and gt_mtime is not None:
-                    sha_cache[key] = digest
-            return digest == stamp['sha256']
-        last = None
-        try:
-            last = json.loads(Path(gt_path).read_text(encoding='utf-8')).get('last_modified_at')
-        except Exception:
-            pass
-        created = (manifest or {}).get('created_at')
-        if last and created:
-            return not (str(last) > str(created))
-        if features_mtime is None:
-            return False        # ground truth and no kinematics at all: owed
-        mtime = gt_mtime if gt_mtime is not None else Path(gt_path).stat().st_mtime
-        return not (mtime > features_mtime)
+        if not stamp.get('sha256'):
+            return False        # no stamp: which ground truth was applied is unknown
+        from mousereach.pipeline.fsutil import sha256_file
+        key = ("gt", str(gt_path), gt_mtime)
+        digest = sha_cache.get(key) if (sha_cache is not None and gt_mtime is not None) else None
+        if digest is None:
+            digest = sha256_file(gt_path)
+            if sha_cache is not None and gt_mtime is not None:
+                sha_cache[key] = digest
+        return digest == stamp['sha256']
     except Exception as e:
         logger.warning("Could not tell whether %s was applied (%s); counted as applied",
                        gt_path, e)

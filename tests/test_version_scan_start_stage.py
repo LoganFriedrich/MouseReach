@@ -186,10 +186,25 @@ def test_ground_truth_saved_after_filing_reruns_the_kinematics(archive):
     assert summary["outdated_videos"][0]["stale_components"] == ["ground_truth"]
 
 
-def test_ground_truth_older_than_the_run_is_not_a_reason(archive):
+def test_ground_truth_older_than_a_manifest_without_a_stamp_is_owed(archive):
+    """REPRODUCES the 2026-11-20 case: ground truth beside a filed
+    video, older than its manifest, and a manifest from before the ground-truth
+    stamp. The old time rule called it applied, so it never was. Now a
+    manifest that cannot say which ground truth it applied owes it."""
     nas, cohort = archive
     _filed(cohort, dict(CURRENT))
     _gt(cohort, "2099-01-01T09:00:00")          # before created_at
+    db = DB(archived=[STEM])
+    _scan(nas, db)
+    assert db.marks.get(STEM) == "kinematics"
+
+
+def test_ground_truth_the_stamp_names_is_not_a_reason(archive):
+    from mousereach.pipeline.fsutil import sha256_file
+    nas, cohort = archive
+    gt = _gt(cohort, "2099-01-01T09:00:00")
+    _filed(cohort, dict(CURRENT),
+           applied_ground_truth={"file": gt.name, "sha256": sha256_file(gt)})
     db = DB(archived=[STEM])
     assert _scan(nas, db)["current"] == 1
     assert STEM not in db.marks
@@ -250,8 +265,9 @@ def test_recording_retirement_agrees_about_ground_truth(archive):
     _filed(cohort, dict(CURRENT))
     _gt(cohort, "2099-01-02T09:00:00")
     assert STEM not in build_complete_stems(nas / "Analyzed", nas)
+    # Older than the manifest, but no stamp says it was applied: not complete.
     _gt(cohort, "2099-01-01T09:00:00")
-    assert STEM in build_complete_stems(nas / "Analyzed", nas)
+    assert STEM not in build_complete_stems(nas / "Analyzed", nas)
 
 
 # --- a pass whose listing of the archive failed ------------------------------
