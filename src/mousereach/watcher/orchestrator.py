@@ -826,24 +826,41 @@ class BaseOrchestrator:
     @staticmethod
     def _filed_decisions_to_keep(video_id: str) -> dict:
         """The extractor arguments that make a kinematics-only re-run keep the
-        filed decisions: the filed features file, and the kinds of a person's
-        answer the filed results have not applied yet (filed_decisions.
-        owed_human_layers -- the version scan's own rules). Empty when the
-        video has no filed features file now (its filed results were moved
-        aside, e.g. by a re-pose): then there is nothing filed to keep."""
+        filed decisions the ALGORITHMS made: the filed features file, and the
+        kinds of a person's answer that may change them -- always both
+        (REVIEW and GROUND_TRUTH). Empty when the video has no filed features
+        file now (its filed results were moved aside, e.g. by a re-pose):
+        then there is nothing filed to keep.
+
+        WHY both, always (owner rule, 2026-11-21): "a human's answer is
+        ALWAYS applied, including to filed videos. 'Filed is final' only
+        protects filed results from algorithm re-runs." Before, only the
+        kinds the version scan counted as not yet applied
+        (filed_decisions.owed_human_layers: a review or ground truth newer
+        than what the filed manifest records) were allowed to change a filed
+        decision. A ground-truth file the manifest already recorded as
+        applied, but whose reaches the filing run had not used (the rule that
+        layers ground-truth reaches changed later), then held the re-run for
+        good, and the person's answer never reached the filed results. Now a
+        change a person's answer makes is always written; a change only an
+        algorithm makes (outcome detection, reach assignment, a filed answer
+        that is no longer found) still holds the run and the filed results
+        stand. owed_human_layers is still read, for the log line only."""
         from mousereach.archive.core import get_archive_destination
-        from mousereach.kinematics.core.filed_decisions import owed_human_layers
+        from mousereach.kinematics.core.filed_decisions import (GROUND_TRUTH, REVIEW,
+                                                                owed_human_layers)
         filed_dir = Path(get_archive_destination(video_id))
         filed = filed_dir / f"{video_id}_features.json"
         if not filed.is_file():
             logger.warning(f"{video_id}: kinematics-only re-run, but no filed features "
                            f"file in {filed_dir}; nothing filed to keep")
             return {}
-        owed = owed_human_layers(video_id, filed_dir)
+        newer = owed_human_layers(video_id, filed_dir)
         logger.info(f"{video_id}: kinematics-only re-run keeps the filed reaches, "
-                    f"outcomes and causal reaches (answers owed: "
-                    f"{', '.join(sorted(owed)) or 'none'})")
-        return {"keep_filed": filed, "owed": owed}
+                    f"outcomes and causal reaches the algorithms decided; a person's "
+                    f"answer (review, ground truth) is applied whenever it differs "
+                    f"(newer than the filed run: {', '.join(sorted(newer)) or 'none'})")
+        return {"keep_filed": filed, "owed": frozenset({REVIEW, GROUND_TRUTH})}
 
     def _hold_without_kinematics(self, video_id: str, why: str) -> None:
         """Mark a video failed because it has no features file, so it is not
