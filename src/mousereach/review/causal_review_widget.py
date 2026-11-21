@@ -3327,7 +3327,8 @@ The notes box travels with the video.
 
         Saves the review first so any per-element answers already given travel
         with the bundle as a record. Once a person saves new cuts those on
-        pellets whose frames moved are void and asked again in triage
+        pellets whose frames moved are void and dropped; such a pellet is
+        asked in triage only if the re-run algorithms flag it
         (causal_review_io.answer_survives_recut). The notes text becomes the routing reason so the person doing
         the re-seg knows what was seen."""
         bundle = getattr(self, "_bundle_dir", None)

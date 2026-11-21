@@ -6265,7 +6265,10 @@ that pellet did not move in the first re-cut either, so it is kept only when unc
 Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach detector itself;
 fails on 5546de0: gate CLEAN where it must be TRIAGE, results step drops a moved pellet's answer
 without refusing), `tests/test_recut_voids_earlier_answers.py`,
-`tests/test_recut_voided_pellets_are_asked_again.py`.
+`tests/test_recut_voided_pellets_are_asked_again.py` (renamed
+`tests/test_recut_voided_answers_are_dropped.py` on 2026-11-21, when "void and asked again"
+became "void and dropped": see "Update 2026-11-21: an answer a re-cut voided is dropped, not
+asked again").
 
 ## Update 2026-11-18: a recording PC sends the recordings people have named
 
@@ -6682,7 +6685,7 @@ WHAT IS BUILT:
   `previous_from`) and writes `causal_review_io.segmenter_recut_record`'s keys into the new file:
   `segmenter_recut_at` (when) and `segmenter_recut_replaced` (the replaced cut frames) when the
   cuts differ; the earlier file's own record unchanged when the cuts are the same; the time alone
-  (no record of the old cuts: every earlier answer asked again) when the earlier file cannot be
+  (no record of the old cuts: every earlier answer void and dropped) when the earlier file cannot be
   read; nothing when there was no earlier file.
 - `segmentation/core/batch.process_single(previous_cuts=...)` passes an earlier file that is not at
   the output path; `pipeline/reprocess_to_current` (bring-current, which segments into an empty work
@@ -7617,7 +7620,7 @@ video's cuts through the segmentation fixer's own save (`review/hand_cuts.apply_
 and `ground_truth_determined_at`. The replaced segments file and every output of the old cuts are archived
 to `_archived/segmentation_before_human_fix_<time>/` and removed, so reach detection, outcomes, reach
 assignment and kinematics run again on the person's cuts; answers given on pellets whose frames moved are
-asked again (the re-cut rule). Not applied: a file with any undetermined cut (the tool seeds its list with
+dropped (the re-cut rule; since 2026-11-21 no longer asked again). Not applied: a file with any undetermined cut (the tool seeds its list with
 the algorithm's cuts); cuts identical to the segments file's; a fixer save newer than the ground truth's
 newest determination; a folder in the filed tree; a video locked for a publication; Easy/Flat trays. Also
 applied when the segmenter fails on the video. A video returning from a review queue starts at
@@ -7927,3 +7930,44 @@ Tests: `tests/test_kinematics_only_rerun_keeps_filed_decisions.py`
 (`test_a_filed_kinematics_only_rerun_always_applies_a_persons_answer`,
 `test_the_watcher_applies_ground_truth_the_filed_manifest_already_records`;
 the watcher hold test now uses an algorithm change).
+
+## Update 2026-11-21: an answer a re-cut voided is dropped, not asked again
+
+RULE (owner ruling 2026-11-21). After a person saves a re-segmentation, reach detection, outcomes
+and reach assignment run again on the person's cuts and their answers replace the earlier
+algorithm answers (unchanged). A person's earlier answer on a pellet whose frames did not move
+still carries over (unchanged; `causal_review_io.answer_survives_recut`). What changed: when a
+person's earlier answer is VOIDED because its pellet's frames changed in the re-cut (or nothing
+shows which cuts it was given on), it is no longer asked again automatically. It is simply
+dropped: kept in the review file as a record, applied nowhere, and the pellet takes the re-run
+algorithms' call. The pellet goes to triage only if those algorithms flag it, by the same gate
+rule as any new video. The same holds for a segmenter re-cut.
+
+WHY. Under "void and asked again" (feb7c62, 2026-11-18) every moved pellet sent its video to
+triage with the pellet flagged `answered_before_recut`, whether or not the algorithms had any
+doubt about it. The person who re-cut has already said that pellet is different footage; the old
+answer is about a question that no longer exists.
+
+WHAT HOLDS NOW. The change is in one place, `causal_review_io.recut_voided_segments` (the
+function's name is kept for its callers). It no longer names pellets whose answer the re-cut
+voided. It still names one case: an answer the re-cut rule KEEPS (pellet unmoved) that a save put
+aside under `unmatched_answers`, where no reader applies it -- answers saved under the earlier
+"void everything" rule can sit there. Those pellets are still asked rather than given the
+algorithm's call over an answer that stands. Everything that reads it follows unchanged: the
+review gate (`review_gate.recut_voided_open`, `evaluate_gate`, `run_gate`'s `flag_recut_voided`),
+the results step (`truth_resolver` -> `applied['recut_voided']` ->
+`feature_extractor.RecutVoidedAnswers`, answered in the watcher by
+`review_gate.route_recut_voided_to_triage`), bring-current's flagging, and the fixer's status line
+(`hand_cuts.asked_again_note`, which now counts only those unmoved aside answers).
+
+SCOPE. Forward-looking. Nothing already filed is re-run or re-opened, and nothing in the triage
+queue is touched: a bundle already there with a pellet flagged `answered_before_recut` keeps its
+flag in its outcomes file and is answered as it stands. Deployed to the processing server's C:
+copy separately; until then the server runs the earlier rule.
+
+Tests: `tests/test_recut_one_span_rule.py`, `tests/test_recut_voided_answers_are_dropped.py`
+(renamed from `test_recut_voided_pellets_are_asked_again.py`),
+`tests/test_recut_voids_earlier_answers.py`, `tests/test_segmenter_recut_voids_earlier_answers.py`:
+a moved pellet's answer is dropped and the gate passes the video when the algorithm flags nothing;
+the same pellet goes to triage, for the algorithm's reason, when it does; an unmoved answer kept
+aside is still asked, by the gate, the results step and the watcher's route.

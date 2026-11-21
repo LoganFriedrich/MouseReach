@@ -934,7 +934,7 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
 
     # What these cuts replace (see the docstring): read BEFORE the file is
     # overwritten. Unreadable counts as a re-cut with no record of the old
-    # cuts, so every earlier answer is asked again rather than guessed onto
+    # cuts, so every earlier answer is dropped rather than guessed onto
     # the new cuts.
     from mousereach.review.causal_review_io import segmenter_recut_record
     prev_path = Path(previous_from) if previous_from else Path(output_path)

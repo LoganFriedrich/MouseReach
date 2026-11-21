@@ -1055,14 +1055,16 @@ def resolve_truth_layers(
             gt, [{k: v for k, v in s.items() if k != "cuts_set_at"} for s in _cur_segs],
             human_segmentation)
         layers.append(gt_out)                                     # GT tier (top)
-    # ---- answers a re-cut voided, still unasked ---------------------------
-    # The pellets whose person's answer a re-cut voided and that nobody has
+    # ---- answers that stand after a re-cut but cannot be applied ----------
+    # The pellets whose person's answer stands (frames unchanged by the
+    # re-cut) but was kept aside, so no reader applies it, and that nobody has
     # answered on the new cuts (recut_voided_segments -- the review gate's own
-    # check), less those ground truth decides. Not applied, and NOT left to
-    # the algorithm's call either: the caller is told (applied['recut_voided'])
-    # and the extractor refuses to write features until they are asked again
-    # in triage. WHY: voiding used to be a log line here, and a pellet the
-    # gate had not asked about took the algorithm's call over the person's.
+    # check), less those ground truth decides. NOT left to the algorithm's
+    # call: the caller is told (applied['recut_voided']) and the extractor
+    # refuses to write features until they are asked again in triage.
+    # An answer a re-cut VOIDED (its pellet's frames moved, or no record of
+    # its cuts) is not listed: it is dropped, and its pellet takes the call of
+    # the algorithms re-run on the new cuts (owner ruling 2026-11-21).
     if _cur_segs and review_doc and applied is not None:
         open_ = recut_voided_segments(review_doc, _plain, human_segmentation=human_segmentation)
         open_ -= set((gt_out if gt else {}).keys())

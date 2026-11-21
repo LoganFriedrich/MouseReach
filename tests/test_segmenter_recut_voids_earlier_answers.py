@@ -110,13 +110,15 @@ def test_a_segmenter_recut_voids_answers_on_pellets_it_moved(tmp_path, segment):
     assert answered == {1}
 
 
-def test_the_gate_asks_the_voided_pellets_again(tmp_path, segment):
+def test_the_gate_drops_the_voided_answers_and_asks_nothing(tmp_path, segment):
+    # owner ruling 2026-11-21: the voided answers on pellets 2 and 3 are
+    # dropped; the re-run algorithm flagged nothing, so the video is clean
     work = _folder(tmp_path / "work")
     segment(NEW_CUTS, work)
     _downstream(work)
     decision, reason, _ = rg.evaluate_gate(VID, work)
-    assert decision == rg.DECISION_TRIAGE, reason
-    assert rg.recut_voided_open(VID, work) == {2, 3}
+    assert decision == rg.DECISION_CLEAN, reason
+    assert rg.recut_voided_open(VID, work) == set()
 
 
 def test_the_segmenter_never_passes_for_a_person(tmp_path, segment):

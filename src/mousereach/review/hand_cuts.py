@@ -12,9 +12,11 @@ lost or poisons the data:
    file with that mark instead of re-cutting it (segmentation/core/batch.py),
    supersede and re-runs keep it (archive/supersede.is_human_cuts), and
    ``corrected_at`` is when the cuts were set
-   (causal_review_io.cuts_set_at), so every answer a person gave on the OLD
-   cuts is void and asked again (owner ruling: a re-cut voids everything after
-   segmentation; nothing is carried across it).
+   (causal_review_io.cuts_set_at), so an answer a person gave on the OLD
+   cuts stands only on a pellet whose frames did not move; any other is void
+   and dropped, and its pellet takes the call of the algorithms re-run on the
+   new cuts, asked in triage only if they flag it (owner rulings 2026-11-18
+   and 2026-11-21, causal_review_io.answer_survives_recut).
 2. Everything computed from the old cuts is archived and removed
    (``invalidate_stale_downstream``), so the pipeline recomputes it from the
    new cuts instead of describing frames that no longer belong together.
@@ -324,7 +326,7 @@ def commit_hand_cuts(seg_path, video_stem: str, seg: dict, archive_dir) -> List[
 # ALL determined now sets the video's cuts exactly as the segmentation fixer
 # does (mark_as_hand_cuts + commit_hand_cuts): ``boundary_source: "human"``,
 # everything computed from the old cuts archived and removed, answers given on
-# pellets whose frames moved asked again. A file with any cut nobody
+# pellets whose frames moved dropped. A file with any cut nobody
 # determined is not a statement about the cuts (the tool seeds its list with
 # the algorithm's) and is not applied.
 GT_CUTS_SOURCE = "ground_truth"
@@ -469,11 +471,12 @@ def apply_ground_truth_cuts(seg_path, video_stem: str, extra_dirs=()) -> Optiona
 
 
 def asked_again_note(bundle: Path, stem: str) -> str:
-    """Words for the status line when saving these cuts voided answers a
-    person gave on the old cuts: those pellets are asked again in triage after
-    the re-run (review_gate.recut_voided_open). '' when there are none or the
-    check cannot run -- the gate makes the same check either way, so the note
-    is information only."""
+    """Words for the status line when, after these cuts, earlier answers on
+    pellets whose frames did NOT move cannot be applied and will be asked in
+    triage after the re-run (review_gate.recut_voided_open). Answers on pellets
+    whose frames moved are dropped, never asked, so they are not counted.
+    '' when there are none or the check cannot run -- the gate makes the same
+    check either way, so the note is information only."""
     try:
         from mousereach.watcher.review_gate import recut_voided_open
         n = len(recut_voided_open(stem, bundle))
@@ -481,8 +484,8 @@ def asked_again_note(bundle: Path, stem: str) -> str:
         return ""
     if not n:
         return ""
-    return ("  %d pellet(s) answered on the old cuts will be asked again in triage "
-            "after the re-run." % n)
+    return ("  %d pellet(s) answered on the old cuts, frames unchanged, will be asked "
+            "again in triage after the re-run." % n)
 
 
 def release_after_hand_cuts(bundle, stem: str) -> str:

@@ -6,7 +6,9 @@ then it's fine to keep"): an answer given before a person's re-cut stands
 when its pellet's frames are exactly the same on the cuts it was given on and
 on the current cuts. If they moved at all, or the files do not show which cuts
 it was given on, it is void -- never carried by overlap or by number -- and
-its pellet is asked again. An answer given after the re-cut always stands.
+dropped (owner ruling 2026-11-21): its pellet takes the call of the algorithms
+re-run on the new cuts and goes to triage only if they flag it. An answer
+given after the re-cut always stands.
 
 Before: the gate and the window framed a pellet from the segments file (it
 ends the frame before the next cut) while the results step framed it from the
@@ -22,7 +24,9 @@ Now: causal_review_io.pellet_span is the only place a pellet's frames are
 defined and answer_survives_recut the only place the re-cut rule is decided;
 the results step takes its pellets from the segments file (current_pellets).
 The gate and the results step keep the same earlier answers (unmoved pellets)
-and void the same ones, which are asked again -- by the gate, which sends the
+and void the same ones, which are dropped. The one earlier answer that stands
+but that no reader applies -- one a save kept aside (unmatched_answers) on a
+pellet that did not move -- is asked again: by the gate, which sends the
 video to triage, and by the results step, which refuses to write features
 (RecutVoidedAnswers) and, in the watcher, routes the video to triage the same
 way.
@@ -174,14 +178,20 @@ def test_an_unmoved_pellets_answer_is_kept_by_the_gate_and_the_results_step(run)
     assert {r.get("outcome_source") for r in seg1["reaches"]} == {"human_review"}
 
 
-def test_an_unmoved_pellet_keeps_its_answer_while_a_moved_one_is_asked(run):
-    folder, _ = run
+def test_an_unmoved_pellet_keeps_its_answer_while_a_moved_ones_is_dropped(run):
+    """Owner ruling 2026-11-21: pellet 2's frames moved, so its earlier
+    answer is void and simply dropped -- not asked again (feb7c62 asked it
+    again) -- and it takes the re-run algorithm's call."""
+    folder, pose = run
     _review(folder, _answer(1, BEFORE), _answer(2, BEFORE, outcome="displaced_sa"))
     seg_doc = json.loads((folder / f"{VID}_segments.json").read_text(encoding="utf-8"))
     current = io.segments_from_segmentation(seg_doc)
     doc = json.loads((folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))
     assert io.answered_segments(doc, current, human_segmentation=True) == {1}
-    assert io.recut_voided_segments(doc, current, human_segmentation=True) == {2}
+    assert io.recut_voided_segments(doc, current, human_segmentation=True) == set()
+    segs = _extract(folder, pose)["segments"]
+    assert segs[0]["outcome"] == "untouched"
+    assert segs[1]["outcome"] == "retrieved"
 
 
 def _replace_cuts(folder, old_cuts):
@@ -199,64 +209,99 @@ def _replace_cuts(folder, old_cuts):
     os.utime(path, ns=(when.st_atime_ns, when.st_mtime_ns))
 
 
-def test_a_pellet_moved_by_one_frame_is_voided_and_asked_again(run):
+def test_a_pellet_moved_by_one_frame_is_voided_and_dropped(run):
     """The person moved the second cut by ONE frame (199 -> 200): pellet 2
-    was 100-198, is 100-199. Its earlier answer is void and asked again --
-    by the gate and by the results step -- while pellet 1 (0-99, unmoved)
-    keeps its answer. On 0c36d0d pellet 1 was asked again too."""
+    was 100-198, is 100-199. Its earlier answer is void and dropped -- the
+    gate passes the video (the algorithm flagged nothing) and the results
+    step writes the algorithm's call -- while pellet 1 (0-99, unmoved) keeps
+    its answer. Until 2026-11-21 pellet 2 was asked again."""
     folder, pose = run
     one_frame = [0, 100, 199, 300]
     _replace_cuts(folder, one_frame)
     _review(folder, _answer(1, BEFORE, cuts=one_frame),
             _answer(2, BEFORE, outcome="displaced_sa", cuts=one_frame))
-    assert rg.recut_voided_open(VID, folder) == {2}
+    assert rg.recut_voided_open(VID, folder) == set()
     decision, reason, _ = rg.evaluate_gate(VID, folder)
-    assert decision == rg.DECISION_TRIAGE and rg.RECUT_FLAG_REASON in reason, reason
-    with pytest.raises(RecutVoidedAnswers) as refused:
-        _extract(folder, pose)
-    assert refused.value.segments == [2]
+    assert decision == rg.DECISION_CLEAN, reason
+    segs = _extract(folder, pose)["segments"]
+    assert segs[0]["outcome"] == "untouched"
+    assert segs[1]["outcome"] == "retrieved"
 
 
-def test_an_answer_with_no_record_of_its_cuts_is_asked_again(run):
+def test_an_answer_with_no_record_of_its_cuts_is_dropped(run):
     """Pellet 1 keeps its earlier answer; pellet 2's earlier answer carries
     no frames, so nothing shows which cuts it was given on: it is treated as
-    moved -- void and asked again, and counted as such. On 0c36d0d pellet 1
-    was asked again too."""
+    moved -- void and dropped, and counted as such."""
     folder, pose = run
     no_frames = dict(_answer(2, BEFORE, outcome="displaced_sa"))
     no_frames.pop("segment_span")
     _review(folder, _answer(1, BEFORE), no_frames)
-    assert rg.recut_voided_open(VID, folder) == {2}
+    assert rg.recut_voided_open(VID, folder) == set()
     seg_doc = json.loads((folder / f"{VID}_segments.json").read_text(encoding="utf-8"))
     recut = io.recut_of(io.segments_from_segmentation(seg_doc))
     assert io.recut_verdict(no_frames, None, recut) == io.RECUT_NO_RECORD
-    with pytest.raises(RecutVoidedAnswers) as refused:
-        _extract(folder, pose)
-    assert refused.value.segments == [2]
+    segs = _extract(folder, pose)["segments"]
+    assert segs[0]["outcome"] == "untouched"
+    assert segs[1]["outcome"] == "retrieved"
 
 
-def test_without_the_replaced_cuts_on_file_an_unmoved_pellet_is_asked_again(run):
-    # the segments file does not say which cuts the re-cut replaced
-    folder, _ = run
+def test_without_the_replaced_cuts_on_file_an_earlier_answer_is_dropped(run):
+    # the segments file does not say which cuts the re-cut replaced: no
+    # record, treated as moved, so the answer is dropped and not asked
+    folder, pose = run
     _replace_cuts(folder, None)
     _review(folder, _answer(1, BEFORE))
-    assert rg.recut_voided_open(VID, folder) == {1}
+    assert rg.recut_voided_open(VID, folder) == set()
+    assert _extract(folder, pose)["segments"][0]["outcome"] == "retrieved"
 
 
-def test_a_moved_pellets_answer_is_voided_and_asked_again_never_dropped(run):
+def test_a_moved_pellets_answer_is_dropped_and_the_pellet_asked_only_if_flagged(run):
+    """Owner ruling 2026-11-21. The voided answer flags nothing and holds
+    nothing: the gate passes the video and the results step writes the
+    algorithm's call. The pellet goes to triage only when the re-run
+    algorithm flags it -- the same gate rule as any new video."""
     folder, pose = run
     _review(folder, _answer(2, BEFORE, outcome="displaced_sa"))
     decision, reason, _ = rg.evaluate_gate(VID, folder)
+    assert decision == rg.DECISION_CLEAN, reason
+    assert rg.flag_recut_voided(VID, folder) == []
+    outcomes_path = folder / f"{VID}_pellet_outcomes.json"
+    outcomes = json.loads(outcomes_path.read_text(encoding="utf-8"))
+    assert not [s for s in outcomes["segments"] if s.get("flagged_for_review")]
+    assert _extract(folder, pose)["segments"][1]["outcome"] == "retrieved"
+    # the re-run algorithm flags pellet 2: triage, for the algorithm's reason
+    outcomes["segments"][1].update(flagged_for_review=True, flag_reason="low_confidence")
+    outcomes_path.write_text(json.dumps(outcomes), encoding="utf-8")
+    decision, reason, _ = rg.evaluate_gate(VID, folder)
+    assert decision == rg.DECISION_TRIAGE, reason
+    assert rg.RECUT_FLAG_REASON not in reason
+
+
+def _review_aside(folder, *records):
+    """A review whose earlier answers a save kept aside (unmatched_answers)."""
+    (folder / f"{VID}_causal_review.json").write_text(json.dumps({
+        "video_name": VID, "reviewed_at": max(r["reviewed_at"] for r in records),
+        "segments": [], "unmatched_answers": list(records)}), encoding="utf-8")
+
+
+def test_an_unmoved_pellets_answer_kept_aside_is_still_asked_again(run):
+    """The one earlier answer still asked: pellet 1 did not move, so its
+    answer stands, but a save kept it aside where no reader applies it.
+    Unasked, the algorithm's call would replace an answer that stands."""
+    folder, pose = run
+    _review_aside(folder, _answer(1, BEFORE))
+    assert rg.recut_voided_open(VID, folder) == {1}
+    decision, reason, _ = rg.evaluate_gate(VID, folder)
     assert decision == rg.DECISION_TRIAGE and rg.RECUT_FLAG_REASON in reason, reason
-    # the pellet is flagged in the outcomes file, so the triage window walks it
-    assert rg.flag_recut_voided(VID, folder) == [2]
-    outcomes = json.loads((folder / f"{VID}_pellet_outcomes.json").read_text(encoding="utf-8"))
-    flagged = {s["segment_num"]: s for s in outcomes["segments"] if s.get("flagged_for_review")}
-    assert set(flagged) == {2}
-    # and the results step never writes the algorithm's call over it
     with pytest.raises(RecutVoidedAnswers) as refused:
         _extract(folder, pose)
-    assert refused.value.segments == [2]
+    assert refused.value.segments == [1]
+
+
+def test_a_moved_pellets_answer_kept_aside_is_dropped(run):
+    folder, _ = run
+    _review_aside(folder, _answer(2, BEFORE, outcome="displaced_sa"))
+    assert rg.recut_voided_open(VID, folder) == set()
 
 
 def test_answers_given_on_the_new_cuts_are_applied_by_both(run):
@@ -302,7 +347,8 @@ class _DB:
 def test_the_watcher_routes_a_refused_video_to_triage_instead_of_failing_it(run, monkeypatch):
     from mousereach.watcher import orchestrator as orch
     folder, pose = run
-    _review(folder, _answer(2, BEFORE, outcome="displaced_sa"))
+    # pellet 1 unmoved, its answer kept aside: the one case still asked
+    _review_aside(folder, _answer(1, BEFORE))
     (folder / f"{VID}_processing_manifest.json").write_text("{}", encoding="utf-8")
     routed = []
     monkeypatch.setattr(rg, "route_recut_voided_to_triage",
@@ -311,7 +357,7 @@ def test_the_watcher_routes_a_refused_video_to_triage_instead_of_failing_it(run,
     o.db = _DB()
     why = o._make_features(VID, folder, pose, skip_outcomes=False)
     assert isinstance(why, orch.RoutedToReview), why
-    assert routed == [(VID, [2])]
+    assert routed == [(VID, [1])]
     assert not (folder / f"{VID}_features.json").exists()
 
 
@@ -343,8 +389,9 @@ def _window_record(num, outcome, answered=True, cuts=NEW_CUTS):
 
 
 def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
-    """Pellet 2's cuts moved; its pre-cut answer is void and asked again.
-    The person gives the SAME answer on the new cuts. The save must stamp it
+    """Pellet 2's cuts moved; its pre-cut answer is void (dropped). The
+    pellet is then asked for another reason (the algorithm flags it) and the
+    person gives the SAME answer on the new cuts. The save must stamp it
     with this save's time -- inheriting the voided answer's time (same
     number, same answer) would leave it void and ask it for ever."""
     folder, pose = run
@@ -354,13 +401,17 @@ def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
                          reviewed_at=BEFORE),
             dict(_window_record(2, "untouched", cuts=OLD_CUTS), reviewer="reviewer_a",
                  reviewed_at=BEFORE))
-    assert rg.recut_voided_open(VID, folder) == {2}
+    seg_doc = json.loads((folder / f"{VID}_segments.json").read_text(encoding="utf-8"))
+    current = io.segments_from_segmentation(seg_doc)
+    before = json.loads((folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))
+    assert io.answered_segments(before, current, human_segmentation=True) == {1}
     io.save_causal_review(VID, folder, [_window_record(1, "untouched"),
                                         _window_record(2, "untouched"),
                                         _window_record(3, "retrieved")],
                           provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT,
                           cuts_replaced=OLD_CUTS)
-    assert rg.recut_voided_open(VID, folder) == set()
+    after = json.loads((folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))
+    assert io.answered_segments(after, current, human_segmentation=True) == {1, 2, 3}
     saved = {r["segment_num"]: r for r in json.loads(
         (folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))["segments"]}
     # pellet 1 did not move: its earlier answer is kept with who gave it and when;
@@ -376,7 +427,8 @@ def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
 
 def test_a_voided_answer_carried_by_a_save_stays_void(run, monkeypatch):
     """A save that leaves the voided pellet unanswered carries the old answer
-    along as a record with its own (pre-cut) time: still void, still asked."""
+    along as a record with its own (pre-cut) time: still void, never applied,
+    and not asked (dropped, owner ruling 2026-11-21)."""
     folder, _ = run
     monkeypatch.setattr(io, "durable_review_path", lambda stem: None)
     _review(folder, dict(_window_record(2, "untouched", cuts=OLD_CUTS), reviewer="reviewer_a",
@@ -385,7 +437,15 @@ def test_a_voided_answer_carried_by_a_save_stays_void(run, monkeypatch):
                                         _window_record(2, None, answered=False),
                                         _window_record(3, "retrieved")],
                           provenance={}, reviewer="reviewer_b", cuts_set_at=CUT_AT)
-    assert rg.recut_voided_open(VID, folder) == {2}
+    seg_doc = json.loads((folder / f"{VID}_segments.json").read_text(encoding="utf-8"))
+    current = io.segments_from_segmentation(seg_doc)
+    saved = json.loads((folder / f"{VID}_causal_review.json").read_text(encoding="utf-8"))
+    kept = [r for r in saved["segments"] + saved.get("unmatched_answers", [])
+            if (r.get("human") or {}).get("outcome") == "untouched"
+            and r.get("reviewed_at") == BEFORE]
+    assert kept, "the voided answer is kept as a record"
+    assert 2 not in io.answered_segments(saved, current, human_segmentation=True)
+    assert rg.recut_voided_open(VID, folder) == set()
 
 
 def test_a_reaches_file_made_on_other_cuts_is_refused_not_guessed(run):

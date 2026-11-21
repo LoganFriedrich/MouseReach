@@ -456,7 +456,8 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # the frames of the pellet in the ground truth's own cuts, and -- when a
     # re-cut set the current cuts after the ground truth was made -- standing
     # only where that pellet's frames are unchanged (answer_survives_recut).
-    # A pellet whose ground-truth answer a re-cut voided is asked again.
+    # A pellet whose ground-truth answer a re-cut voided is not resolved by
+    # it: it is asked only if the algorithms flag it (triaged), like any pellet.
     from .causal_review_io import segments_from_segmentation
     gt_full, gt_segs = gt_resolved_segments(
         video_id, extra_dirs=(directory,),
