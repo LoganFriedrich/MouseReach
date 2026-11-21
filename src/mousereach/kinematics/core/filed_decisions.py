@@ -37,6 +37,16 @@ words, the watcher holds the run, and the filed results stand untouched
 'archived' with the reason and lists it for a person). Nothing is re-decided
 silently, and nothing a person decided is dropped silently.
 
+WHICH ANSWERS COUNT AS OWED (owner rule, 2026-11-21: "a human's answer is
+ALWAYS applied, including to filed videos; 'filed is final' only protects
+filed results from algorithm re-runs"): the watcher's kinematics-only re-run
+(orchestrator._filed_decisions_to_keep) passes BOTH kinds, REVIEW and
+GROUND_TRUTH, every time -- not only the ones owed_human_layers finds newer
+than the filed manifest. So any change a person's answer makes is written;
+only a change no person's answer explains (an algorithm's, or a filed answer
+that is no longer found) holds the run. owed_human_layers is kept for the
+version scan and for the log line.
+
 Pure functions over plain dicts; never touches a file except
 owed_human_layers, which only reads.
 """
