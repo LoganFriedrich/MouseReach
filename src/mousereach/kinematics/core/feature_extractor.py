@@ -434,10 +434,11 @@ class KinematicsProblem(Exception):
     a reach's extended measures could not be computed, the reaches and
     outcomes files do not describe the same pellets
     (pair_segments_by_number), or -- in a
-    kinematics-only re-run of a filed video (``keep_filed``) -- the reaches,
-    outcomes or causal reaches would differ from the filed ones without an
-    owed answer deciding them (filed_decisions.py). ``problems`` lists each
-    one in words for a person.
+    kinematics-only re-run of a filed video (``keep_filed``) -- the filed
+    features file cannot be read. (A difference from the filed decisions is
+    no longer a reason: since 2026-11-21 a person's answer is always applied
+    and the rest stays as filed, filed_decisions.settle_against_filed.)
+    ``problems`` lists each one in words for a person.
 
     WHY an exception and not a printed line: every caller of extract() -- the
     watcher's kinematics step, the manual kinematics command, the run-all
@@ -584,57 +585,31 @@ class FeatureExtractor:
         # What extract() could not do; any entry makes it raise
         # KinematicsProblem instead of returning features.
         self.problems = []
+        # What a kinematics-only re-run of a filed video wrote differently
+        # from the filed results (filed_decisions.settle_against_filed).
+        self.changes_from_filed = []
+        # Pellets whose person's answer a re-cut voided (resolve_decisions).
+        self.recut_voided = []
 
-    def extract(
-        self,
-        dlc_path: Path,
-        reaches_path: Path,
-        outcomes_path: Path,
-        review_path: Optional[Path] = None,
-        assignments_path: Optional[Path] = None,
-        video_path: Optional[Path] = None,
-        keep_filed: Optional[Path] = None,
-        owed=(),
-    ) -> VideoFeatures:
-        """
-        Extract features for all reaches in a video.
+    def resolve_decisions(self, reaches_path, outcomes_path, review_path=None,
+                          assignments_path=None, keep_filed=None, ask_voided=True):
+        """Each pellet's reaches, outcome and causal reach as the features
+        file will carry them -- the algorithms' filed outputs with every
+        person's answer applied -- WITHOUT the pose. Returns ``(reaches_data,
+        outcomes_data, pairs)``; ``pairs`` are (reach segment, outcome
+        segment), matched by number (pair_segments_by_number).
 
-        Args:
-            dlc_path: Path to DLC .h5 file
-            reaches_path: Path to *_reaches.json from Step 4
-            outcomes_path: Path to *_pellet_outcomes.json from Step 3
-            video_path: the video, when it is not beside the pose file (its frame
-                rate converts frames to seconds; frame_rate.py)
-            keep_filed: the FILED features file, for a kinematics-only re-run
-                of a filed video. Its reaches, left-out reaches, outcomes and
-                causal reaches must come out unchanged, except where an
-                answer in ``owed`` decides them; otherwise nothing is
-                returned (KinematicsProblem). filed_decisions.py says why.
-            owed: the kinds of a person's answer the filed kinematics have not
-                applied yet (filed_decisions.owed_human_layers).
+        The ONE place this is worked out: extract() measures over these pairs,
+        and the archive step's check that every person's answer is in the
+        features file it is about to file (kinematics/core/answers_applied.py)
+        compares against them, so the two cannot disagree about what a
+        person's answer says.
 
-        Returns:
-            VideoFeatures object with all extracted features
-
-        Raises:
-            KinematicsProblem: when the result would not be the video's true
-            result (see that class); nothing is returned, so no caller can
-            write a features file from it.
-        """
-        self.problems = []
-        self.review_applied = False
-        self._resolve_rate(dlc_path, video_path)
-        if self.frame_rate is None:
-            # Five values in seconds could not be computed, so this would not be
-            # the video's whole result: hold it (KinematicsProblem) rather than
-            # file it with them missing for good.
-            self.problems.append(
-                f"no frame rate for {Path(dlc_path).name}: no video beside the pose "
-                f"file and no pose record of its rate, so nothing in seconds can be computed")
-
-        # Load DLC data
-        df = self._load_dlc(dlc_path)
-
+        Appends to ``self.problems`` and raises KinematicsProblem (or
+        RecutVoidedAnswers for a new run) exactly as extract() documents; the
+        caller resets ``self.problems`` first. ``keep_filed``: see extract().
+        ``ask_voided=False``: a re-cut that voided a person's answer is not
+        raised (a check that only reads, answers_applied.py)."""
         # Load reaches
         with open(reaches_path) as f:
             reaches_data = json.load(f)
@@ -713,6 +688,23 @@ class FeatureExtractor:
         # once per process. In a long-running watcher it predates a ground-truth
         # file copied down for a re-run -- the very file the re-run exists to
         # apply -- so the re-run applied no ground truth, or an older one.
+        # Then the video's FILED folder. WHY (2026-11-21, 66 filed videos
+        # filed without their ground truth): a ground-truth file made for a
+        # filed video lives beside its filed results, and the corpus index
+        # covers only the processing tree. A re-run in the processing folder
+        # then found no ground truth and filed without it; the manifest had no
+        # ground-truth stamp yet, so the version scan's time rule called the
+        # older file "applied" and nothing ever applied it.
+        _gt_dirs = [Path(reaches_path).parent]
+        try:
+            from mousereach.archive.core import get_archive_destination
+            _filed_dir = Path(get_archive_destination(
+                reaches_data.get('video_name') or Path(reaches_path).name.replace(
+                    '_reaches.json', '')))
+            if _filed_dir not in _gt_dirs:
+                _gt_dirs.append(_filed_dir)
+        except Exception:
+            pass     # no filing location configured: nothing filed to look beside
         self.applied_ground_truth = NOT_RESOLVED
         _applied = {}
         try:
@@ -721,7 +713,7 @@ class FeatureExtractor:
                 reaches_data, outcomes_data,
                 video_stem=reaches_data.get('video_name'),
                 primary_dir=review_path,
-                extra_gt_dirs=(Path(reaches_path).parent,),
+                extra_gt_dirs=tuple(_gt_dirs),
                 # The copy of the review beside this run is merged in too:
                 # ``review_path`` may be another copy (the durable one).
                 extra_review_dirs=(Path(reaches_path).parent,),
@@ -736,12 +728,14 @@ class FeatureExtractor:
                 f"the person's answers (review and ground truth) could not be applied: {_e}")
         if self.problems:
             raise KinematicsProblem(self.problems)
-        if _applied.get('recut_voided'):
-            raise RecutVoidedAnswers(_applied['recut_voided'])
-
-        video_name = reaches_data['video_name']
-        total_frames = reaches_data['total_frames']
-        n_segments = reaches_data['n_segments']
+        # A re-cut voided a person's answer on these pellets and nobody has
+        # answered them on the new cuts. A NEW run asks again in triage
+        # (RecutVoidedAnswers). A kinematics-only re-run of a FILED video asks
+        # nothing (owner rule 2026-11-21): no answer applies there now, so the
+        # filed decision stands (filed_decisions.settle_against_filed).
+        self.recut_voided = list(_applied.get('recut_voided') or [])
+        if self.recut_voided and keep_filed is None and ask_voided:
+            raise RecutVoidedAnswers(self.recut_voided)
 
         # Each pellet's reaches with ITS outcome, matched by segment number,
         # never by position (pair_segments_by_number says why). Both loops
@@ -752,8 +746,6 @@ class FeatureExtractor:
         if _pair_problems:
             raise KinematicsProblem(_pair_problems)
 
-        # Extract features for each segment
-        segment_features = []
 
         # Merge the algorithm's causal attribution into the segments that no
         # person has decided. Strictly ordered:
@@ -801,31 +793,92 @@ class FeatureExtractor:
                   f"segment(s) have no reach-assignment answer to merge -- their causal reach "
                   f"will be absent unless a human layer supplies one")
 
-        # A kinematics-only re-run of a filed video recomputes measurements,
-        # never decisions: the reaches, outcomes and causal reaches worked out
-        # above must be the filed ones, except where an answer the filed
-        # results have not applied decides them (filed_decisions.py says why
-        # and what counts). Anything else is held, never written.
+        # A kinematics-only re-run of a filed video: every person's answer
+        # that applies now is applied; everything no person decides stays as
+        # filed. Never held (filed_decisions.settle_against_filed says why).
+        self.changes_from_filed = []
         if keep_filed is not None:
             from mousereach.kinematics.core import filed_decisions as _fd
             try:
                 with open(keep_filed, encoding='utf-8') as f:
-                    _filed = _fd.decisions_of_features(json.load(f))
+                    _filed_doc = json.load(f)
             except Exception as _e:
                 raise KinematicsProblem([
                     f"the filed features file {Path(keep_filed).name} could not be read "
-                    f"({_e}), so this kinematics-only re-run cannot show that it keeps "
-                    f"the filed reaches, outcomes and causal reaches"])
-            _fresh = {}
-            for _sd, _od in _pairs:
-                _m, _lo = split_reaches_by_ignore_windows(_sd['reaches'], _od.get('abnormal_ranges'))
-                _lo = list(_sd.get('excluded_reaches') or []) + _lo
-                _fresh[int(_sd['segment_num'])] = _fd.decision_of_resolved(_sd, _od, _m, _lo)
-            _changes = _fd.changes_not_owed(_filed, _fresh, owed)
-            if _changes:
-                _msg = _fd.hold_message(_changes, owed)
-                print(f"[feature_extractor] {video_name}: {_msg}")
-                raise KinematicsProblem([_msg])
+                    f"({_e}), so this kinematics-only re-run cannot keep the filed "
+                    f"decisions no person's answer changes"])
+            self.changes_from_filed = _fd.settle_against_filed(_filed_doc, _pairs)
+            if self.changes_from_filed:
+                print(f"[feature_extractor] {reaches_data.get('video_name')}: differs from "
+                      f"the filed results: " + "; ".join(self.changes_from_filed))
+
+        return reaches_data, outcomes_data, _pairs
+
+
+    def extract(
+        self,
+        dlc_path: Path,
+        reaches_path: Path,
+        outcomes_path: Path,
+        review_path: Optional[Path] = None,
+        assignments_path: Optional[Path] = None,
+        video_path: Optional[Path] = None,
+        keep_filed: Optional[Path] = None,
+        owed=(),
+    ) -> VideoFeatures:
+        """
+        Extract features for all reaches in a video.
+
+        Args:
+            dlc_path: Path to DLC .h5 file
+            reaches_path: Path to *_reaches.json from Step 4
+            outcomes_path: Path to *_pellet_outcomes.json from Step 3
+            video_path: the video, when it is not beside the pose file (its frame
+                rate converts frames to seconds; frame_rate.py)
+            keep_filed: the FILED features file, for a kinematics-only re-run
+                of a filed video. Every person's answer that applies now is
+                applied; every outcome and causal reach no person decides
+                stays as filed (filed_decisions.settle_against_filed). Never
+                refused for that; ``self.changes_from_filed`` says what
+                differs. A re-cut that voided a person's answer is not asked
+                again here either: the filed decision stands on that pellet.
+            owed: accepted for older callers and ignored. Until 2026-11-21 only
+                these kinds of answer could change a filed decision; now every
+                person's answer does (owner rule).
+
+        Returns:
+            VideoFeatures object with all extracted features
+
+        Raises:
+            KinematicsProblem: when the result would not be the video's true
+            result (see that class); nothing is returned, so no caller can
+            write a features file from it.
+        """
+        self.problems = []
+        self.review_applied = False
+        self._resolve_rate(dlc_path, video_path)
+        if self.frame_rate is None:
+            # Five values in seconds could not be computed, so this would not be
+            # the video's whole result: hold it (KinematicsProblem) rather than
+            # file it with them missing for good.
+            self.problems.append(
+                f"no frame rate for {Path(dlc_path).name}: no video beside the pose "
+                f"file and no pose record of its rate, so nothing in seconds can be computed")
+
+        # Load DLC data
+        df = self._load_dlc(dlc_path)
+
+        from mousereach.reach.core.before_first_cut import BEFORE_FIRST_CUT_KEY
+        reaches_data, outcomes_data, _pairs = self.resolve_decisions(
+            reaches_path, outcomes_path, review_path=review_path,
+            assignments_path=assignments_path, keep_filed=keep_filed)
+
+        video_name = reaches_data['video_name']
+        total_frames = reaches_data['total_frames']
+        n_segments = reaches_data['n_segments']
+
+        # Extract features for each segment
+        segment_features = []
 
         for seg_data, outcome_data in _pairs:
             seg_num = seg_data['segment_num']

@@ -232,6 +232,129 @@ def changes_not_owed(filed: Dict[int, dict], fresh: Dict[int, dict],
     return problems
 
 
+HUMAN = (REVIEW, GROUND_TRUTH)
+_TOUCHED = ("retrieved", "displaced_sa", "displaced_outside")
+_UNDECIDED = (None, "triaged", "uncertain")
+
+
+def settle_against_filed(filed_doc, pairs) -> List[str]:
+    """Settle a kinematics-only re-run of a FILED video against its filed
+    features file. Never refuses. Returns what differs from the filed results,
+    one line per pellet, in words for the log (empty: nothing differs).
+
+    THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied,
+    including to filed videos; 'filed is final' only protects filed results
+    from ALGORITHM re-runs"), per pellet, for each of its two decisions:
+
+      * a person's answer that applies to this pellet NOW decides it --
+        ground truth > deep review > triage, by the truth layering
+        (review.truth_resolver), on pellets whose frames are unchanged. It is
+        written whether or not the filed results had applied it, and whether
+        or not the filed manifest says so.
+      * otherwise the FILED decision stands: the outcome as filed, and the
+        causal reach as filed (found again by its frames). A re-run never
+        re-decides what no person decided -- that would be the algorithm
+        deciding a filed video again.
+
+    ``pairs`` are the extractor's (reach segment, outcome segment) pairs AFTER
+    the truth layering and the reach-assignment merge; the outcome segments
+    are changed IN PLACE where the filed decision stands. The reach list is
+    not pinned: it is the filed reaches file (the filed reach detector's own
+    output) with a person's reaches applied; a filed reach that is not there
+    now was placed by an answer the current rules put on another pellet, and
+    the line says so.
+
+    WHY this replaced the hold (changes_not_owed + hold_message): the hold
+    refused the whole re-run when any change could not be explained by an
+    answer the version scan counted as not yet applied. A person's answer
+    that the filed results lacked was then never applied (66 filed
+    videos on 2026-11-20), and each such video sat on a list for a person --
+    the queue the owner rule forbids."""
+    from mousereach.kinematics.core.feature_extractor import (
+        causal_reach_owned_by_person, split_reaches_by_ignore_windows)
+    filed = decisions_of_features(filed_doc)
+    filed_src = {}
+    for g in (filed_doc or {}).get("segments") or []:
+        try:
+            filed_src[int(g.get("segment_num"))] = g
+        except (TypeError, ValueError):
+            continue
+    notes: List[str] = []
+    for sd, od in pairs:
+        k = int(sd["segment_num"])
+        a = filed.get(k)
+        if a is None:
+            notes.append("pellet %d: not in the filed results; written as worked out now" % k)
+            continue
+        fseg = filed_src.get(k) or {}
+        measured, left_out = split_reaches_by_ignore_windows(sd.get("reaches") or [],
+                                                             od.get("abnormal_ranges"))
+        left_out = list(sd.get("excluded_reaches") or []) + left_out
+        words = []
+        # -- the outcome ---------------------------------------------------
+        if od.get("outcome_source") in HUMAN:
+            if od.get("outcome") != a["outcome"]:
+                words.append("outcome %s -> %s (a person's answer: %s)" % (
+                    a["outcome"], od.get("outcome"), od.get("outcome_source")))
+        elif od.get("outcome") != a["outcome"]:
+            words.append("outcome kept as filed (%s; worked out now: %s, no person's "
+                         "answer decides it)" % (a["outcome"], od.get("outcome")))
+            od["outcome"] = a["outcome"]
+            src = fseg.get("outcome_source")
+            od["outcome_source"] = src if src in HUMAN + ("algo",) else "algo"
+            if fseg.get("reviewed_by"):
+                od["reviewed_by"] = fseg.get("reviewed_by")
+            od["outcome_kept_as_filed"] = True
+        # -- the causal reach ----------------------------------------------
+        now = _causal_frames(od.get("causal_reach_id"), measured, left_out)
+        if causal_reach_owned_by_person(od) and od.get("outcome_source") in HUMAN \
+                or od.get("causal_reach_source") in HUMAN:
+            if now != a["causal"]:
+                words.append("causal reach %s -> %s (a person's answer)" % (
+                    _fmt(a["causal"]), _fmt(now)))
+        elif od.get("outcome") not in _TOUCHED:
+            if od.get("causal_reach_id") is not None:
+                od["causal_reach_id"] = None
+                od.pop("causal_reach_source", None)
+            if a["causal"] is not None and od.get("outcome_source") not in HUMAN:
+                words.append("causal reach %s -> none (outcome %s)" % (
+                    _fmt(a["causal"]), od.get("outcome")))
+        elif now != a["causal"]:
+            want = a["causal"]
+            hit = None
+            if isinstance(want, tuple) and len(want) == 2 and isinstance(want[0], int):
+                hit = next((r for r in list(measured) + list(left_out)
+                            if isinstance(r, dict) and _window(r) == want), None)
+            if hit is not None:
+                words.append("causal reach kept as filed (%s; worked out now: %s)" % (
+                    _fmt(want), _fmt(now)))
+                od["causal_reach_id"] = hit.get("reach_id")
+                src = fseg.get("causal_reach_source")
+                od["causal_reach_source"] = src if src else "reach_assignment"
+                od["causal_reach_kept_as_filed"] = True
+            elif want is None:
+                # The filed results named no causal reach for a touched pellet
+                # (the merge of the filed reach assignment was missed then);
+                # the filed assignment's answer fills the gap -- no decision
+                # the filed results made is changed.
+                words.append("causal reach none -> %s (the filed results named none; "
+                             "the filed reach assignment's)" % _fmt(now))
+            else:
+                words.append("causal reach %s -> %s (the filed one is not among this "
+                             "pellet's reaches now)" % (_fmt(want), _fmt(now)))
+        # -- the reaches ---------------------------------------------------
+        fresh_w = sorted(w for w in (_window(r) for r in measured) if w)
+        if fresh_w != a["reaches"]:
+            gone = sorted(set(a["reaches"]) - set(fresh_w))
+            new = sorted(set(fresh_w) - set(a["reaches"]))
+            words.append("reaches: %d filed not here now%s, %d new%s" % (
+                len(gone), (" (first: %s)" % _fmt(gone[0])) if gone else "",
+                len(new), (" (first: %s)" % _fmt(new[0])) if new else ""))
+        if words:
+            notes.append("pellet %d: %s" % (k, "; ".join(words)))
+    return notes
+
+
 def hold_message(problems: List[str], owed: Iterable[str] = ()) -> str:
     """The one line a person reads for a held kinematics-only re-run."""
     owed = sorted(set(owed or ()))
