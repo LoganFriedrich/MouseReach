@@ -101,8 +101,12 @@ def evaluate_gate(
     another pellet while the current cuts still number it otherwise
     (mislabel_on_current_cuts). Otherwise, any triaged element the human has not addressed
     (and that GT did not already determine) -> TRIAGE; so is a pellet whose
-    person's answer a re-cut (a person's or the segmenter's) voided and that nobody has answered on
-    the new cuts (recut_voided_open; run_gate flags it so triage walks it).
+    person's answer stands after a re-cut (frames unchanged) but was kept
+    aside so no reader applies it, and that nobody has answered on the new
+    cuts (recut_voided_open; run_gate flags it so triage walks it). A
+    person's answer a re-cut VOIDED (frames moved) is dropped and asks
+    nothing: that pellet goes to triage only if the re-run algorithms flag it,
+    like any pellet of a new video (owner ruling 2026-11-21).
     Otherwise -> CLEAN.
     """
     st = triage_status(processing_dir, video_id)
@@ -238,12 +242,13 @@ def evaluate_gate(
     # which could disagree with the window about what is answered.)
     unresolved = set(st.unresolved) - gt_segs
     # A pellet a person answered on cuts since redone (by a person or the
-    # segmenter, causal_review_io.cuts_set_at): the re-cut
-    # voided the answer (causal_review_io.index_review_by_segment), and nobody
-    # has answered it on the new cuts. It is asked again in triage. WHY here:
-    # unflagged, it would take the algorithm's call -- the call the person had
-    # overruled -- and be filed with no one asked (run_gate flags it in the
-    # outcomes file so the triage window walks it).
+    # segmenter, causal_review_io.cuts_set_at) whose frames the re-cut did NOT
+    # move, where the answer stands but was kept aside so no reader applies it,
+    # and nobody has answered it on the new cuts. It is asked again in triage.
+    # WHY here: unflagged, it would take the algorithm's call over an answer
+    # that still stands (run_gate flags it in the outcomes file so the triage
+    # window walks it). A pellet whose frames moved is not here: the re-cut
+    # voided its answer, which is dropped (recut_voided_segments).
     voided = recut_voided_open(video_id, processing_dir) - gt_segs
     unresolved |= voided
     # A triaged segment too short to be a pellet presentation cannot be answered
@@ -307,8 +312,8 @@ def mislabel_on_current_cuts(video_id: str, processing_dir: Path) -> Optional[st
             % ", ".join(str(k) for k in sorted(wrong)))
 
 
-# The flag a pellet gets in the outcomes file when a re-cut voided a person's
-# answer on it. A code word, so the triage window shows only what is open on
+# The flag a pellet gets in the outcomes file when a person's answer on it
+# stands after a re-cut but cannot be applied (recut_voided_open). A code word, so the triage window shows only what is open on
 # the pellet (plain_flag_reason gives no label for it): a reviewer is never
 # told a video was re-cut or answered before (docs/REVIEW_TOOLS.md, "Nothing
 # else").
@@ -316,12 +321,14 @@ RECUT_FLAG_REASON = "answered_before_recut"
 
 
 def recut_voided_open(video_id: str, processing_dir: Path) -> set:
-    """Pellets whose person's answer a re-cut voided and that nobody has
-    answered on the new cuts (causal_review_io.recut_voided_segments), read
+    """Pellets whose person's answer stands after a re-cut (frames unchanged)
+    but cannot be applied, and that nobody has answered on the new cuts
+    (causal_review_io.recut_voided_segments; an answer a re-cut voided is
+    dropped and is never named here), read
     from EVERY copy of the review merged (effective_review over review_dirs:
     this folder, the queue bundles, the filed folder and the durable copy) --
-    the reading triage_status and the window use. WHY every copy: an answer
-    only the durable copy held, voided by the re-cut, would otherwise take the
+    the reading triage_status and the window use. WHY every copy: such an
+    answer only the durable copy held would otherwise take the
     algorithm's call with nobody asked; and a new answer only another copy
     holds must count as answered. Empty when there are none or the files
     cannot be read (logged)."""
@@ -374,8 +381,8 @@ def flag_recut_voided(video_id: str, processing_dir: Path, segments=None) -> lis
 def route_recut_voided_to_triage(video_id: str, processing_dir: Path, segments,
                                  db=None, mp4_path: Optional[Path] = None) -> Path:
     """Send a video to TRIAGE because the results step found pellets whose
-    person's answer a re-cut voided and that nobody has answered on the new
-    cuts (feature_extractor.RecutVoidedAnswers names them): each is flagged
+    person's answer stands after a re-cut but cannot be applied, and that
+    nobody has answered on the new cuts (feature_extractor.RecutVoidedAnswers names them): each is flagged
     first (flag_recut_voided), then the bundle is routed exactly as run_gate
     routes a triage decision. Returns the folder the bundle went to (the
     deep-review bundle when triage was refused because the video is there).
@@ -1369,13 +1376,14 @@ def run_gate(
         # the pellet outcomes and causal reaches (resume_point says where each
         # resumes).
         step = "assignment" if _assignment_failure(video_id, processing_dir) else "outcome"
-        # Pellets whose answer a re-cut voided are flagged first: the triage
-        # window walks only flagged pellets (evaluate_gate says why they are
-        # asked again).
+        # Pellets with a standing answer that cannot be applied are flagged
+        # first: the triage window walks only flagged pellets (evaluate_gate
+        # says why they are asked again).
         flagged = flag_recut_voided(video_id, processing_dir)
         if flagged:
             logger.info(f"Gate: {video_id} segment(s) {flagged} answered before the cuts "
-                        f"were redone -- asked again in triage")
+                        f"were redone, frames unchanged, answer kept aside -- asked "
+                        f"again in triage")
         bundle = route_to_queue(video_id, processing_dir, Paths.TRIAGE_REVIEW, reason,
                                 db=db, db_state="triage", extra_sources=extra,
                                 held_at_step=step)

@@ -250,10 +250,12 @@ GROUND TRUTH DOES NOT COUNT HERE: a ground-truth file with every boundary
 determined does not release a video or stand in for this step. Set or confirm
 the cuts here even when the video has ground truth.
 
-FINISHING: saving releases a video that was sent here for its cuts. Any
-pellet a person answered on the old cuts whose frames moved is asked again
-in triage after the re-run (the status line says how many): a new cut voids
-the answers given on the old ones. A video
+FINISHING: saving releases a video that was sent here for its cuts. Reach
+detection, outcomes and reach assignment then run again on the new cuts. An
+answer a person gave on the old cuts stands on a pellet whose frames did not
+move; on a pellet whose frames moved it is dropped, and that pellet takes the
+re-run algorithms' call -- it goes to triage only if they flag it, like any
+pellet of a new video. A video
 sent for another reason (a flagged session, a quality hold) is released once
 its cuts are saved: by the "Release finished videos" button on the Review
 Queues tab if every pellet is already answered, otherwise by answering its

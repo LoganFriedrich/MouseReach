@@ -41,9 +41,9 @@ causal_review_io.cuts_set_at -- the segments file's corrected_at for a
 person's cuts, segmenter_recut_at for the segmenter's -- and the cuts that
 re-cut replaced): an answer given before then counts
 only on an unchanged pellet (causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
-cuts) treats those pellets as unanswered, and the review gate sends the
-video to triage with each one flagged (review_gate.recut_voided_open): they
-are asked again on the new cuts, never left to the algorithm's call. The
+cuts) treats those pellets as unanswered: the voided answer is dropped and
+the pellet takes the re-run algorithms' call, sent to triage only if they
+flag it (owner ruling 2026-11-21; causal_review_io.recut_voided_segments). The
 same holds for a triage return whose algorithm cuts are out of date or
 unreadable (current_start moves its start back to segmentation, so the
 segmenter cuts again): the segmenter records in its new file when its cuts

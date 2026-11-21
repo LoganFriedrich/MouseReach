@@ -455,14 +455,19 @@ class KinematicsProblem(Exception):
 
 
 class RecutVoidedAnswers(KinematicsProblem):
-    """Raised by FeatureExtractor.extract when a person's re-cut voided their
-    earlier answer on one or more pellets and nobody has answered those pellets
-    on the new cuts (causal_review_io.recut_voided_segments).
-    ``segments`` lists the pellets.
+    """Raised by FeatureExtractor.extract when a person's earlier answer on one
+    or more pellets stands under the re-cut rule (the pellet's frames did not
+    move) but no reader applies it -- it was kept aside (``unmatched_answers``)
+    -- and nobody has answered those pellets on the new cuts
+    (causal_review_io.recut_voided_segments). ``segments`` lists the pellets.
 
-    WHY a refusal and not the algorithm's call: the person had overruled that
-    call; filing it unasked would put it back in their place with only a log
-    line to show for it. The watcher's review gate normally sends such a
+    NOT raised for an answer a re-cut voided because its pellet's frames
+    moved: such an answer is dropped and the pellet takes the re-run
+    algorithms' call (owner ruling 2026-11-21).
+
+    WHY a refusal and not the algorithm's call: the person's answer still
+    stands on that footage; filing the algorithm's call unasked would put it
+    back in their place with only a log line to show for it. The watcher's review gate normally sends such a
     video to triage before kinematics; this is the second, independent check
     at the step that writes the numbers. The watcher answers it by routing
     the video to triage with those pellets flagged
@@ -472,9 +477,9 @@ class RecutVoidedAnswers(KinematicsProblem):
     def __init__(self, segments):
         self.segments = sorted(int(s) for s in segments)
         super().__init__([
-            "segment(s) %s: a person's answer was given before the cuts were redone "
-            "by a person, so it no longer stands, and nobody has answered on the new "
-            "cuts -- ask again in triage" % ", ".join(str(s) for s in self.segments)])
+            "segment(s) %s: a person's answer given before the cuts were redone "
+            "still stands on frames the re-cut did not move, but it was kept aside "
+            "and cannot be applied -- ask again in triage" % ", ".join(str(s) for s in self.segments)])
 
 
 class FeatureExtractor:
@@ -728,7 +733,8 @@ class FeatureExtractor:
                 f"the person's answers (review and ground truth) could not be applied: {_e}")
         if self.problems:
             raise KinematicsProblem(self.problems)
-        # A re-cut voided a person's answer on these pellets and nobody has
+        # A person's answer on these pellets stands (frames unchanged by the
+        # re-cut) but was kept aside, so it cannot be applied, and nobody has
         # answered them on the new cuts. A NEW run asks again in triage
         # (RecutVoidedAnswers). A kinematics-only re-run of a FILED video asks
         # nothing (owner rule 2026-11-21): no answer applies there now, so the

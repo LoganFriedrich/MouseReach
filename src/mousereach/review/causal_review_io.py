@@ -488,7 +488,8 @@ def build_segment_record(
     re-cut (a person's or the segmenter's) voids an answer given before it
     unless its pellet's frames are exactly unchanged (owner ruling R2,
     answer_survives_recut): the answer is then kept as a record only and its
-    pellet is asked again, never re-attached to the new cuts by frame span.
+    pellet takes the re-run algorithms' call (asked only if they flag it),
+    never re-attached to the new cuts by frame span.
 
     Optional because reviews written before this field existed do not have it;
     those were backfilled in place from the segmentation each was made against
@@ -1391,7 +1392,7 @@ def segmenter_recut_record(new_cuts, previous_doc, now: str,
     was none) -- so that a segmenter re-cut voids the answers given before it
     exactly as a person's does (cuts_set_at, replaced_cuts, then the one rule,
     answer_survives_recut: an answer on a pellet whose frames did not move
-    stands, any other is asked again).
+    stands, any other is dropped).
 
     - The same cuts as before: not a re-cut. The previous file's own record
       (if it had one) is carried over unchanged, so running the segmenter
@@ -1399,7 +1400,7 @@ def segmenter_recut_record(new_cuts, previous_doc, now: str,
     - Different cuts: ``now`` and the previous cut frames.
     - A previous file that could not be read (``previous_unreadable``), or
       one whose cuts cannot be read: a re-cut with no record of the cuts it
-      replaced -- every earlier answer is void and asked again, as for a
+      replaced -- every earlier answer is void and dropped, as for a
       person's re-cut with no record (RECUT_NO_RECORD).
     - No previous file at all: nothing is recorded (an empty dict). A video
       segmented for the first time has no earlier answers; a re-run that
@@ -1528,10 +1529,12 @@ def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
       the cuts it was given on and on the current cuts -- the person judged
       exactly the footage that pellet is now;
     - if the frames moved at all, even by one frame, it is void: never
-      re-homed by overlap or by number, kept in the file as a record, and its
-      pellet is asked again (recut_voided_segments, the review gate);
+      re-homed by overlap or by number, kept in the file as a record, and
+      DROPPED: its pellet takes the call of the algorithms re-run on the new
+      cuts and is asked again only if they flag it (owner ruling 2026-11-21;
+      recut_voided_segments says why);
     - if the record does not show which cuts it was given on, it is treated
-      as moved: void and asked again (RECUT_NO_RECORD).
+      as moved: void and dropped (RECUT_NO_RECORD).
 
     "The cuts it was given on" is checked two ways, and both must agree: the
     frames the window stamped on the answer (``segment_span``) must be a
@@ -1601,7 +1604,8 @@ def index_review_by_segment(review_doc, current_segments=None,
     applied only when its pellet's frames are exactly the same on the cuts it
     was given on and on the current cuts; otherwise -- moved by even one
     frame, or no record of the cuts it was given on -- it is not applied, the
-    pellet is asked again (recut_voided_segments) and the answer stays in the
+    pellet takes the re-run algorithms' call (asked only if they flag it,
+    recut_voided_segments) and the answer stays in the
     file as a record (restore_review_for_segments keeps it under
     ``unmatched_answers``). Answers that stand are matched as below.
 
@@ -1619,7 +1623,7 @@ def index_review_by_segment(review_doc, current_segments=None,
         human_segmentation: the current segmentation was made by a person
             (``boundary_source == "human"`` in its segments file).
         voided: a list; when given, every record a re-cut voided is appended
-            to it (recut_voided_segments uses them to ask those pellets again).
+            to it (for counting and the notes; a voided answer is dropped).
 
     Returns:
         (mapping, notes) -- mapping is {current segment_num: review record};
@@ -1773,51 +1777,52 @@ def index_review_by_segment(review_doc, current_segments=None,
 
 def recut_voided_segments(review_doc, current_segments=None,
                           human_segmentation: bool = False) -> set:
-    """CURRENT segment numbers whose person's answer a re-cut voided and that
-    nobody has answered since: the pellets that must be ASKED AGAIN.
+    """CURRENT segment numbers holding a person's earlier answer that no
+    reader applies although its pellet's frames did NOT change, and that
+    nobody has answered since: the only pellets a re-cut sends back to be
+    ASKED AGAIN. (The name is kept for its callers; see below for what it
+    no longer covers.)
 
+    A VOIDED ANSWER IS DROPPED, NEVER RE-ASKED (owner ruling 2026-11-21).
     index_review_by_segment voids an answer given before a re-cut (a
-    person's or the segmenter's) set the current cuts unless its pellet's
-    frames are unchanged
-    (answer_survives_recut). Voiding alone only
-    makes the pellet unanswered, and an unanswered pellet the algorithm did not
-    flag takes the algorithm's call -- so a person's answer would silently be
-    replaced by the very call they had overruled. This names those pellets so
-    the review gate sends them to triage (review_gate.evaluate_gate) and a
-    person answers them on the new cuts.
+    person's or the segmenter's) set the current cuts when its pellet's
+    frames moved, or when the record does not show which cuts it was given
+    on (answer_survives_recut). Such an answer is simply dropped: it stays in
+    the file as a record, is applied nowhere, and its pellet takes the call
+    of the algorithms re-run on the new cuts. That pellet goes to triage only
+    when those re-run algorithms flag it, by the same gate rule as any new
+    video. WHY: the person who re-cut judged the new footage of that pellet a
+    different question from the one answered; asking every moved pellet
+    again sent whole videos back to triage that the algorithms had no doubt
+    about. (feb7c62 asked every voided pellet again; this replaces that.)
 
-    Which current pellet a voided answer is about: the one its frames overlap
-    most (ties: each of them); an answer that recorded no frames, the current
-    pellet with its number. Asking one pellet too many costs a person a look;
-    asking one too few files the algorithm's call over a person's answer.
-    Only an ANSWER counts (is_answered): a voided placeholder asks nothing.
-    The answers a save kept aside (``unmatched_answers``) are read too: a save
-    after the re-cut may keep a voided answer there, and it must still be
-    asked. Empty when the current cuts are the segmenter's, or nothing was
-    voided."""
+    What is still asked: an answer a save kept aside (``unmatched_answers``)
+    whose pellet's frames the re-cut did NOT move (RECUT_UNCHANGED). The rule
+    says such an answer carries over, but no reader applies an aside answer,
+    so it is asked rather than silently replaced by the algorithm's call --
+    unchanged from before. Which current pellet it is about: the one its
+    frames overlap most (ties: each of them); an answer that recorded no
+    frames, the current pellet with its number. Only an ANSWER counts
+    (is_answered). Empty when the current cuts are the segmenter's own first
+    cuts, or there is no such answer."""
     if not current_segments:
         return set()
     voided: list = []
     mapping, _ = index_review_by_segment(review_doc, current_segments,
-                                         human_segmentation=human_segmentation,
-                                         voided=voided)
+                                         human_segmentation=human_segmentation)
     aside = [r for r in (review_doc or {}).get("unmatched_answers") or []
              if isinstance(r, dict)]
     if aside:
-        # What the re-cut voids among them, and also every aside answer given
-        # before the re-cut whose pellet did not move: no reader applies an
-        # aside answer, so one the re-cut rule would keep is not applied
-        # either, and its pellet must be asked rather than left to the
-        # algorithm's call. An aside answer given after the re-cut was never
-        # applied and is not asked about here.
+        # Only the aside answers given before the re-cut whose pellet did not
+        # move: the re-cut rule keeps them, no reader applies them, so their
+        # pellet is asked. Aside answers the re-cut voided (moved, or no
+        # record) are dropped like any voided answer; one given after the
+        # re-cut was never applied and is not asked about here.
         aside_doc = {"segments": aside, "reviewed_at": (review_doc or {}).get("reviewed_at")}
-        index_review_by_segment(aside_doc, current_segments,
-                                human_segmentation=human_segmentation, voided=voided)
         recut = recut_of(current_segments)
         if recut is not None:
             voided.extend(r for r in aside
-                          if recut_verdict(r, aside_doc, recut) == RECUT_UNCHANGED
-                          and not any(r is v for v in voided))
+                          if recut_verdict(r, aside_doc, recut) == RECUT_UNCHANGED)
     if not voided:
         return set()
     answered = {int(sn) for sn, rec in mapping.items() if is_answered(rec)}

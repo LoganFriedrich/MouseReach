@@ -56,8 +56,9 @@ HELP_TEXT = """
 
 <h3>What Saving Does</h3>
 <p>Saving marks the cuts as a person's, exactly as the Segmentation Fixer does:
-re-running segmentation keeps them, and every answer given on the old cuts is
-asked again. The old segments file and everything computed from the old cuts
+re-running segmentation keeps them. An answer given on the old cuts still
+stands on a pellet whose frames did not move; on any other it is dropped, and
+that pellet goes to triage only if the re-run algorithms flag it. The old segments file and everything computed from the old cuts
 (reaches, outcomes, reach assignment, kinematics) are copied into an
 <code>_archived</code> folder and removed -- on every save, even when no boundary
 was moved -- so reach detection and every later step must run again on the new

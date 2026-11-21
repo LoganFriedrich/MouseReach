@@ -487,8 +487,8 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
     try:
         # The filed cuts are what a new segmentation replaces (segmenter_robust.
         # save_segmentation records a re-cut against them), so answers on
-        # pellets whose frames move are asked again, never fitted onto the new
-        # cuts. The work folder holds no algorithm cuts of its own.
+        # pellets whose frames move are dropped, never fitted onto the new
+        # cuts (asked again only if the re-run algorithms flag the pellet). The work folder holds no algorithm cuts of its own.
         _filed_cuts = (Path(video_dir) / f"{video_id}_segments.json") if video_dir is not None else None
         if _filed_cuts is not None and not _filed_cuts.is_file():
             _filed_cuts = None
@@ -641,8 +641,9 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
         return summary
     if decision != DECISION_CLEAN:
         if decision == DECISION_TRIAGE:
-            # Pellets whose answer a person's re-cut voided are flagged so the
-            # triage window walks them (review_gate.flag_recut_voided says why).
+            # Pellets holding an unchanged-pellet answer no reader applies are
+            # flagged so the triage window walks them (review_gate.flag_recut_voided
+            # says why; a voided answer is dropped and flags nothing).
             from mousereach.watcher.review_gate import flag_recut_voided
             summary["flagged_recut_voided"] = flag_recut_voided(video_id, work_dir)
         summary["held"] = _stage_review_bundle(

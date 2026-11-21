@@ -318,8 +318,9 @@ NO_KINEMATICS_REASON = "not filed: no kinematics"
 
 class RoutedToReview(str):
     """What _make_features returns when the kinematics step sent the video to
-    a review queue instead of writing features (a person's answers that a
-    re-cut voided must be asked again: feature_extractor.RecutVoidedAnswers).
+    a review queue instead of writing features (a person's earlier answer on
+    a pellet a re-cut did not move that no reader applies must be asked:
+    feature_extractor.RecutVoidedAnswers).
     A reason like any other, so a caller that only checks "no features" still
     never files the video; the two pipeline callers check for it and hold the
     video in the queue instead of marking it failed."""
@@ -801,8 +802,9 @@ class BaseOrchestrator:
             # files from the Analyzed tree (the tool stands alone).
             return None
         except RecutVoidedAnswers as voided:
-            # A person's answers that a re-cut voided, on pellets nobody has
-            # answered on the new cuts: asked again in triage, exactly as the
+            # A person's answers that stand after a re-cut but cannot be
+            # applied (kept aside), on pellets nobody has answered on the new
+            # cuts: asked again in triage, exactly as the
             # review gate routes them -- never filed with the algorithm's call,
             # never held as failed to be retried into the same refusal.
             self.db.log_step(video_id, 'feature_extraction', 'failed', message=str(voided),
@@ -9048,8 +9050,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # exactly as before holds were restored. WHY: such a video carries
             # a person's answers, and _restored_hold_start re-cuts on any
             # segmenter version the running code does not make -- a re-cut,
-            # which voids the person's answers on every pellet whose frames
-            # move (asked again in triage). _resume_point keeps the cuts while
+            # which voids (drops) the person's answers on every pellet whose
+            # frames move. _resume_point keeps the cuts while
             # they pass the declared-version test.
             _restored_hold = _held and bool(
                 (self._score_waits.get(video_id) or {}).get("restored"))

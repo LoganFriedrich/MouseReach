@@ -111,7 +111,7 @@ def _ground_truth_cuts(output_path: Path, video_id: str) -> Optional[Dict]:
     determined is a person's segmentation, so it is applied exactly as the
     segmentation fixer's cuts are (review/hand_cuts.apply_ground_truth_cuts:
     marked ``boundary_source: "human"``, outputs of the old cuts archived and
-    removed, answers on pellets whose frames moved asked again). Reach
+    removed, answers on pellets whose frames moved dropped). Reach
     detection, outcomes, reach assignment and kinematics then run on them.
     A failure to apply them is logged and the step goes on with the cuts it
     has -- the same result as before this rule, never a lost video."""
