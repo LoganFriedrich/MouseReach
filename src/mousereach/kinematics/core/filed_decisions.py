@@ -27,15 +27,20 @@ they were filed (the extractor then looked for ground truth only in the
 processing tree), and a review answer that newer review matching places on a
 different pellet than the filing run did.
 
-THE RULE: in a kinematics-only re-run of a filed video, the reaches (their
-frames), the reaches left out of the measurements, each pellet's outcome and
-its causal reach must come out exactly as filed -- except where an answer the
-filed kinematics have NOT applied decides them (reason 2 above). Anything else
-is not written: the extractor raises KinematicsProblem with the changes in
-words, the watcher holds the run, and the filed results stand untouched
-(orchestrator._restore_filed_after_failed_rerun puts the row back to
-'archived' with the reason and lists it for a person). Nothing is re-decided
-silently, and nothing a person decided is dropped silently.
+THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied, including
+to filed videos; 'filed is final' only protects filed results from algorithm
+re-runs"): in a kinematics-only re-run of a filed video, every person's answer
+that applies now decides what it decides -- whether or not the filed results
+had it, and whatever the manifest says -- and every outcome and causal reach
+no person decides stays exactly as filed. Nothing is held and nobody is asked:
+settle_against_filed does it and says, in words, what differs from the filed
+results (the watcher writes that to its processing log).
+
+History: from 2026-11-17 any difference not explained by an answer the version
+scan counted as owed HELD the run (changes_not_owed + hold_message, kept below
+for the record and their tests); earlier on 2026-11-21 every answer was
+counted as owed but an algorithm difference still held it. Both left a
+person's answer unapplied whenever anything else differed.
 
 Pure functions over plain dicts; never touches a file except
 owed_human_layers, which only reads.

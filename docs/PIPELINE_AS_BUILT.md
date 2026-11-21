@@ -7888,3 +7888,42 @@ looked for beside the filed video), `watcher/orchestrator.py`
 `tests/test_human_answers_always_applied.py`,
 `tests/test_kinematics_only_rerun_keeps_filed_decisions.py`,
 `tests/test_version_scan_start_stage.py`.
+## Update 2026-11-21: a person's answer is always applied to a filed video
+
+**Superseded the same day** by "Update 2026-11-21: a person's answer is always applied" (above): a change only an algorithm would make no longer stops the re-run either -- the filed decision is simply kept -- so no kinematics-only re-run of a filed video is ever given up over a difference. Kept as the record of the intermediate step.
+
+**What changed.** When the watcher recalculates the kinematics of a FILED video
+(a kinematics-only re-run, e.g. after a new kinematics extractor version), it
+now applies every answer a person gave -- the triage or deep-review answers and
+the ground truth -- even when the filed results were made without them. Only a
+change that no person's answer explains still stops the re-run:
+
+- a change a person's answer makes (an outcome, a causal reach, a reach's
+  frames, a reach added or left out by ground truth) is written, and the
+  re-filed results carry it;
+- a change only an algorithm makes (outcome detection, reach assignment), or a
+  filed answer that can no longer be found, is NOT written: the re-run is given
+  up, the filed results stay exactly as they were, and the video is listed with
+  the reason (as before).
+
+Precedence between answers is unchanged: ground truth, then the deep-review
+answer, then the triage answer, then the algorithm. A ground-truth outcome
+marked "uncertain" is not an answer.
+
+**Why.** Owner rule, 2026-11-21: "a human's answer is ALWAYS applied, including
+to filed videos. 'Filed is final' only protects filed results from algorithm
+re-runs." Before this, a person's answer counted only when it was NEWER than
+the filed run (a review saved, or ground truth changed, after filing). Ground
+truth that the filed run had recorded as applied, but whose reach frames the
+filing run had not used (the rule that layers ground-truth reaches was improved
+later), therefore held the recalculation for good, and the person's answer never
+reached the filed results.
+
+**Where.** `watcher/orchestrator.py` `_filed_decisions_to_keep` (both kinds of
+answer are always passed to the extractor as owed); the check itself is
+`kinematics/core/filed_decisions.py` (`changes_not_owed`), unchanged.
+
+Tests: `tests/test_kinematics_only_rerun_keeps_filed_decisions.py`
+(`test_a_filed_kinematics_only_rerun_always_applies_a_persons_answer`,
+`test_the_watcher_applies_ground_truth_the_filed_manifest_already_records`;
+the watcher hold test now uses an algorithm change).

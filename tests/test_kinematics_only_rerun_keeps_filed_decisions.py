@@ -480,3 +480,38 @@ def test_complete_ground_truth_that_leaves_a_reach_out_is_applied(dirs):
     feats = _rerun(proc, filed, pose, owed={"ground_truth"})
     assert _reach_frames(feats) == [(120, 135)]
     assert feats.to_dict()["segments"][0]["outcome"] == "untouched"
+
+
+def test_a_filed_kinematics_only_rerun_passes_no_owed_kinds(rig):
+    """Since 2026-11-21 every person's answer is applied on a filed video's
+    kinematics-only re-run, so the watcher no longer passes which kinds are
+    owed (filed_decisions.settle_against_filed)."""
+    seen = rig.run("kinematics")
+    assert len(seen) == 1
+    assert "owed" not in seen[0]
+
+
+def test_the_watcher_applies_ground_truth_the_filed_manifest_already_records(
+        dirs, tmp_path, monkeypatch):
+    """Owner rule 2026-11-21: ground truth a person made is applied to a filed
+    video on a kinematics-only re-run, even when the version scan would not
+    call it owed (here the filed manifest's record is not consulted at all:
+    the watcher counts every person's answer as owed)."""
+    import mousereach.archive.core as arch
+    from mousereach.watcher.db import WatcherDB
+    from mousereach.watcher.orchestrator import ProcessingOrchestrator
+    proc, filed, pose = dirs
+    monkeypatch.setattr(arch, "get_archive_destination", lambda vid: filed)
+    (proc / f"{VID}_processing_manifest.json").write_text("{}", encoding="utf-8")
+    _ground_truth(proc)
+    o = ProcessingOrchestrator.__new__(ProcessingOrchestrator)
+    o.db = WatcherDB(db_path=tmp_path / "w.db")
+    o.db.export_to_central_db = lambda vid: None
+    o.processing_dir = proc
+    o.hostname = "NODE-T"
+    o.db.register_video(video_id=VID, source_path="x")
+    o.db.force_state(VID, "processing", reason="test")
+    why = o._make_features(VID, proc, pose, False, keep_filed_decisions=True)
+    assert why is None
+    seg = json.loads((proc / f"{VID}_features.json").read_text())["segments"][0]
+    assert seg["outcome"] == "untouched"
