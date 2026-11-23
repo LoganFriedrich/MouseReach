@@ -679,9 +679,9 @@ class FeatureExtractor:
             Path(reaches_path).name.replace("_reaches.json", "_segments.json"))
         if _seg_file.is_file():
             try:
-                from mousereach.review.causal_review_io import segmentation_is_human
+                from mousereach.review.causal_review_io import cuts_taken_as_made
                 _seg_doc = json.loads(_seg_file.read_text(encoding="utf-8-sig"))
-                _human_seg = segmentation_is_human(_seg_doc)
+                _human_seg = cuts_taken_as_made(_seg_doc)
             except Exception as _e:
                 # Unreadable cuts: whether a person re-cut the video, and so
                 # which of their answers stand, cannot be told.

@@ -265,7 +265,9 @@ do -- nothing is recorded for that segment, and *Save Segment + Next* stays on i
 - **a reach outside the segment's frames.** As the video is cut, that reach
   cannot have touched this segment's pellet;
 - **any answer on a segment too short to be a pellet presentation** (fewer than
-  5 frames: two cuts almost on top of each other), unless a person made the cuts.
+  5 frames: two cuts almost on top of each other), unless a person made the cuts
+  or confirmed them (`cuts_confirmed` in the segments file; see PIPELINE_AS_BUILT.md,
+  "A person's cuts are never questioned by length").
 
 Two more answers are refused the same way, because they contradict themselves:
 

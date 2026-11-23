@@ -231,6 +231,12 @@ def classify_segments(segments_path: Path, check_gt: bool = True) -> Tuple[str, 
     except Exception as e:
         return "failed", f"Could not read segments file: {e}"
 
+    # Cuts a person made or confirmed are never judged by their spacing or
+    # count (causal_review_io.cuts_taken_as_made; owner, 2026-11-23).
+    from mousereach.review.causal_review_io import cuts_taken_as_made
+    if cuts_taken_as_made(data):
+        return "good", "Cuts made or confirmed by a person"
+
     if "boundaries" not in data:
         return "failed", "Missing boundaries in segments file"
 
@@ -396,6 +402,16 @@ def classify_segments_graduated(segments_path: Path) -> Tuple[str, str, dict]:
             data = json.load(f)
     except Exception as e:
         return "failed", f"Could not read segments file: {e}", {}
+
+    # Cuts a person made or confirmed are never judged by their spacing or
+    # count (causal_review_io.cuts_taken_as_made; owner, 2026-11-23).
+    from mousereach.review.causal_review_io import cuts_taken_as_made
+    if cuts_taken_as_made(data):
+        return "auto_approved", "Cuts made or confirmed by a person", {
+            'n_boundaries': len(data.get('boundaries', [])),
+            'segment_id_certain': True,
+            'reason': 'person_cuts',
+        }
 
     # Extract fields (handle different JSON formats)
     n_boundaries = len(data.get('boundaries', []))

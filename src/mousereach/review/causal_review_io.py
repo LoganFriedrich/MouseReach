@@ -1308,6 +1308,37 @@ def segmentation_is_human(seg_doc) -> bool:
     return (seg_doc or {}).get("boundary_source") == "human"
 
 
+# Written into a segments file when a person CONFIRMS the cuts as they stand
+# ({"by", "at", "note"}): the cuts are right even though they look irregular
+# (e.g. a recording whose tray cadence is uneven). Readers that do not know
+# the key ignore it.
+CUTS_CONFIRMED_KEY = "cuts_confirmed"
+
+
+def cuts_confirmed(seg_doc) -> bool:
+    """True when a person has confirmed these cuts as correct (CUTS_CONFIRMED_KEY)."""
+    rec = (seg_doc or {}).get(CUTS_CONFIRMED_KEY)
+    return isinstance(rec, dict) and bool(rec.get("by"))
+
+
+def cuts_taken_as_made(seg_doc) -> bool:
+    """True when no automated check may question the LENGTH, spacing or count
+    of this video's segments: a person made the cuts (segmentation_is_human)
+    or a person confirmed them (cuts_confirmed).
+
+    WHY (owner, 2026-11-23): a person's cuts on an irregular recording were
+    re-asked about segment length again and again. A person's word on the
+    cuts is final; the checks that judge cuts by length or count are there to
+    catch the segmenter's mistakes, not a person's decisions. Used wherever a
+    reader derives ``human_segmentation`` for the review matching (which only
+    decides whether a too-short segment is taken as made), and by the
+    segment-length/count checks (triage_status, pipeline.triage,
+    segmentation.core.triage). Deliberately NOT used for the re-cut records
+    (cuts_set_at, replaced_cuts): those read the fixer's own fields, which
+    only boundary_source "human" guarantees."""
+    return segmentation_is_human(seg_doc) or cuts_confirmed(seg_doc)
+
+
 # Carried on each current segment (segments_from_segmentation, and every
 # caller that builds its own list of current segments, through recut_keys):
 # when the current cuts were set by a re-cut, and the cut frames that re-cut
@@ -2489,7 +2520,7 @@ def effective_review(video_stem: str, dirs=(), seg_doc=None, current_segments=No
     ``strict`` is passed to review_copies: True raises when a copy exists but
     cannot be read, for callers that would act on a pellet looking open."""
     current = current_segments or (segments_from_segmentation(seg_doc) if seg_doc else None)
-    human = (segmentation_is_human(seg_doc) if human_segmentation is None
+    human = (cuts_taken_as_made(seg_doc) if human_segmentation is None
              else bool(human_segmentation))
     doc, _ = merge_review_copies(review_copies(video_stem, dirs, unreadable=unreadable,
                                               strict=strict),

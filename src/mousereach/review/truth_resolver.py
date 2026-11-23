@@ -960,11 +960,11 @@ def resolve_truth_layers(
     # cuts, so no re-cut to honour.
     from mousereach.review.causal_review_io import (current_pellets,
                                                     recut_voided_segments,
-                                                    segmentation_is_human)
+                                                    segmentation_is_human, cuts_taken_as_made)
     _cur_segs = current_pellets(segments_doc, reaches_data) if segments_doc else []
     _recut_cuts_unreadable = False
     if _cur_segs:
-        human_segmentation = human_segmentation or segmentation_is_human(segments_doc)
+        human_segmentation = human_segmentation or cuts_taken_as_made(segments_doc)
     else:
         _recut_cuts_unreadable = bool(segments_doc) and segmentation_is_human(segments_doc)
         _cur_segs = [_reach_file_pellet(s)

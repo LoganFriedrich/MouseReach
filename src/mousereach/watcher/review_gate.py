@@ -334,7 +334,7 @@ def recut_voided_open(video_id: str, processing_dir: Path) -> set:
     cannot be read (logged)."""
     try:
         from ..review.causal_review_io import (effective_review, recut_voided_segments,
-                                               review_dirs, segmentation_is_human,
+                                               review_dirs, cuts_taken_as_made,
                                                segments_from_segmentation)
         seg_path = Path(processing_dir) / f"{video_id}_segments.json"
         if not seg_path.is_file():
@@ -343,7 +343,7 @@ def recut_voided_open(video_id: str, processing_dir: Path) -> set:
         current = segments_from_segmentation(seg_doc)
         if not current:
             return set()
-        human = segmentation_is_human(seg_doc)
+        human = cuts_taken_as_made(seg_doc)
         review = effective_review(video_id, review_dirs(video_id, processing_dir),
                                   current_segments=current, human_segmentation=human)
         if not review:

@@ -310,14 +310,14 @@ def reopen_answered(video_id: str, folder: Path, segment_nums: Iterable[int],
     from mousereach.config import Paths
     from mousereach.review.causal_review_io import (durable_review_path, effective_review,
                                                     index_review_by_segment, is_answered,
-                                                    review_dirs, segmentation_is_human,
+                                                    review_dirs, cuts_taken_as_made,
                                                     segments_from_segmentation)
     wanted = {int(s) for s in segment_nums}
     questions = {int(k): str(v) for k, v in (questions or {}).items()}
     sp = Path(folder) / f"{video_id}_segments.json"
     seg_doc = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else None
     current = segments_from_segmentation(seg_doc) if seg_doc else None
-    human = bool(seg_doc) and segmentation_is_human(seg_doc)
+    human = bool(seg_doc) and cuts_taken_as_made(seg_doc)
     # strict, as in answered_segments_of: an unreadable copy raises, so a
     # pellet answered only there is never taken for open (or left un-reopened).
     review = effective_review(video_id, review_dirs(video_id, folder), seg_doc,

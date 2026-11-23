@@ -397,11 +397,17 @@ def check_structural(
     # Segment count. Not checked for Easy/Flat: they are not segmented, their
     # segments file is one whole-video span by design (segmentation batch
     # write_whole_video_span), so any count here would be a false alarm.
+    # Nor for cuts a person made or confirmed (causal_review_io.
+    # cuts_taken_as_made): the count check catches the segmenter's mistakes,
+    # and a person's word on the cuts is final (owner, 2026-11-23).
     from mousereach.config import is_outcome_free_tray
     if seg_path.exists() and not is_outcome_free_tray(video_id):
         try:
             with open(seg_path) as f:
                 data = json.load(f)
+            from mousereach.review.causal_review_io import cuts_taken_as_made
+            if cuts_taken_as_made(data):
+                return flags
             boundaries = data.get('boundaries', [])
             n_boundaries = len(boundaries)
             if n_boundaries < EXPECTED_SEGMENTS_MIN or n_boundaries > EXPECTED_SEGMENTS_MAX + 1:

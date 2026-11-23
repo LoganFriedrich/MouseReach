@@ -49,9 +49,17 @@ def segmentation_failed(seg_doc: Optional[Dict[str, Any]]) -> bool:
 
     Mirrors the review tool's ``_segmentation_failed``: overall_confidence <= 0
     (uniform-fallback) or a "reference quality" anomaly. A missing/empty doc is
-    treated as failed (there is nothing to trust)."""
+    treated as failed (there is nothing to trust).
+
+    Cuts a person made or confirmed (causal_review_io.cuts_taken_as_made) are
+    never failed: the confidence and reference-quality notes are the
+    segmenter's account of ITS cuts, and a person's word on the cuts replaces
+    it (owner, 2026-11-23)."""
     if not seg_doc:
         return True
+    from .causal_review_io import cuts_taken_as_made
+    if cuts_taken_as_made(seg_doc):
+        return False
     c = seg_doc.get("overall_confidence")
     if c is not None and c <= 0.0:
         return True
@@ -159,12 +167,12 @@ def resolved_segments(review_doc: Optional[Dict[str, Any]],
     if not review_doc:
         return set()
     if seg_doc is not None:
-        from .causal_review_io import (answered_segments, segmentation_is_human,
+        from .causal_review_io import (answered_segments, cuts_taken_as_made,
                                        segments_from_segmentation)
         current = segments_from_segmentation(seg_doc)
         if current:
             return answered_segments(review_doc, current,
-                                     human_segmentation=segmentation_is_human(seg_doc))
+                                     human_segmentation=cuts_taken_as_made(seg_doc))
     from .causal_review_io import is_answered
     out: Set[int] = set()
     for rec in review_doc.get("segments", []):
@@ -221,7 +229,7 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
         from .causal_review_io import (_seg_span, _too_short, find_gt,
                                        gt_outcome_is_answer,
                                        index_gt_outcomes_by_segment,
-                                       segmentation_is_human, segments_from_segmentation)
+                                       cuts_taken_as_made, segments_from_segmentation)
         p = find_gt(video_id, extra_dirs=tuple(d for d in extra_dirs if d))
         if not p:
             return False, set()
@@ -234,7 +242,7 @@ def gt_resolved_segments(video_id: str, extra_dirs=(), current_segments=None,
             if seg_doc:
                 current_segments = segments_from_segmentation(seg_doc) or None
                 if human_segmentation is None:
-                    human_segmentation = segmentation_is_human(seg_doc)
+                    human_segmentation = cuts_taken_as_made(seg_doc)
                 break
     rr = (gt.get("reaches") or {}).get("exhaustive")
     oo = (gt.get("outcomes") or {}).get("exhaustive")
@@ -353,9 +361,10 @@ class TriageStatus:
 
 def _too_short_segments(seg_doc) -> Dict[int, Tuple[int, int]]:
     """Segments too short to be a pellet presentation, on cuts no person made
-    (the same rule the review matching uses)."""
-    from .causal_review_io import _too_short, segmentation_is_human, segments_from_segmentation
-    human = segmentation_is_human(seg_doc)
+    or confirmed (the same rule the review matching uses; causal_review_io.
+    cuts_taken_as_made)."""
+    from .causal_review_io import _too_short, cuts_taken_as_made, segments_from_segmentation
+    human = cuts_taken_as_made(seg_doc)
     return {int(s["segment_num"]): (int(s["start_frame"]), int(s["end_frame"]))
             for s in segments_from_segmentation(seg_doc)
             if _too_short((int(s["start_frame"]), int(s["end_frame"])), human)}
@@ -458,11 +467,11 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # only where that pellet's frames are unchanged (answer_survives_recut).
     # A pellet whose ground-truth answer a re-cut voided is not resolved by
     # it: it is asked only if the algorithms flag it (triaged), like any pellet.
-    from .causal_review_io import segments_from_segmentation
+    from .causal_review_io import cuts_taken_as_made, segments_from_segmentation
     gt_full, gt_segs = gt_resolved_segments(
         video_id, extra_dirs=(directory,),
         current_segments=segments_from_segmentation(seg) or None,
-        human_segmentation=(seg or {}).get("boundary_source") == "human")
+        human_segmentation=cuts_taken_as_made(seg))
     res = tri if gt_full else (res | gt_segs)
 
     return TriageStatus(

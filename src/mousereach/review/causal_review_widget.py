@@ -2835,8 +2835,10 @@ The notes box travels with the video.
 
     def _segmentation_is_human(self) -> bool:
         """The current cuts were made by a person (the matching takes a person's
-        cuts as made, however short)."""
-        return segmentation_is_human(getattr(self, "_segments_data", None))
+        cuts as made, however short). A person's confirmation of the cuts
+        counts the same (causal_review_io.cuts_taken_as_made)."""
+        from .causal_review_io import cuts_taken_as_made
+        return cuts_taken_as_made(getattr(self, "_segments_data", None))
 
     def _refusal_text(self) -> str:
         """The full message for an answer that was not recorded."""
