@@ -610,7 +610,7 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
     human statement about the cuts wins, so their cuts settle it (otherwise a
     video re-cut in manual segmentation could be sent back there forever)."""
     from mousereach.review.causal_review_io import (index_review_by_segment,
-                                                    segmentation_is_human,
+                                                    cuts_taken_as_made,
                                                     segments_from_segmentation)
     records = [r for r in (review_doc or {}).get("segments") or []
                if isinstance(r, dict) and r.get("segmentation_wrong")
@@ -645,7 +645,7 @@ def unresolved_mislabels(review_doc, seg_doc=None) -> Dict[int, Optional[int]]:
             continue
         mapping, _ = index_review_by_segment(
             {"segments": [rec]}, current or None,
-            human_segmentation=segmentation_is_human(seg_doc))
+            human_segmentation=cuts_taken_as_made(seg_doc))
         now = next(iter(mapping), None)
         if now is None or int(rec["true_segment_num"]) != int(now):
             out[int(rec.get("segment_num") or 0)] = now

@@ -7971,3 +7971,37 @@ Tests: `tests/test_recut_one_span_rule.py`, `tests/test_recut_voided_answers_are
 a moved pellet's answer is dropped and the gate passes the video when the algorithm flags nothing;
 the same pellet goes to triage, for the algorithm's reason, when it does; an unmoved answer kept
 aside is still asked, by the gate, the results step and the watcher's route.
+
+## Update 2026-11-23: A person's cuts are never questioned by length
+
+WHAT CHANGED. No automated check judges the length, spacing or count of a video's segments when a
+person made the cuts (`boundary_source: "human"`) or confirmed them (a `cuts_confirmed` record in
+`<video>_segments.json`: `{"by": <who>, "at": <when>, "note": <why>}`). One rule decides it,
+`causal_review_io.cuts_taken_as_made`. It is used by:
+
+- the "segment too short to be a pellet presentation" rule (`triage_status._too_short_segments`,
+  so the review gate and the return scan never send such a video to re-segmentation for it, and the
+  review matching never drops an answer for it -- every reader that derives `human_segmentation`);
+- `triage_status.segmentation_failed` (the segmenter's low-confidence / reference-quality notes
+  no longer mark a person's cuts as failed);
+- the quality check's boundary-count test (`pipeline/triage.check_structural`);
+- the old segmentation triage classifiers (`segmentation/core/triage.classify_segments` and
+  `classify_segments_graduated`): a person's cuts are "good" / "auto_approved".
+
+WHY (owner, 2026-11-23). A recording with an irregular tray cadence has segments of uneven length
+that are nevertheless correct. Its hand-drawn cuts kept being questioned by checks written to catch
+the SEGMENTER's mistakes (a missed or extra tray advance). A person's word on the cuts is final;
+asking again wastes the reviewer's time and can never change the answer.
+
+NOT changed: the re-cut records (`cuts_set_at`, `replaced_cuts`) still read only
+`boundary_source: "human"`, because they read fields only the segment fixer writes. Nothing writes
+`cuts_confirmed` automatically: it is added to a segments file by hand (written to a temporary
+file and swapped in), when the owner confirms a video's cuts. Readers that do not know the key
+ignore it.
+
+How to confirm a video's cuts: add the `cuts_confirmed` record to every copy of its segments file
+(the filed one and any queue copy), and record the reason as a Flag Session note
+(`causal_review_io.flag_session`) so it reaches the features files and the database export as the
+session's marker. The flag holds nothing.
+
+Tests: `tests/test_confirmed_cuts_not_questioned_by_length.py`.
