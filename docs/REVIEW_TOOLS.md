@@ -693,7 +693,11 @@ How the tool tells (`causal_review_io.answer_survives_recut`, the one place this
 
 - when: the fixer writes the time of the save into the segments file (`corrected_at`); each
   answer carries the time it was given (`reviewed_at`). An answer given at or after the save
-  always counts. An answer whose time cannot be read counts as given before.
+  always counts. An answer whose time cannot be read counts as given before. An answer saved
+  before answers carried their own time takes the time of the review file that holds it (its
+  `reviewed_at` at the top of the file). Until 2026-11-24 the step that merges a video's review
+  copies lost that file time, so such answers counted as given before any re-cut and were dropped
+  even when they were given after it.
 - which cuts it was given on: the fixer also writes the cuts it had loaded -- the cuts the re-cut
   replaced -- into the segments file (`algo_boundaries`); each answer carries the frames the
   window showed for its pellet (`segment_span`). An earlier answer is kept only when those frames

@@ -2184,8 +2184,17 @@ def newest_statements(docs, current_segments=None, human_segmentation: bool = Fa
     for rank, doc in enumerate(d for d in (docs or []) if isinstance(d, dict)):
         stated = [r for r in doc.get("segments") or []
                   if isinstance(r, dict) and _statement(r, doc) is not None]
+        # The copy's own fields go with its statements. WHY: a record saved
+        # before records carried their own time has only the file's
+        # "reviewed_at", and the re-cut rule reads it from here
+        # (recut_verdict). Matched as {"segments": stated} alone, every such
+        # answer had no time, counted as given before the latest re-cut, and
+        # was voided -- answers given AFTER the re-cut were lost.
+        stated_doc = {k: v for k, v in doc.items()
+                      if k not in ("segments", UNMATCHED_ANSWERS_KEY)}
+        stated_doc["segments"] = stated
         mapping, n = index_review_by_segment(
-            {"segments": stated}, current_segments, human_segmentation=human_segmentation)
+            stated_doc, current_segments, human_segmentation=human_segmentation)
         notes.extend(n)
         used = set()
         for sn, rec in mapping.items():
