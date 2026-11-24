@@ -39,6 +39,24 @@ def test_a_session_may_be_written_the_labs_way_or_the_pipelines():
     assert ic.normalise_session("not a session") is None
 
 
+def test_another_projects_pipeline_id_passes_through_unchanged():
+    # Regression: a pipeline-form id of any other project was handed to the ASPA
+    # encoder, which raised and stopped every reader of the list.
+    assert ic.normalise_session("20250814_PROJA0301_P1") == "20250814_PROJA0301_P1"
+    assert ic.normalise_session("20250814_proja0301_p2") == "20250814_PROJA0301_P2"
+    # Neither the ASPA lab shape nor a pipeline id: not a session, no exception.
+    assert ic.normalise_session("20250814_AB12_P1") is None
+
+
+def test_a_mixed_list_is_read_whole_and_bad_lines_are_named(tmp_path):
+    f = _list(tmp_path, "20250814_PROJA0301_P1", "20220218_D03_P2",
+              "20250814_AB12_P1", "20250815_PROJA0316_P2")
+    sessions, bad = ic.read_sessions_file(f)
+    assert sessions == ["20250814_PROJA0301_P1", "20220218_ASPA0403_P2",
+                        "20250815_PROJA0316_P2"]
+    assert bad == ["20250814_AB12_P1"]
+
+
 def test_the_list_keeps_its_order_once_and_names_bad_lines(tmp_path):
     f = _list(tmp_path, "# list A", "20220218_D03_P2", "", "20220217_D10_P1",
               "20220218_ASPA0403_P2", "garbage line")
