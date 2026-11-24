@@ -2326,7 +2326,7 @@ def scan_review_queues(db, processing_dir: Path,
         # the pellet would stay open and the bundle wait in triage for an
         # answer the window refuses: the cuts are in doubt, and the bundle
         # goes to re-segmentation with the reason recorded.
-        if st.reach_outside:
+        if getattr(st, "reach_outside", None):
             if not _claim_return(stem):
                 continue
             try:
