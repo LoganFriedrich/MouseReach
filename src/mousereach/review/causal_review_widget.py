@@ -65,6 +65,7 @@ from .causal_review_io import (
     segmentation_is_human,
     answer_problem,
     answer_sends_to_reseg,
+    algo_files_on_other_cuts,
     plain_review_note,
     update_corpus_index,
     flag_session,
@@ -1691,16 +1692,32 @@ The notes box travels with the video.
         # Build segment entries
         n_segments = len(boundaries) - 1
 
+        # The algorithm's files may describe OTHER cuts than the segments file
+        # (a person re-cut the video in the re-segmentation queue and the
+        # pipeline has not run on the new cuts yet): their per-segment results
+        # are then another pellet's (causal_review_io.algo_files_on_other_cuts
+        # says why). None of them is shown: every pellet is open (no algorithm
+        # call to agree with), and each pellet's reaches are the detected
+        # reaches inside its own frames.
+        other_cuts = algo_files_on_other_cuts(self._segments_data, self._reaches_data)
+        self._algo_on_other_cuts = other_cuts
+        if other_cuts:
+            logger.warning("%s: %s; the algorithm's calls are not shown, every pellet "
+                           "is asked", self._video_stem, other_cuts)
+            show_warning(f"{other_cuts}. The algorithm's calls are not shown: every "
+                         "pellet is asked, and each pellet's reaches are the detected "
+                         "reaches inside its frames.")
+
         # Index outcomes by segment_num
         outcomes_by_seg: Dict[int, Dict] = {}
-        for seg in self._outcomes_data.get("segments", []):
+        for seg in ([] if other_cuts else self._outcomes_data.get("segments", [])):
             sn = seg.get("segment_num")
             if sn is not None:
                 outcomes_by_seg[int(sn)] = seg
 
         # Index reaches by segment_num from assignments
         assignments_by_seg: Dict[int, List[Dict]] = {}
-        for r in self._assignments_data.get("reaches", []):
+        for r in ([] if other_cuts else self._assignments_data.get("reaches", [])):
             sn = r.get("segment_num")
             if sn is not None:
                 assignments_by_seg.setdefault(int(sn), []).append(r)
@@ -1715,9 +1732,10 @@ The notes box travels with the video.
             for _s in self._reaches_data["segments"]:                # nested
                 _all_raw.extend(_s.get("reaches", []))
 
-        if isinstance(self._reaches_data.get("reaches"), list):
-            # Flat reach list: each reach goes to the segment whose window
-            # contains its midpoint.
+        if isinstance(self._reaches_data.get("reaches"), list) or other_cuts:
+            # Flat reach list -- or a nested one made on other cuts, whose
+            # grouping is another pellet's: each reach goes to the segment
+            # whose window contains its midpoint.
             for r in _all_raw:
                 mid = (int(r.get("start_frame", 0)) + int(r.get("end_frame", 0))) // 2
                 for seg_idx in range(n_segments):
@@ -1749,7 +1767,9 @@ The notes box travels with the video.
             pellet_num = seg_num
 
             outcome_info = outcomes_by_seg.get(seg_num, {})
-            outcome = outcome_info.get("outcome")
+            # On other cuts every pellet is open: "triaged" is the code for an
+            # outcome the person must call (outcome_uncertain below).
+            outcome = "triaged" if other_cuts else outcome_info.get("outcome")
             interaction_frame = outcome_info.get("interaction_frame")
             flagged = bool(outcome_info.get("flagged_for_review", False))
             # Why something outside the pipeline sent this pellet back

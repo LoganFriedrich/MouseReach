@@ -149,6 +149,17 @@ Every segment also gets an **"Ignore windows"** box — frame ranges where somet
 
 Two more buttons: **Flag Session** (`:2514`) and, in re-segmentation mode only, **Clear -> re-enter pipeline** (`:3069`). The tool cannot re-cut a video (its re-cut editor was removed 2026-10-23); cuts are fixed in re-segmentation.
 
+**The algorithm's calls are shown only when they were made on those cuts (since 2026-11-24).**
+After a person saves new cuts in the re-segmentation queue, the reaches, outcomes and reach
+assignment in the bundle are still the run on the OLD cuts until the video goes round the
+pipeline again. The window used to take each pellet's algorithm outcome, causal reach and reach
+list from those files by segment number -- another pellet's -- and a person could answer (or agree
+with the algorithm) about the wrong pellet's results. Now, when those files describe other cuts
+(`causal_review_io.algo_files_on_other_cuts`: the reaches file's own segment frames differ from
+the segments file's cuts, or, when it records none, its `detected_at` is older than the time the
+cuts were set), the window says so in a warning, shows no algorithm call at all, asks every
+pellet's outcome, and lists for each pellet the detected reaches inside its own frames.
+
 **The pellets shown are always the segments file's cuts.** That editor saved its cuts inside the review file, as a `manual_segmentation` block. Some old review files still hold one. The window ignores it: it does not build pellets from it and does not treat the video as hand-cut because of it (`_build_segment_list`). Saving keeps the block unchanged as a record of what a person once did (`save_causal_review` copies it from an earlier copy of the review). Nothing else reads it. If a video's old block shows cuts different from its segments file and those cuts were right, send the video to re-segmentation (Escalate) and set them there.
 
 Keyboard shortcuts are playback only — space, `b` for reverse, arrows, and speed keys 1-6 (`_setup_keybindings`, `:2963`). There is no key for next/previous segment; those are buttons.
