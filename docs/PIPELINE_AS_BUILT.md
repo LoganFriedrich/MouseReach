@@ -1944,6 +1944,18 @@ It waits up to 10 minutes for the shared record to be readable (it waited 30 s u
 which a scheduled run could exceed and fail with "database is locked": on a slow share an ordinary
 write can hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
+### Update 2026-11-24: a session list may name any project's animals
+
+A session list (read by this report, by the work order's `session_list` selector, and by
+`mousereach-aspa-import-collages --sessions-file`) may name an animal two ways: in pipeline form
+(`{letters}{cohort:2d}{subject:2d}`, any project, kept as written) or in the ASPA lab form (one
+letter + subject number, `J11`), which is encoded (`ASPA1011`). A line that is neither is listed
+as "not a session name" and the rest of the list is still read. Until this date only the ASPA forms
+were accepted: a pipeline id of any other project reached the ASPA encoder, which raised, and the
+whole report stopped with "unrecognised ASPA animal id" (the scheduled coverage run then failed
+every day, and the work order silently treated that list as empty). Tests:
+`tests/test_aspa_import_by_sessions.py`.
+
 **Update 2026-10-29: it reads a local copy, never the record in place.** The 10-minute wait
 could run out too, when something held the record for longer, and the report failed.
 Waiting longer would only move the limit. The report now copies the record to a temporary

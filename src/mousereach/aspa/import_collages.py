@@ -285,20 +285,36 @@ def build_plan(source_root: Path, dest: Path, cohorts: List[str]) -> dict:
 
 
 _SINGLE = re.compile(r"^(\d{8})_([A-Za-z]+\d+)_([A-Za-z]\d+)$")
+# An animal id already in pipeline form: {letters}{cohort:2d}{subject:2d}
+# (the shape config.AnimalID parses). Encoded ASPA ids have it too.
+_PIPELINE_ANIMAL = re.compile(r"^[A-Za-z]+\d{4}$")
 
 
 def normalise_session(text: str) -> Optional[str]:
     """One listed session in pipeline form, or None when it is not a session name.
 
     ``20220811_J11_P3`` and ``20220811_ASPA1011_P3`` both give
-    ``20220811_ASPA1011_P3``."""
+    ``20220811_ASPA1011_P3``; any other project's pipeline id passes through
+    unchanged (``20250814_PROJA0301_P1``).
+
+    WHY: session lists are read by more than the ASPA import -- the coverage
+    report and the work-order policy take any project's list. Only an id in the
+    ASPA lab shape (one letter + subject number) is encoded; an id already in
+    pipeline form is kept as written. Anything else is reported as "not a
+    session name" by the caller (``read_sessions_file`` puts it in ``bad``)
+    rather than raising, because one unrecognised line must not stop a whole
+    list from being read: ``encode_animal`` raises on an unknown id, and
+    passing a pipeline id to it used to abort every reader of the list."""
     m = _SINGLE.match((text or "").strip())
     if not m:
         return None
     date, animal, tray = m.groups()
-    if not is_encoded(animal):
-        animal = encode_animal(animal)
-        if not animal:
+    if is_encoded(animal) or _PIPELINE_ANIMAL.match(animal):
+        animal = animal.upper()
+    else:
+        try:
+            animal = encode_animal(animal)
+        except ValueError:
             return None
     return f"{date}_{animal}_{tray.upper()}"
 
