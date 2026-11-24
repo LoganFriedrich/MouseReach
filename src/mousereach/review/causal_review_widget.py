@@ -64,6 +64,7 @@ from .causal_review_io import (
     segments_from_segmentation,
     segmentation_is_human,
     answer_problem,
+    answer_sends_to_reseg,
     plain_review_note,
     update_corpus_index,
     flag_session,
@@ -2828,6 +2829,18 @@ The notes box travels with the video.
             # the changed one, not the one that was restored.
             self._restored_panel = None
         problem = answer_problem(rec, human_segmentation=self._segmentation_is_human())
+        if problem and answer_sends_to_reseg(rec, human_segmentation=self._segmentation_is_human()):
+            # A causal reach outside this segment's frames: the person saw that
+            # reach touch the pellet, so the CUTS are in doubt, not the answer.
+            # It is recorded as given, and the video goes to re-segmentation on
+            # its own (owner rule 2026-11-24: "if it doesn't make sense, put it
+            # in front of the reviewer again"): the return scan and the review
+            # gate route it there (causal_review_io.reach_outside_answers).
+            # Refusing it, as before, left the person to remember to Escalate.
+            show_warning(f"{problem}\n\nYour answer is recorded. Because of it this "
+                         "video will go to re-segmentation automatically once you "
+                         "save; after the cuts are fixed it comes back to triage.")
+            return rec
         if problem:
             self._answer_problem = problem
             return None

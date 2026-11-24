@@ -2320,6 +2320,31 @@ def scan_review_queues(db, processing_dir: Path,
             finally:
                 _release_return_claim(stem)
             continue
+        # A person's answer in this bundle names a causal reach outside its
+        # pellet's frames on the current cuts (st.reach_outside; the gate
+        # applies the same rule). The answer cannot count on these cuts, so
+        # the pellet would stay open and the bundle wait in triage for an
+        # answer the window refuses: the cuts are in doubt, and the bundle
+        # goes to re-segmentation with the reason recorded.
+        if st.reach_outside:
+            if not _claim_return(stem):
+                continue
+            try:
+                from .review_gate import route_to_queue
+                from mousereach.review.triage_status import reach_outside_reason
+                route_to_queue(stem, bundle, Paths.DEEP_REVIEW,
+                               reason=reach_outside_reason(st),
+                               db=db, db_state="deep_review")
+                summary["diverted_to_deep"] += 1
+                logger.info("Return scan: %s diverted triage -> deep review (an answer "
+                            "names a causal reach outside its pellet: %s)",
+                            stem, sorted(st.reach_outside))
+            except Exception as e:
+                logger.error("Return scan: could not divert %s to deep review: %s",
+                             stem, e)
+            finally:
+                _release_return_claim(stem)
+            continue
         # A bundle sent here over its hand scores is compared again with the
         # hand scores as they are now (bench_recheck says why and what each
         # answer does). A label mismatch leaves for the label-mismatch hold,

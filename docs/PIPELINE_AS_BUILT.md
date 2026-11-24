@@ -1944,6 +1944,20 @@ It waits up to 10 minutes for the shared record to be readable (it waited 30 s u
 which a scheduled run could exceed and fail with "database is locked": on a slow share an ordinary
 write can hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
+### Update 2026-11-24: an answer naming a reach outside its pellet sends the video to re-segmentation
+
+A person's answer whose causal reach lies wholly outside the frames of the pellet it was given
+for, on the current cuts (`causal_review_io.reach_outside_answers`), now routes the video to the
+re-segmentation queue (deep review): the review gate returns DEEP_REVIEW with a reason starting
+"segmentation: a reviewer's answer names a causal reach outside its pellet's frames", and the
+return scan diverts a triage bundle holding such an answer with the same reason (the route a
+"this segment is really pellet N" statement takes, fe3df23). The review window records such an
+answer instead of refusing it. Settled by a person's cuts saved or confirmed after the answer;
+answers voided by a re-cut, or replaced by a newer answer on that pellet, do not count. Before,
+the matching dropped the answer without a word (the pellet stayed open in triage, or the results
+step refused the video). Tests: `tests/test_reach_outside_goes_to_resegmentation.py`. See
+REVIEW_TOOLS.md, "A reach outside its pellet sends the video to re-segmentation".
+
 ### Update 2026-11-24: a session list may name any project's animals
 
 A session list (read by this report, by the work order's `session_list` selector, and by

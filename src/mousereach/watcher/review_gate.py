@@ -234,6 +234,18 @@ def evaluate_gate(
     mislabel = mislabel_on_current_cuts(video_id, processing_dir)
     if mislabel:
         return DECISION_DEEP, mislabel, st
+    # A person's answer names a causal reach lying outside its pellet's frames
+    # on the current cuts (causal_review_io.reach_outside_answers). The answer
+    # cannot be applied on these cuts and the person saw that reach touch the
+    # pellet, so the cuts are what is in doubt: re-segmentation, which makes
+    # every later step -- triage included -- run again on the corrected cuts
+    # (owner rule 2026-11-24: "if it doesn't make sense, put it in front of the
+    # reviewer again"). Before, the answer was dropped without a word and the
+    # pellet sat open, or the results step refused it later. Settled only by a
+    # person's cuts saved or confirmed after the answer.
+    if st.reach_outside:
+        from mousereach.review.triage_status import reach_outside_reason
+        return DECISION_DEEP, reach_outside_reason(st), st
     # GT-determined segments are resolved; so are segments a human addressed in
     # ANY copy of the review: triage_status reads every copy merged
     # (effective_review), the reading the window and the results step use, so

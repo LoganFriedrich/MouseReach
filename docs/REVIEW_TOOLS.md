@@ -262,8 +262,9 @@ Two answers can never be used for the segment they are given for, and the tool
 refuses them at the moment of answering, with a message saying why and what to
 do -- nothing is recorded for that segment, and *Save Segment + Next* stays on it:
 
-- **a reach outside the segment's frames.** As the video is cut, that reach
-  cannot have touched this segment's pellet;
+- **a reach outside the segment's frames** -- refused until 2026-11-24; now
+  RECORDED and the video goes to re-segmentation on its own (see "A reach
+  outside its pellet sends the video to re-segmentation" below);
 - **any answer on a segment too short to be a pellet presentation** (fewer than
   5 frames: two cuts almost on top of each other), unless a person made the cuts
   or confirmed them (`cuts_confirmed` in the segments file; see PIPELINE_AS_BUILT.md,
@@ -294,6 +295,29 @@ checking that what happened, happened to the pellet shown: when the algorithm
 is on the wrong pellet or segment, **do not answer -- write what you saw in the
 notes and press *Escalate: bad segmentation -> re-segmentation***. The cuts are
 fixed there, by a person, in the re-segmentation tool.
+
+### A reach outside its pellet sends the video to re-segmentation (since 2026-11-24)
+
+If you pick (or type) a causal reach that lies outside the frames of the segment
+on screen, the window no longer refuses the answer. It says so, records the
+answer as you gave it, and tells you the video will go to re-segmentation. You
+do not need to press Escalate. WHY: you saw that reach touch the pellet, so it
+is the CUTS that are wrong (for example a pellet presented before the first cut),
+not your answer -- the owner's rule is "if it doesn't make sense, put it in front
+of the reviewer again".
+
+What happens (`causal_review_io.reach_outside_answers`): the return scan moves
+the triage bundle to the re-segmentation queue, and the review gate sends any
+video whose review holds such an answer there too (a re-run of a filed video
+included), with the reason "segmentation: a reviewer's answer names a causal
+reach outside its pellet's frames as the video is cut now (segment N: reach a-b,
+segment frames c-d) ...". In the re-segmentation tool a person sets or confirms
+the cuts; every step after segmentation then runs again on those cuts, triage
+included. Once a person has saved or confirmed cuts AFTER the answer, the answer
+no longer sends the video back (that person had the last word on the cuts); an
+answer a re-cut voids, or a newer answer on the same pellet, does not either.
+Until 2026-11-24 a stored answer of this kind was dropped without a word: its
+pellet stayed open in triage, or the results step refused the video later.
 
 A triaged segment that is too short to be a pellet is never left in triage at
 all: the gate sends the video to re-segmentation with the reason "segmentation:
