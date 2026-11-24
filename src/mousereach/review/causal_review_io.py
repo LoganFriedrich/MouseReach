@@ -1015,6 +1015,19 @@ def _reach_outside(reach, span) -> bool:
     return reach is not None and span is not None and (reach[1] < span[0] or reach[0] > span[1])
 
 
+def answer_sends_to_reseg(rec, human_segmentation: bool = False) -> bool:
+    """True when ``rec`` is an answer whose causal reach lies wholly outside the
+    frames it records, on a segment long enough to be a pellet. The review
+    window records such an answer instead of refusing it, and the video goes
+    to re-segmentation (reach_outside_answers says why)."""
+    if not _is_answered(rec):
+        return False
+    span = _span_of(rec)
+    if span is None or _too_short(span, human_segmentation):
+        return False
+    return _reach_outside(_decided_reach(rec), span)
+
+
 def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
     """Why an answer cannot count for the segment it was given for, in words
     for the reviewer -- or None when it can.
@@ -1880,6 +1893,98 @@ def recut_voided_segments(review_doc, current_segments=None,
         if best:
             out |= {sn for ov, sn in scored if ov == best}
     return out - answered
+
+
+# ---------------------------------------------------------------------------
+# An answer whose causal reach lies outside its pellet: the cuts are in doubt
+# ---------------------------------------------------------------------------
+
+def reach_outside_answers(review_doc, current_segments=None,
+                          human_segmentation: bool = False,
+                          person_cut_at=None) -> Dict[int, str]:
+    """``{current segment number: words}`` for every person's answer that
+    names a causal reach lying wholly outside the frames of the pellet it was
+    given for, as the video is cut NOW -- and that nothing has settled since.
+    Empty when there is none, or without ``current_segments``.
+
+    WHY: such an answer does not make sense on these cuts. The matching drops
+    it (index_review_by_segment: "it is about other footage"), so on its own
+    it was lost without a word and its pellet stayed open -- the video waited
+    in triage for an answer the window refuses, or the results refused it
+    later. The owner's rule (2026-11-24): if it doesn't make sense, put it in
+    front of the reviewer again. A reach a person saw touch the pellet, outside
+    that pellet's frames, means the cuts are wrong (a pellet presented before
+    the first cut, a cut placed on the wrong side of the touch, cuts the window
+    showed were not the ones it answered against). So the video goes to
+    re-segmentation (deep review), which also makes every later step, triage
+    included, run again on the corrected cuts.
+
+    Counted: an ANSWER (is_answered) about a touched outcome whose causal reach
+    (frames) lies wholly outside its own recorded frames (``segment_span``),
+    read from the review's statements and its ``unmatched_answers`` (where
+    every copy's dropped answers are carried, merge_review_copies).
+    Not counted:
+      * an answer the re-cut rule voids (answer_survives_recut): it is dropped
+        anyway and asks nothing;
+      * an answer given before a PERSON last set or confirmed the cuts
+        (``person_cut_at``, the segments file's ``corrected_at``): that person
+        had the last word on the cuts. Without this a video re-cut in
+        re-segmentation could be sent back there for ever;
+      * an answer whose frames match no current pellet;
+      * an answer a newer statement about the same current pellet replaced.
+    The pellet it is about is the current pellet its frames overlap most."""
+    if not current_segments:
+        return {}
+    spans = {}
+    for seg in current_segments:
+        sn, sp = (seg or {}).get("segment_num"), _seg_span(seg or {})
+        if sn is not None and sp is not None and not _too_short(sp, human_segmentation):
+            spans[int(sn)] = sp
+    if not spans:
+        return {}
+    doc = review_doc or {}
+    recut = recut_of(current_segments)
+    cut_at = _when(person_cut_at) if person_cut_at else None
+    mapping, _ = index_review_by_segment(doc, current_segments,
+                                         human_segmentation=human_segmentation)
+    records = [r for r in list(doc.get("segments") or []) + list(doc.get(UNMATCHED_ANSWERS_KEY) or [])
+               if isinstance(r, dict)]
+    out: Dict[int, str] = {}
+    for rec in records:
+        if not is_answered(rec):
+            continue
+        span, reach = _span_of(rec), _decided_reach(rec)
+        if span is None or not _reach_outside(reach, span):
+            continue
+        if recut_verdict(rec, doc, recut) not in RECUT_KEPT:
+            continue
+        when = _when(segment_reviewer(rec, doc)[1])
+        if cut_at is not None and (when is None or when < cut_at):
+            continue
+        scored = sorted(((_overlap(span, sp), sn) for sn, sp in spans.items()
+                         if _overlap(span, sp)), reverse=True)
+        if not scored:
+            continue
+        sn = scored[0][1]
+        held = mapping.get(sn)
+        if held is not None and held is not rec and is_answered(held):
+            held_when = _when(segment_reviewer(held, doc)[1])
+            if held_when is not None and (when is None or held_when > when):
+                continue
+        a, b = spans[sn]
+        out.setdefault(sn, "segment %d: reach %d-%d, segment frames %d-%d"
+                       % (sn, reach[0], reach[1], a, b))
+    return out
+
+
+def reach_outside_reason(found: Dict[int, str]) -> str:
+    """The routing reason for reach_outside_answers' findings. Starts with
+    "segmentation:", so the re-segmentation tools release the video once a
+    person saves (or confirms) its cuts (release_cli._names_segmentation)."""
+    return ("segmentation: a reviewer's answer names a causal reach outside its "
+            "pellet's frames as the video is cut now (%s); the cuts must be set or "
+            "confirmed in manual segmentation"
+            % "; ".join(found[k] for k in sorted(found)))
 
 
 # ---------------------------------------------------------------------------

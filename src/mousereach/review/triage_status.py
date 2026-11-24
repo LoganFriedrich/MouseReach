@@ -329,6 +329,11 @@ class TriageStatus:
     # part of ``triaged``; kept so a bundle whose ONLY flags are these can be
     # recognised and returned instead of sitting in triage for ever.
     ghost: Set[int] = field(default_factory=set)
+    # Pellets a person answered with a causal reach lying outside the pellet's
+    # frames on the current cuts, not settled since ({segment_num: words};
+    # causal_review_io.reach_outside_answers). Non-empty means the cuts are in
+    # doubt: the video goes to re-segmentation (reach_outside_reason).
+    reach_outside: Dict[int, str] = field(default_factory=dict)
 
     @property
     def has_triage(self) -> bool:
@@ -485,7 +490,38 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
         seg_human_fixed=(seg or {}).get("boundary_source") == "human",
         too_short=_too_short_segments(seg),
         ghost=ghost,
+        reach_outside=_reach_outside_of(video_id, review, seg),
     )
+
+
+def _reach_outside_of(video_id: str, review, seg_doc) -> Dict[int, str]:
+    """causal_review_io.reach_outside_answers on the merged review and the
+    current cuts; empty for Easy/Flat trays (never segmented, never asked) and
+    when it cannot be worked out (logged: a review that cannot be read never
+    routes a video)."""
+    if not review or not seg_doc:
+        return {}
+    try:
+        from mousereach.config import is_outcome_free_tray
+        if is_outcome_free_tray(video_id):
+            return {}
+        from .causal_review_io import (cuts_taken_as_made, person_cuts_set_at,
+                                       reach_outside_answers, segments_from_segmentation)
+        return reach_outside_answers(review, segments_from_segmentation(seg_doc) or None,
+                                     human_segmentation=cuts_taken_as_made(seg_doc),
+                                     person_cut_at=person_cuts_set_at(seg_doc))
+    except Exception as err:
+        logger.warning("%s: could not check for answers naming a reach outside their "
+                       "pellet (%s)", video_id, err)
+        return {}
+
+
+def reach_outside_reason(st: "TriageStatus") -> str:
+    """The routing reason for st.reach_outside (causal_review_io.
+    reach_outside_reason): names segmentation, so the re-segmentation tools
+    release the video once a person saves or confirms its cuts."""
+    from .causal_review_io import reach_outside_reason as _words
+    return _words(st.reach_outside)
 
 
 def deep_review_cleared(directory: Path, video_id: str) -> bool:
