@@ -1261,6 +1261,53 @@ def _cut_frames(seg_doc) -> Optional[List[int]]:
     return bounds
 
 
+def algo_files_on_other_cuts(seg_doc, reaches_doc) -> Optional[str]:
+    """Why the algorithm's files beside a segments file (reaches, outcomes,
+    reach assignment) describe OTHER cuts than that segments file -- or None
+    when nothing says so.
+
+    WHY: in the re-segmentation queue a person saves new cuts into the bundle's
+    segments file, but the reaches, outcomes and assignment files in the
+    bundle are still the run on the OLD cuts until the video goes round the
+    pipeline again. The review window built its pellets from the new cuts and
+    took each pellet's algorithm outcome, causal reach and reach list from the
+    old files BY SEGMENT NUMBER -- another pellet's. Answers were then given
+    (and "agree with the algorithm" confirmed) against another pellet's
+    results: on one video re-cut 2026-09-01 and reviewed 2026-09-04, five
+    answers named reaches of the pellets two cuts earlier.
+
+    Decided by frames when the reaches file records each segment's frames (the
+    detector's nested format: its segments' starts are the cuts it ran on,
+    followed by one segment after the last cut): any difference from the
+    segments file's cuts. Otherwise by
+    the in-file times the review gate uses: the reaches were detected before
+    the current cuts were set (``detected_at`` older than cuts_set_at)."""
+    cur = _cut_frames(seg_doc)
+    if not cur or len(cur) < 2 or not isinstance(reaches_doc, dict):
+        return None
+    segs = [s for s in reaches_doc.get("segments") or [] if isinstance(s, dict)]
+    try:
+        if segs and all(s.get("start_frame") is not None and s.get("end_frame") is not None
+                        and s.get("segment_num") is not None for s in segs):
+            segs = sorted(segs, key=lambda s: int(s["segment_num"]))
+            theirs = [int(s["start_frame"]) for s in segs] + [int(segs[-1]["end_frame"])]
+            # The detector adds one segment after the last cut (to the end of
+            # the video), so its cuts run one past the segments file's.
+            if theirs[:len(cur)] != sorted(cur):
+                return ("the reaches, outcomes and reach assignment in this folder were made "
+                        "on other cuts (%d cuts, first %d) than the current ones (%d cuts, "
+                        "first %d)" % (len(theirs), theirs[0], len(cur), min(cur)))
+            return None
+    except (TypeError, ValueError):
+        pass
+    set_at, detected = _when(cuts_set_at(seg_doc)), _when(reaches_doc.get("detected_at"))
+    if set_at is not None and detected is not None and detected < set_at:
+        return ("the reaches, outcomes and reach assignment in this folder were made before "
+                "the current cuts were set (%s, cuts %s)"
+                % (reaches_doc.get("detected_at"), cuts_set_at(seg_doc)))
+    return None
+
+
 def segments_from_segmentation(seg_doc) -> List[Dict[str, Any]]:
     """The current pellets ``[{segment_num, start_frame, end_frame}]`` from a
     ``*_segments.json`` document's boundaries, framed by pellet_span (the one
