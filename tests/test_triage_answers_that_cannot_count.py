@@ -61,13 +61,21 @@ def test_matching_notes_are_put_in_the_reviewers_words():
     assert plain_review_note("something new") == "something new"
 
 
-def test_the_review_tool_refuses_such_an_answer_and_says_why():
+def test_the_review_tool_records_a_reach_outside_and_says_it_goes_to_reseg(monkeypatch):
+    # Since 2026-11-24 (owner rule "if it doesn't make sense, put it in front
+    # of the reviewer again"): a causal reach outside the segment is RECORDED,
+    # and the video goes to re-segmentation on its own
+    # (tests/test_reach_outside_goes_to_resegmentation.py); the person is told.
+    import mousereach.review.causal_review_widget as w
     from mousereach.review.causal_review_widget import CausalReviewWidget
+    told = []
+    monkeypatch.setattr(w, "show_warning", told.append)
     stub = SimpleNamespace(
         _collect_answers_unchecked=lambda: _rec((34355, 34422), (34446, 34462)),
         _segmentation_is_human=lambda: False)
-    assert CausalReviewWidget._collect_answers(stub) is None
-    assert "outside segment 17" in stub._answer_problem
+    assert CausalReviewWidget._collect_answers(stub) is not None
+    assert stub._answer_problem is None
+    assert told and "outside segment 17" in told[0] and "re-segmentation" in told[0]
     stub._collect_answers_unchecked = lambda: _rec((34355, 34422), (34400, 34410))
     assert CausalReviewWidget._collect_answers(stub) is not None
     assert stub._answer_problem is None
