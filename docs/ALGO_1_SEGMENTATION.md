@@ -503,7 +503,7 @@ opening the code yourself.** Everything not listed survived two passes.
 
 ---
 
-## Update 2026-08-23: the review widget compares against the right version
+## the review widget compares against the right version
 
 The napari boundary-review widget imported segmenter_robust's stale constant as
 "the current version", so every correctly stamped file was flagged OUTDATED

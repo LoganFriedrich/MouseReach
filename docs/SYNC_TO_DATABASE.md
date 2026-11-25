@@ -350,7 +350,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 ---
 
-## Update 2026-08-23: a sync that does not happen is now loud
+## a sync that does not happen is now loud
 
 `sync_file_to_database` returning False -- the video's results did NOT reach
 the results database (central_db) -- was logged at debug level and treated as a normal skip; the
@@ -378,7 +378,7 @@ it differently because of it (lab decision 2026-11-19: a flag is only recorded s
 Filed videos receive it through a kinematics-only recalculation when their session is flagged later.
 See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (session flags are only recorded)".
 
-## Update 2026-11-19: a reach before the first cut is synced under no pellet
+## a reach before the first cut is synced under no pellet
 
 A reach that starts before the first cut belongs to no pellet (owner decision D2-3). A features file
 written before 2026-11-19 lists such a reach under segment 1; `sync_features_file` now reads the file

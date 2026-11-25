@@ -504,7 +504,7 @@ The practical damage is limited, because the resolver also checks `Paths.TRIAGE_
 
 If `resolve_truth_layers` raises, the code prints a line and falls back to the older review-only path, which does accept a file (`:226-239`); if that raises too it prints a second line and continues with the raw algorithm output.
 
-**A re-run for kinematics only applies every person's answer and keeps the rest as filed (since 2026-11-21; it was a hold from 2026-11-17).** Because the decisions above are worked out again on every run, a filed video re-run only for its kinematics (a new extractor version, or an answer saved after filing) could come out with different reaches, outcomes or causal reaches than were filed. In such a re-run the watcher hands `extract` the filed features file (`keep_filed=`), and per pellet: a person's answer that applies now (ground truth > deep review > triage, on a pellet whose frames did not change; a ground-truth "uncertain" is no answer) decides the outcome and the causal reach whether or not the filed results had it; an outcome or causal reach no person decides stays as filed (found again by frames), so no algorithm re-decides a filed video. The reach list is the filed reaches file with a person's reaches applied. Nothing is ever held for a difference: what differs from the filed results is listed in `FeatureExtractor.changes_from_filed` and in the watcher's processing log ("differs from the filed results: ..."). A re-cut that voided a person's answer is not asked again on such a re-run either: the filed decision stands on that pellet. (Before 2026-11-21 any difference not explained by an answer the version scan counted as "owed" held the run -- `KinematicsProblem` -- and the person's answer was then never applied.) Rule and reasons: `kinematics/core/filed_decisions.py` (`settle_against_filed`); operator view: `docs/PIPELINE_AS_BUILT.md`, "Update 2026-11-21: a person's answer is always applied".
+**A re-run for kinematics only applies every person's answer and keeps the rest as filed (since 2026-11-21; it was a hold from 2026-11-17).** Because the decisions above are worked out again on every run, a filed video re-run only for its kinematics (a new extractor version, or an answer saved after filing) could come out with different reaches, outcomes or causal reaches than were filed. In such a re-run the watcher hands `extract` the filed features file (`keep_filed=`), and per pellet: a person's answer that applies now (ground truth > deep review > triage, on a pellet whose frames did not change; a ground-truth "uncertain" is no answer) decides the outcome and the causal reach whether or not the filed results had it; an outcome or causal reach no person decides stays as filed (found again by frames), so no algorithm re-decides a filed video. The reach list is the filed reaches file with a person's reaches applied. Nothing is ever held for a difference: what differs from the filed results is listed in `FeatureExtractor.changes_from_filed` and in the watcher's processing log ("differs from the filed results: ..."). A re-cut that voided a person's answer is not asked again on such a re-run either: the filed decision stands on that pellet. (Before 2026-11-21 any difference not explained by an answer the version scan counted as "owed" held the run -- `KinematicsProblem` -- and the person's answer was then never applied.) Rule and reasons: `kinematics/core/filed_decisions.py` (`settle_against_filed`); operator view: `docs/PIPELINE_AS_BUILT.md`, "a person's answer is always applied".
 
 ---
 
@@ -609,7 +609,7 @@ opening the code yourself.** Everything not listed survived two passes.
 
 ---
 
-## Update 2026-08-23: the algorithm's causal reach now reaches the data
+## the algorithm's causal reach now reaches the data
 
 Extractor 2.1.0. The extractor loads `{video}_reach_assignments.json`
 (auto-discovered beside the outcomes file; `assignments_path` overrides) and
@@ -676,7 +676,7 @@ without changing them, the recalculation is given up and the filed features file
 (the video is listed on the machine's failed re-runs list with the reason). See
 docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
 
-## Update 2026-11-19: `session_flag` (top level of every features file)
+## `session_flag` (top level of every features file)
 
 `session_flag` is the note a person made with the review window's Flag Session button on this
 video's mouse+day session -- `{"session_key", "reason", "flagged_by", "flagged_at"}` -- or null when

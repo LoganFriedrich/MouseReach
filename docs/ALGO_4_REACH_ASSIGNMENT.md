@@ -308,7 +308,7 @@ opening the code yourself.** Everything not listed survived two passes.
 
 ---
 
-## Update 2026-08-23: is_causal is consumed now
+## is_causal is consumed now
 
 The headline defect this document described -- nothing downstream reads
 `is_causal` -- is fixed at extractor 2.1.0: kinematics loads the assignment
@@ -323,7 +323,7 @@ re-gate.
 
 ---
 
-## Update 2026-11-15: a failed assignment holds the video in triage
+## a failed assignment holds the video in triage
 
 The watcher now holds a video whose assignment fails in the run (raises, or cannot read its
 inputs). It replaces `<video>_reach_assignments.json` with a file that names no causal reach and
