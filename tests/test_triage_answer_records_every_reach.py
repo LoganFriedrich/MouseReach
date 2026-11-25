@@ -1,5 +1,5 @@
 """A triage answer records the call on EVERY reach of its segment, and the
-causal reach's frames as the person checked them (owner rules 2026-11-19).
+causal reach's frames as the person checked them.
 
 "Naming the causal reach of a segment ALSO answers every other reach in that
 segment -- they all missed." "'untouched' / 'no reach interacted' => every
@@ -119,7 +119,7 @@ def test_the_window_always_shows_the_causal_reachs_frames_to_check():
     rp = w._q_widgets["_reach_picker"]
     w._q_widgets["_outcome_combo"].setCurrentText("retrieved")
     # The reach nearest the interaction frame is pre-picked; its frames are
-    # shown, and naming it confirms them (no separate tick since 2026-11-20).
+    # shown, and naming it confirms them (no separate tick).
     assert (rp["bounds_start"].value(), rp["bounds_end"].value()) == (1200, 1215)
     assert rp["bounds_checked"].isHidden()
     rp["bounds_end"].setValue(1218)

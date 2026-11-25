@@ -1,8 +1,9 @@
 """Start a video completely over: cut it again out of its multi-animal
 recording, pose it again, and run every later step again.
 
-THE RULE
---------
+THE RULE (lab decisions 2026-11-19, D2-10 / D2-7 / D2-11 and their two
+corrections)
+------------------------------------------------------------------------
 Two kinds of critical quality finding are not questions a person can answer in
 a review window:
 

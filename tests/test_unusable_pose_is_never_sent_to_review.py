@@ -8,7 +8,7 @@ review queue too. Nothing a person can do in a review window fixes a pose.
 Only one case is settled: a FILED video whose unusable pose is not from the
 current model is sent for a new pose, never to a review queue. Every other
 case (a video not filed yet; a filed video whose unusable pose is the current
-model's own) is an open lab decision, and the video goes on exactly as it did
+model's own) is not decided here, and the video goes on exactly as it did
 before the check -- the check only records what it found. Built under
 tmp_path with invented ids; no real folder or database.
 """
@@ -81,7 +81,7 @@ def _red(tmp_path):
 def test_an_unfiled_videos_unusable_pose_starts_over_and_never_reaches_segmentation(
         env, monkeypatch):
     """Not filed: the video is started completely over from a new cut of its
-    recording (lab decision 2026-11-19; watcher/restart_from_recrop.py). Here
+    recording (watcher/restart_from_recrop.py). Here
     the recording is not on the share, so it is listed red ("source recording
     missing") and failed with no retries -- never segmented on the bad pose,
     never sent to a review queue."""

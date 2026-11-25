@@ -169,7 +169,7 @@ class TestArchivedStateTransition:
         assert db.get_video('v1')['state'] == 'archived'
 
     def test_filing_no_longer_checks_the_hand_scores(self):
-        """The hand-score check runs before the review gate since 2026-10-28
+        """The hand-score check runs before the review gate
         (_hand_score_precheck), so a 'processed' video has passed it and
         filing does not check again."""
         import inspect

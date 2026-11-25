@@ -90,7 +90,7 @@ def test_a_manifest_missing_only_its_kinematics_version_reruns_kinematics_only(a
     assert "kinematic_extractor (not recorded)" in listed
 
 
-# Filed is final (2026-11-19): an algorithm stage never starts a filed
+# Filed is final: an algorithm stage never starts a filed
 # video's re-run; only kinematics does (test_filed_is_final.py has more).
 
 def test_an_unrecorded_algorithm_stage_marks_nothing(archive):
@@ -187,7 +187,7 @@ def test_ground_truth_saved_after_filing_reruns_the_kinematics(archive):
 
 
 def test_ground_truth_older_than_a_manifest_without_a_stamp_is_owed(archive):
-    """REPRODUCES the 2026-11-20 case: ground truth beside a filed
+    """REPRODUCES a case: ground truth beside a filed
     video, older than its manifest, and a manifest from before the ground-truth
     stamp. The old time rule called it applied, so it never was. Now a
     manifest that cannot say which ground truth it applied owes it."""

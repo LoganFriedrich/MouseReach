@@ -100,9 +100,9 @@ class WatcherStateManager:
         # still in the intake folder: {filename: last validation_error}.
         # Rebuilt by every discover_new_collages, so a collage whose file was
         # taken away, or that was fixed, drops off. The DLC watcher lists them
-        # for a person (DLCOrchestrator._list_parked_collages). WHY: a parked
-        # collage with only a DEBUG line would have no screen name it, and the
-        # sessions on it would never be cut.
+        # for a person (DLCOrchestrator._list_parked_collages). WHY: such a
+        # collage used to be parked with a DEBUG line only -- no screen named
+        # it, and the sessions on it were never cut.
         self.parked_collages: Dict[str, str] = {}
         self._parked_warned: set = set()
 
@@ -653,7 +653,7 @@ class WatcherStateManager:
         WHY: a held or filed video's posed copy stays in the posed folder
         (the intake copies it and does not remove it). A server whose
         database has no row for it -- rebuilt, replaced, or a row never
-        written -- would register that copy as new work, analyse the video
+        written -- used to register that copy as new work, analyse the video
         again and route it into the queue folder that already held it. The
         GPU side has asked the shared drive this question before every pose
         for a long time (locate.held_or_filed_on_share)."""
@@ -716,9 +716,9 @@ class WatcherStateManager:
             # because the video's posed files were not all here when it
             # looked (db.INTAKE_MISS_REASON) and they are here now. Such a
             # row goes straight back to 'dlc_complete', the waiting-work state
-            # the intake selects. WHY here: a scan that skips every known
-            # video would never deliver the re-drive the intake's comment promises;
-            # the row would come back only through the re-pose adoption, as a re-run
+            # the intake selects. WHY here: this scan used to skip every known
+            # video, so the re-drive the intake's comment promised never came;
+            # the row came back only through the re-pose adoption, as a re-run
             # of a filed video in the lowest-priority bucket.
             row = self.db.get_video(video_id)
             if row is not None:

@@ -19,7 +19,7 @@ Watcher Control tab's Start / Run Once all run it.
 
 HOW IT IS BUILT, AND WHY
 ------------------------
-The watcher has two programs:
+Until 2026-11-19 a machine ran exactly one of the watcher's two programs:
 
   * ``dlc_pc`` (DLCOrchestrator): cut, pose, then hand the pose on through
     ``Processing/Posed``;

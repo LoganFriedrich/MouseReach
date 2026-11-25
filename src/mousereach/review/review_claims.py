@@ -1,6 +1,6 @@
 """One review window per video: the reviewer's claim on a queue bundle.
 
-WHY THIS EXISTS
+WHY THIS EXISTS (MRR-02d)
 -------------------------
 Several people review at once, each in their own review window (on the
 processing server, each in their own login). Each window picked its next video
@@ -15,7 +15,7 @@ THE CLAIM
 A window claims the bundle it shows: a marker file
 ``<review root>/.review_claims/<video>.review`` (the review root is the folder
 that holds the triage and re-segmentation queues, ``Processing/Review``;
-one marker per open review window). It
+approved by the lab owner 2026-11-19: one marker per open review window). It
 is created with the same exclusive create the watcher's claims use
 (``watcher/claim_marker.take``): when two windows race for one video, exactly
 one gets it. The marker names the window's machine and login

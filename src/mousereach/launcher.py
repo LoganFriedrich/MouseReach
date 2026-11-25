@@ -412,7 +412,7 @@ def launch(video_path=None, steps=None):
     except Exception as e:
         print(f"ERROR ({e})")
 
-    # (There is no Run All Steps tab: "Run chosen videos..." on
+    # (The Run All Steps tab is retired, 2026-11-19: "Run chosen videos..." on
     # the Run Pipeline tab runs one or many chosen videos through the same
     # watcher steps -- pipeline/batch_widget.py.)
 
@@ -461,9 +461,9 @@ def launch(video_path=None, steps=None):
     # tabbed into ONE stack, so the stack is as wide as its widest page: one
     # crowded panel made every other tab that wide too, and the video got a
     # sliver. Ask for about a third of the window. The panels now scroll
-    # horizontally rather than push the dock wider (a scroll area with the
-    # horizontal bar switched off becomes a width amplifier instead of a
-    # width limiter).
+    # horizontally rather than push the dock wider (their scroll areas used to
+    # have the horizontal bar switched off, which turned them into width
+    # amplifiers instead of width limiters).
     # Let every panel SCROLL rather than force the dock wider. Several tools
     # -- the watcher, quarantine and setup panels among them -- have no scroll
     # area of their own, and their contents measured over 1100px wide each.

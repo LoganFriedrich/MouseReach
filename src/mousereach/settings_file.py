@@ -45,9 +45,9 @@ def read_settings_file(path, blank_is_damaged: bool = False) -> dict:
     hold an object. Accepts a byte-order mark (a file
     saved by Notepad starts with one).
 
-    WHY strict: a damaged settings file must not read as an empty one. Every
-    path would then "not configured", the tools told the person to run
-    mousereach-setup, and a save from setup would rewrite the file with only the few
+    WHY strict: a damaged settings file used to read as an empty one. Every
+    path was then "not configured", the tools told the person to run
+    mousereach-setup, and a save from setup rewrote the file with only the few
     keys it manages -- every other setting gone. "Not there" and "there but
     broken" must never look the same."""
     path = Path(path)

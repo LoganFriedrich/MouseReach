@@ -1,6 +1,6 @@
 # Version Simulator Usage Guide
 
-> **Historical tool -- read this first.** The versions this tool
+> **Historical tool -- read this first (Update 2026-11-18).** The versions this tool
 > "simulates" (v0.5.0 to v3.4.0) are filters applied to reach files that already exist.
 > None of them is the reach detector that runs today, which is the v8 trained classifier
 > (`mousereach.reach.v8`, version 8.1.0; see `docs/ALGO_2_REACH_DETECTION.md`). The
@@ -76,7 +76,7 @@ report = generate_version_report("Processing", "Processing", "report.txt")
 
 ## Version History
 
-(The simulator also defines v0.5.0 (no filter), v1.5.0 (adds nose
+(Update 2026-11-18: the simulator also defines v0.5.0 (no filter), v1.5.0 (adds nose
 engagement; filter duration >= 3) and v2.5.0 (duration >= 3, extent > 0, end at
 disappearance or retraction). Only the duration and extent filters are replayed.)
 
@@ -177,33 +177,6 @@ for segment in data["segments"]:
     filtered = apply_version_filter(reaches, custom_filter)
     print(f"Segment {segment['segment_num']}: {len(reaches)} -> {len(filtered)} reaches")
 ```
-
-## Key Functions
-
-### `evaluate_all_versions(reaches_dir, gt_dir, tolerance=10)`
-Runs all version simulations and returns metrics dict.
-
-### `print_version_comparison(results)`
-Pretty-prints comparison table showing precision/recall/F1 for each version.
-
-### `generate_version_report(reaches_dir, gt_dir, output_path=None)`
-Generates comprehensive report with version history and findings.
-
-### `apply_version_filter(reaches, version)`
-Applies historical version filters to reach list. Import it from `mousereach.eval.version_simulator`; `mousereach.eval` does not export it.
-
-## How It Works
-
-1. **Loads current algorithm output** (`*_reaches.json` files)
-2. **Applies old version's filters** to simulate what it would have detected:
-   - v1.0.0: Drops reaches with duration < 3
-   - v2.0.0: Drops reaches with duration < 3 or extent <= 0
-   - v3.0.0: Drops reaches with extent < 5 or duration < 10
-   - v3.3.0: Drops reaches with duration < 2 or extent < 0 (the bug!)
-   - v3.4.0: Drops reaches with duration < 2 (no extent filter)
-   - The extent filters need a number in `max_extent_pixels`; reach files from the current detector have null extent and make those versions stop with a TypeError.
-3. **Evaluates against ground truth** using standard ReachEvaluator
-4. **Returns metrics** (precision, recall, F1, etc.)
 
 ## Troubleshooting
 

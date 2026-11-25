@@ -152,11 +152,12 @@ def review_applied(manifest: Optional[dict], review_path, review_mtime=None,
     ``review_path``?
 
     The re-run scan's rule, in its order (watcher/reprocessor.py,
-    ``_pending_review_path``) -- the two must agree. Comparing
-    the review file's modified time with the features file's would be wrong
-    here, as the re-run scan works on content: a review saved seconds after
-    the run that applied it would look unapplied forever, so its video would never
-    count as complete and its recording would never be retired.
+    ``_pending_review_path``) -- the two must agree. Until 2026-10-24 this
+    module compared the review file's modified time with the features file's,
+    while the re-run scan had moved to content: a review saved seconds after
+    the run that applied it looked unapplied here forever, so its video never
+    counted as complete and its recording was never retired (recordings sat
+    in the intake with every one of their reviews applied).
 
       1. the manifest's ``applied_review`` stamp -- the sha256 of the review
          the run applied -- against the review file's content: no clock;
@@ -307,9 +308,9 @@ def build_complete_stems(analyzed_root=None, nas_root=None) -> set:
                 continue
             _MANIFEST_CACHE[str(mp)] = (mtime, manifest)
         # The re-run scan's version rules (watcher/reprocessor.py), so that a
-        # video it will never re-run counts as complete here -- the two must
-        # agree, or recordings whose videos were all analysed never
-        # retire:
+        # video it will never re-run counts as complete here -- the two used to
+        # disagree, and recordings whose videos were all analysed never
+        # retired:
         #   * Easy/Flat trays are never re-run for a version change; they need
         #     only their session file (reaches + attention), so they are done
         #     once it exists;

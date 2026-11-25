@@ -52,11 +52,11 @@ _WIZARD_PROMPTED_KEYS = frozenset({
     'stability_wait_seconds', 'enabled', 'max_retries', 'mode',
 })
 
-# The machine's role (watcher.mode). WHY the wizard asks: a role taken
-# only from a lab profile is missing for a new lab, and WatcherConfig defaults a missing one to a
-# pose-only graphics-card PC; a new lab with one PC that ran mousereach-setup
-# and pressed "Run the pipeline now" would get cutting and posing, then a hand-off
-# to a processing machine that does not exist. The first question is
+# The machine's role (watcher.mode). WHY the wizard asks: it used to take the
+# role only from a lab profile, and WatcherConfig defaults a missing one to a
+# pose-only graphics-card PC. A new lab with one PC that ran mousereach-setup
+# and pressed "Run the pipeline now" got cutting and posing, then a hand-off
+# to a processing machine that does not exist. The first question is now
 # "is this the only MouseReach machine?"; yes means the single-machine role
 # (watcher/standalone.py), which does every step on this PC.
 ROLE_STANDALONE = "standalone"
@@ -148,7 +148,7 @@ def make_pipeline_folder(nas_root: Path) -> list:
 
     WHY here: the watcher refuses to start without pipeline_versions.json in
     the pipeline folder (it is how it knows the folder is a pipeline and not a
-    wrong turn), so the wizard does not print only a hint to run
+    wrong turn), and the wizard used to print only a hint to run
     mousereach-version-check --init. A single-machine lab gets a working
     folder from setup alone. Nothing existing is changed: folders are only
     created, and an existing pipeline_versions.json is left as it is."""
@@ -175,9 +175,9 @@ def make_pipeline_folder(nas_root: Path) -> list:
 # re-clone loses it, so machines can end up with none.
 #
 # The shipped lab_profiles.json.example is a TEMPLATE to copy and edit. It is
-# never matched against a machine. WHY: as a fallback, its
-# drive patterns would match real machines and offer them a retired folder
-# layout as their defaults.
+# never matched against a machine. WHY: it used to be the fallback, and its
+# drive patterns matched real machines and offered them a retired folder
+# layout as their defaults (found 2026-10-22).
 LAB_PROFILES_ENV = "MOUSEREACH_LAB_PROFILES"
 USER_LAB_PROFILES_FILE = CONFIG_DIR / "lab_profiles.json"
 LAB_PROFILES_FILE = Path(__file__).parent / "lab_profiles.json"
@@ -296,8 +296,8 @@ def _match_profile(profile: dict, drives: dict, hostname: str = None) -> bool:
 
     WHY the hostname rule is checked: profiles documented "hostname: match
     by machine hostname (most reliable)", but only the drive rules were
-    read, so two PCs with the same drive layout would both take the first
-    profile listed.
+    read, so two PCs with the same drive layout both took the first
+    profile listed (found 2026-10-22).
     """
     match = profile.get("match", {})
     available = set(drives.keys())
@@ -354,9 +354,9 @@ def detect_lab_profile() -> tuple:
         hostname rule), "drive_match" (drive rules only), or None.
 
     An identity file naming a role that is not in the profiles is said out
-    loud, then matching goes on. WHY: falling through silently would make a
-    PC whose identity file still names a retired role look declared while
-    it is really being matched.
+    loud, then matching goes on. WHY: it used to fall through silently, so a
+    PC whose identity file still named a retired role looked declared while
+    it was really being matched (found 2026-10-22).
     """
     drives = _get_current_drives()
 
@@ -516,15 +516,15 @@ def _carry_unprompted(watcher_config: dict, existing_watcher: dict,
     ask about: this machine's own first, then the lab profile's. Existing
     values always win. Returns ``watcher_config``.
 
-    WHY this machine's: save_config() would REPLACE the whole watcher
+    WHY this machine's: save_config() used to REPLACE the whole watcher
     section, and on a processing server the wizard's own output drops mode,
     db_path, max_local_pending, also_process, staging_path and work_priority.
 
-    WHY the profile's: taking only the five prompted settings from
-    a profile would lose a machine set up from scratch the rest of its role --
+    WHY the profile's: only the five prompted settings were ever taken from
+    a profile, so a machine set up from scratch lost the rest of its role --
     mode, also_process, and the pause for the recording program with its
     recording days and hours. A GPU node that also records, rebuilt that way, would pose on
-    top of a recording.
+    top of a recording (found 2026-10-22).
     """
     for source in (existing_watcher or {}, profile_watcher or {}):
         for key, value in source.items():
@@ -601,8 +601,8 @@ def run_setup_wizard():
 
     # --- Step 2: Shared pipeline folder (nas_root) ---
     # WHY asked for explicitly: every shared path (intake, posed videos, review
-    # queues, Analyzed) hangs off it, and it must be asked for and
-    # saved -- a save from this wizard that deleted it would let the code guess
+    # queues, Analyzed) hangs off it, and it used to be neither asked for nor
+    # saved -- a save from this wizard deleted it, after which the code guessed
     # a retired layout (config.py says more).
     root_default = (
         existing.get("nas_root")
@@ -747,7 +747,8 @@ def run_setup_wizard():
         ]
         if nas_root:
             # The canonical NAS pipe tree, built in the shared folder given in
-            # step 2 -- never guessed from the drive -- single source of truth in
+            # step 2 -- never guessed from the drive (it used to be built under
+            # <drive>/! DLC Output, a layout retired in 2026) -- single source of truth in
             # pipeline.pipe_structure (Unanalyzed[Multi-Animal, Single_Animal]
             # / Processing[Posed, Repose_Queue, Review/{triage,deep_review},
             # Quarantine, Failed] / Analyzed[Archive]).
@@ -883,10 +884,10 @@ def save_config(nas_drive=KEEP, processing_root: Path = None, watcher: dict = No
     """Write the settings setup manages into ~/.mousereach/config.json, keeping
     EVERY other setting already in the file.
 
-    WHY: rewriting the file with processing_root, nas_drive and
-    watcher only would let saving from mousereach-setup or the Setup panel silently
-    delete the shared pipeline folder (nas_root), the nightly backup's
-    folders and anything else the file held.
+    WHY: this used to rewrite the file with processing_root, nas_drive and
+    watcher only, so saving from mousereach-setup or the Setup panel silently
+    deleted the shared pipeline folder (nas_root), the nightly backup's
+    folders and anything else the file held (found 2026-10-22).
 
     Args:
         nas_drive, nas_root: KEEP leaves the setting as it is; None or "" removes

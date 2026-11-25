@@ -8,15 +8,16 @@ Detect button that auto-fills from this machine's lab profile, and saves via
 the same ``save_config`` the CLI wizard uses (so the two stay in sync). Saving
 changes only these settings; everything else in the config file is kept.
 
-WHY the second field is ``nas_root``: a field saving ``nas_drive`` instead, from
-which the code would guess a retired folder layout, would put a pipeline folder
-typed here one level too deep, in a folder that does not exist.
+WHY the second field is ``nas_root``: until 2026-10-22 it was labelled "NAS data
+root" with a pipeline folder as its example, but it saved ``nas_drive``, from
+which the code then guessed a retired folder layout -- so a pipeline folder
+typed here ended up one level too deep, in a folder that does not exist.
 
-THE MACHINE'S ROLE. The tab also asks what this machine does:
+THE MACHINE'S ROLE (2026-11-19). The tab also asks what this machine does:
 "Single machine" (the only MouseReach PC in the lab: cut, pose, analyse, take
 reviews back, file -- watcher/standalone.py), "Graphics-card PC" or
-"Processing machine". WHY: a role that comes only from a lab profile and
-defaults to a pose-only graphics-card PC gives a new one-PC lab cutting and
+"Processing machine". WHY: the role used to come only from a lab profile and
+defaulted to a pose-only graphics-card PC, so a new one-PC lab got cutting and
 posing and then a hand-off to a machine that does not exist. Saving a single
 machine also builds its pipeline folder (the folder layout and
 pipeline_versions.json, which the watcher needs before it starts) and names
@@ -164,9 +165,9 @@ class SetupWidget(QWidget):
             return
         # Fill only what this machine does not have yet: its own settings
         # always win over a profile's, as in the command-line wizard. WHY:
-        # Detect must not overwrite both folders, nor Save let the profile's
-        # watcher settings replace the machine's -- one click from
-        # pointing a working machine at a profile's folders.
+        # Detect used to overwrite both folders, and Save let the profile's
+        # watcher settings replace the machine's -- one click away from
+        # pointing a working machine at a profile's folders (2026-10-22).
         d = profile.get("defaults", {}) or {}
         if d.get("processing_root") and not self._proc.text().strip():
             self._proc.setText(str(d["processing_root"]))

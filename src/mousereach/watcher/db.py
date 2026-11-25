@@ -122,7 +122,7 @@ def crystallized_refusal(db, video_id: str, action: str, folder=None,
     (mousereach-uncrystallize). Every path that would move its files into a
     review queue, back to Processing or to a new pose asks this first and
     refuses. WHY: routing to a queue, the review return and the version
-    scan's divert must not force their way through the lock (force_state), or
+    scan's divert used to force their way through the lock (force_state), so
     a locked video's results could leave the filed folder.
     The row is one machine's record; the lock RECORD
     (``<video>_crystallized.json`` beside the filed results,
@@ -221,7 +221,7 @@ INTAKE_COPY_FAILED = "failed to copy"
 # carried only BETWEEN these states: a row that enters one of them from a state
 # outside them starts with no scope unless the caller gives one
 # (WatcherDB._end_of_round_defaults).
-# WHY: the scope must not outlive its re-run on rows that went on to triage,
+# WHY: the scope used to outlive its re-run on rows that went on to triage,
 # deep review, a quality hold or 'unresolvable'. A later run of such a row --
 # a quality-hold release, an intake, a restart -- read a leftover
 # 'kinematics' back (orchestrator.kept_rerun_start_stage) and skipped every
@@ -246,7 +246,7 @@ REPROCESS_SCOPE_STATES = frozenset(
 # there (the watcher's reconcile paths) keeps the step its route recorded,
 # which is the same one the bundle's manifest carries.
 # WHY: a resume point is written for ONE round, by the return of a review.
-# It must not outlive that round on rows that a person reset (reset_failed),
+# It used to outlive that round on rows that a person reset (reset_failed),
 # that were sent for a new pose, or that went 'unresolvable' and were found
 # again. Their next run read the leftover back (orchestrator._run_pipeline ->
 # _resume_point) and reused the segmentation, reach and outcome outputs of
@@ -265,10 +265,11 @@ HELD_AT_STEP_STATES = RESUME_POINT_STATES | {"triage", "deep_review"}
 # one of these states: every change to any other state moves it into
 # previously_filed_at and clears it, in the same write
 # (WatcherDB._filing_time_defaults / _filing_time_sql). Filing sets it again.
-# WHY: an archived_at kept for ever once set would leave rows routed back to a
-# review queue, re-posed, retired or failed reading as filed in every
-# count and report that uses it. watcher/filing_time.py has the whole rule and
-# the command that applies it to rows written before it.
+# WHY: archived_at used to be kept for ever once set, so rows routed back to a
+# review queue, re-posed, retired or failed went on reading as filed in every
+# count and report that used it (271 such rows on the processing server on
+# 2026-11-24). watcher/filing_time.py has the whole rule and the command that
+# applied it to rows written before it.
 FILED_STATES = frozenset({"archived", "outdated", "crystallized"})
 
 
@@ -280,8 +281,8 @@ def last_filed_at(row) -> Optional[str]:
     For the watcher's decisions that depend on a video having BEEN filed (a
     kinematics-only re-run, putting a failed re-run back to 'archived',
     never starting a filed video over from a new cut, refusing to finalize
-    over filed results). These read this, not archived_at, which is cleared when a video leaves
-    the filed state.
+    over filed results). These used to read archived_at, which was never
+    cleared and so meant exactly this; reading this keeps them unchanged.
     A count of videos filed NOW reads archived_at (or the state), never this."""
     if not row:
         return None
@@ -398,10 +399,10 @@ class WatcherDB:
         )
         conn.row_factory = sqlite3.Row
 
-        # DELETE journal mode EVERYWHERE, not just network drives. WAL is unsafe even on
-        # local drives: Windows shm handling
+        # DELETE journal mode EVERYWHERE, not just network drives. WAL was
+        # used on local drives until 2026-09-01, when Windows shm handling
         # under multi-process access (watcher + external read-only probes +
-        # force-killed deploys) can degrade the database to
+        # force-killed deploys) twice degraded the database to
         # SQLITE_READONLY for every writer -- the whole node stalled until
         # all holders were stopped and the -shm/-wal sidecars deleted. DELETE
         # mode has no sidecars to poison, is what the shared-NAS databases
@@ -848,12 +849,12 @@ class WatcherDB:
         row's state to the write of its new one: BEGIN IMMEDIATE, the caller's
         SELECT, check and UPDATE, then COMMIT -- or ROLLBACK and re-raise.
 
-        WHY: the connection is in autocommit mode, so a state change as
-        a SELECT and an UPDATE in two separate statements would race. Several programs
+        WHY: the connection is in autocommit mode, so a state change used to
+        be a SELECT and an UPDATE as two separate statements. Several programs
         write this database (the watcher, the review windows, route-to-queue,
         repose-videos, the command-line tools); two of them could both read the
-        same state, both pass the transition check, and the second UPDATE would
-        silently overwrite the first with a state that was never legal from
+        same state, both pass the transition check, and the second UPDATE then
+        silently overwrote the first with a state that was never legal from
         the row's real state. Under the write lock the second program waits
         (or, after the busy timeout, raises 'database is locked', which
         _retry_network_errors retries on a network drive) and then checks
@@ -1026,8 +1027,8 @@ class WatcherDB:
     def clear_errors_on_archived(self) -> int:
         """Clear the error_message of every 'archived' row; return how many.
 
-        Run at watcher start. WHY: reaching 'archived' does not
-        clear the previous error, so finished videos would keep showing failures from
+        Run at watcher start. WHY: until 2026-10-22 reaching 'archived' did not
+        clear the previous error, so finished videos kept showing failures from
         runs that later succeeded (e.g. after a share outage). The history is in processing_log.
 
         Except a message starting with FAILED_RERUN_PREFIX: that is not an old
@@ -1305,7 +1306,7 @@ class WatcherDB:
     def set_collage_source_path(self, filename: str, source_path: str):
         """Correct where a collage's file actually is, without touching its state.
 
-        Cross-node recovery must not write the OWNING HOSTNAME into this column,
+        Cross-node recovery used to write the OWNING HOSTNAME into this column,
         because pipeline_collages has a hostname and no path. _process_collage
         then did Path('EXAMPLE-HOST-1').exists() -> False and raised
         FileNotFoundError, and because the row existed, discover_new_collages

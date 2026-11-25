@@ -81,11 +81,14 @@ def _status_from_files(video_id: str, source_dir: Path) -> Dict[str, str]:
 def check_archive_ready(video_id: str, source_dir: Path = None) -> Tuple[bool, Dict[str, str]]:
     """Check if a video is ready for archiving.
 
-    Reads the verdict out of the stage output files, not the pipeline
+    Reads the verdict out of the stage output files. It used to ask the pipeline
     index -- a cache whose whole purpose is to save a folder scan for the
-    dashboard, and which is allowed to be stale (it can say 'auto_review', a
-    spelling only the index uses, or lack reach and outcome entries, for
-    videos every stage has approved ON DISK).
+    dashboard -- and that cache is allowed to be stale. It was, comprehensively:
+    a node held videos in 'processed' that were marked approved by every stage
+    ON DISK, while the index said otherwise for the large majority (segmentation
+    reading 'auto_review', a spelling only the index ever uses, and reach and
+    outcome missing entirely for most). Nothing archived for months and the
+    retry loop failed on every pass.
 
     A cache is the wrong authority for an irreversible decision. The files carry
     validation_status; that is the fact. The index stays what it is good at --
@@ -249,11 +252,11 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
 
     The watcher files a video only after every check has passed: the quality
     triage, the hand-score comparison, the review gate and kinematics. The
-    command does not file on the stage files' validation_status alone -- a
+    command used to file on the stage files' validation_status alone -- a
     verdict the quality triage writes BEFORE the hand-score check and the
     gate run, so a video held for its hand scores, or held as failed for want
-    of kinematics, reads 'auto_approved'. Filing means done for
-    good, so the command asks what the watcher decided:
+    of kinematics, read 'auto_approved' and was filed. Filing means done for
+    good, so the command now asks what the watcher decided:
 
       * this node's watcher database knows the video and its row is not
         'processed' (passed every check, waiting to be filed) -> refused,
@@ -311,8 +314,8 @@ def command_filing_refusal(video_id: str, source_dir: Path = None) -> Optional[s
     if why:
         return why
     # The watcher's own last checks on the file itself (filed_features_refusal
-    # says why): a features file with an undecided
-    # pellet or a reach whose measures failed is not filed.
+    # says why): the command used to file a features file with an undecided
+    # pellet or a reach whose measures failed.
     return filed_features_refusal(video_id, folder)
 
 
@@ -519,10 +522,10 @@ def archive_video(
     # kinematics), and anything that reads the filed folder -- the database
     # integrator's nightly import above all, which takes the features file --
     # must see either the previous generation, complete, or the new one,
-    # complete; never a folder of some new and some old files. Setting
-    # the old generation aside first and then moving the new files in one by
-    # one would leave the folder split if one file would not move (a handle
-    # still open on the share) until the retry, up to an hour later. So:
+    # complete; never a folder of some new and some old files. It used to set
+    # the old generation aside first and then move the new files in one by
+    # one, so one file that would not move (a handle still open on the share)
+    # left the folder split until the retry, up to an hour later. Now:
     #
     #   1. STAGE: every incoming file that differs from the filed one is
     #      copied into the filed folder under a temporary name

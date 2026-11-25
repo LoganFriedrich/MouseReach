@@ -108,14 +108,14 @@ def Path_(p):
     return Path(p)
 
 
-# --- MRR-03a: a flagged bundle with no assignments file -----------------------
+# --- a flagged bundle with no assignments file -----------------------
 
 def test_a_flagged_bundle_without_assignments_is_offered_in_the_window(queues):
     b = _bundle(queues, FLAGGED_2, assignments=False)
     assert _window()._bundle_eligible(b, queues.parent)
 
 
-# --- MRR-03b: unreadable segments; a cleared failed segmentation -------------
+# --- unreadable segments; a cleared failed segmentation -------------
 
 def test_unreadable_segments_are_held_for_segmentation_on_both_sides(queues, tmp_path, monkeypatch):
     b = _bundle(queues, FLAGGED_2, segments="unreadable")
@@ -146,7 +146,7 @@ def test_a_cleared_failed_segmentation_with_open_pellets_is_offered_in_triage(qu
     assert _window()._bundle_eligible(b, queues.parent)
 
 
-# --- MRR-03c: flags on segments that do not exist -----------------------------
+# --- flags on segments that do not exist -----------------------------
 
 def test_a_flag_on_a_nonexistent_segment_is_not_offered(queues):
     b = _bundle(queues, [{"segment_num": 1, "outcome": "untouched"},

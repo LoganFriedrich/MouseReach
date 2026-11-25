@@ -101,7 +101,7 @@ def _write(path: Path, doc):
 
 
 # ---------------------------------------------------------------------------
-# MRR-12i: ground truth
+# ground truth
 # ---------------------------------------------------------------------------
 
 def _gt(video_name):
@@ -216,7 +216,7 @@ def test_temporary_name_never_starts_with_the_video_name(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# MRR-02b: review copies, clear markers, flagged sessions (causal_review_io)
+# review copies, clear markers, flagged sessions (causal_review_io)
 # ---------------------------------------------------------------------------
 
 def _seg_record(n, outcome="retrieved"):
@@ -314,7 +314,7 @@ def test_durable_copy_at_return_survives_a_failed_copy(review_roots, failing_dis
 
 
 # ---------------------------------------------------------------------------
-# MRR-09e: routing records (route_cli.flag_segments / reopen_answered)
+# routing records (route_cli.flag_segments / reopen_answered)
 # ---------------------------------------------------------------------------
 
 def test_flag_segments_never_tears_the_outcomes_file(tmp_path, failing_disk):
@@ -393,7 +393,7 @@ def test_hand_score_record_leaves_no_file_named_after_the_video(tmp_path, failin
 
 
 # ---------------------------------------------------------------------------
-# MRR-14c: the quality verdict stamped into the three stage files
+# the quality verdict stamped into the three stage files
 # ---------------------------------------------------------------------------
 
 STAGES = ("_segments.json", "_reaches.json", "_pellet_outcomes.json")
@@ -450,7 +450,7 @@ def test_quality_verdict_stamp_clears_leftover_temps_and_stamps(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# MRR-02c: the corpus index and flagged_sessions.json, one writer at a time
+# the corpus index and flagged_sessions.json, one writer at a time
 # ---------------------------------------------------------------------------
 
 def _race(monkeypatch, file_name, first, second, hold_s=1.5):

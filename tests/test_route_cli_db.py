@@ -211,7 +211,7 @@ def test_existing_configured_db_routes_and_records_state(site, monkeypatch, caps
     assert (bundle / POSE).is_file()
     flagged = json.loads((bundle / f"{VID}_pellet_outcomes.json").read_text(encoding="utf-8"))
     assert [s["segment_num"] for s in flagged["segments"] if s["flagged_for_review"]] == [3, 7]
-    assert site["outcomes"].exists()       # the filed copy stays (filed is final, 2026-11-19)
+    assert site["outcomes"].exists()       # the filed copy stays (filed is final)
     assert live.get_video(VID)["state"] == "triage"      # the daemon's database
     assert decoy.get_video(VID)["state"] == "archived"   # the decoy left alone
 

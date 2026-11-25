@@ -1,6 +1,6 @@
 """The contact frame is attached to a causal reach only when it lies inside it.
 
-WHY (owner decision D5-3, 2026-11-19): "contact frame doesn't matter. it's an
+WHY: "contact frame doesn't matter. it's an
 artifact" -- nothing may depend on it for a reach a person picked. The
 algorithm's contact frame stayed on the pellet when a person named a different
 causal reach, and was exported with that reach although it lay outside it.

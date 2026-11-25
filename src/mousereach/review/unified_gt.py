@@ -290,7 +290,7 @@ def save_unified_gt(gt: UnifiedGroundTruth, video_path: Path,
 
     # Convert to dict and save. Through a temporary file and one rename
     # (fsutil.write_json_atomic), never in place: opening the real file for
-    # writing empties it first, so a crash mid-save would leave a truncated
+    # writing empties it first, so a crash mid-save used to leave a truncated
     # ground-truth file that load_unified_gt rejects and every other reader
     # takes for "no ground truth" -- a person's answers lost silently.
     from mousereach.pipeline.fsutil import write_json_atomic
@@ -308,10 +308,10 @@ def finalized_ground_truth(gt: UnifiedGroundTruth) -> Tuple[Optional[UnifiedGrou
     marked determined, reaches with a determined start or end (algorithm
     seeds nobody touched are not ground truth). It also keeps the three
     "this part is complete" (exhaustive) declarations with who made them and
-    when. WHY: a copy built without them overwrites the
-    file "Save Progress" writes, so pressing the finishing button would erase the
-    person's declarations; a finished ground truth would then read as partial --
-    the results would keep reaches the person had ruled out and pellets come back
+    when. WHY: the copy used to be built without them, and it overwrites the
+    file "Save Progress" writes, so pressing the finishing button erased the
+    person's declarations; a finished ground truth then read as partial --
+    the results kept reaches the person had ruled out and pellets came back
     to triage.
 
     Refused (nothing to write) when a part is marked complete but the filter
@@ -1131,10 +1131,10 @@ def match_saved_boundaries(saved, current, tol: int = BOUNDARY_MATCH_FRAMES):
     segmentation's: ``({id(saved boundary): current boundary}, [saved
     boundaries matched to none])``.
 
-    WHY: overlaying a reopened ground truth's boundary k onto today's
-    boundary k by position fails when today's segmentation has a different number
-    of cuts: the person's determined cut lands on another cut's row while
-    the cut really there stays beside it, and the next save writes that as
+    WHY: a reopened ground truth used to overlay its boundary k onto today's
+    boundary k by position. When today's segmentation has a different number
+    of cuts, the person's determined cut landed on another cut's row while
+    the cut really there stayed beside it, and the next save wrote that as
     the person's determined segmentation.
 
     How, in order:

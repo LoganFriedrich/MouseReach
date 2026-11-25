@@ -56,8 +56,8 @@ ASSIGNMENT_FAILED_KEY = "assignment_failed"
 
 # The quality verdict the watcher passes when the unified quality triage could
 # not run at all (it raised). The gate HOLDS such a video in deep review: an
-# unchecked video must not pass as clean (the verdict must not stay
-# 'auto_approved' when triage crashes). The reason below is what the review
+# unchecked video must not pass as clean (it used to -- the verdict stayed
+# 'auto_approved' when triage crashed). The reason below is what the review
 # tools show as the routed reason.
 QC_TRIAGE_FAILED = "triage_failed"
 # The quality triage found the POSE unusable (pipeline/pose_check.py). Never
@@ -106,7 +106,7 @@ def evaluate_gate(
     cuts (recut_voided_open; run_gate flags it so triage walks it). A
     person's answer a re-cut VOIDED (frames moved) is dropped and asks
     nothing: that pellet goes to triage only if the re-run algorithms flag it,
-    like any pellet of a new video.
+    like any pellet of a new video (owner ruling 2026-11-21).
     Otherwise -> CLEAN.
     """
     st = triage_status(processing_dir, video_id)
@@ -239,9 +239,9 @@ def evaluate_gate(
     # cannot be applied on these cuts and the person saw that reach touch the
     # pellet, so the cuts are what is in doubt: re-segmentation, which makes
     # every later step -- triage included -- run again on the corrected cuts
-    # ("if it doesn't make sense, put it in front of the
-    # reviewer again"); the answer is not dropped without a word, leaving the
-    # pellet open, or refused later by the results step. Settled only by a
+    # (owner rule 2026-11-24: "if it doesn't make sense, put it in front of the
+    # reviewer again"). Before, the answer was dropped without a word and the
+    # pellet sat open, or the results step refused it later. Settled only by a
     # person's cuts saved or confirmed after the answer.
     if st.reach_outside:
         from mousereach.review.triage_status import reach_outside_reason
@@ -250,7 +250,7 @@ def evaluate_gate(
     # ANY copy of the review: triage_status reads every copy merged
     # (effective_review), the reading the window and the results step use, so
     # a re-run of an already-reviewed video finalizes CLEAN instead of
-    # re-triaging. (The gate does not add its own pick of ONE copy by file time,
+    # re-triaging. (The gate used to add its own pick of ONE copy by file time,
     # which could disagree with the window about what is answered.)
     unresolved = set(st.unresolved) - gt_segs
     # A pellet a person answered on cuts since redone (by a person or the
@@ -593,8 +593,8 @@ def escalate_to_deep_review(video_id: str, bundle: Path, reason: str,
     clear (see supersede_deep_review_clear), then move the video to deep review
     and record 'deep_review' in the watcher database ``db``.
 
-    WHY the database: routing with no database leaves the bundle
-    in deep review while the row still said 'triage' -- status views read
+    WHY the database: the button used to route with no database, so the bundle
+    sat in deep review while the row still said 'triage' -- status views read
     the row, the GPU nodes and reconcile read the folder, and the two disagreed
     until the video came back. Pass the daemon's own database
     (db_location.open_watcher_db_if_present). With ``db`` None the move still
@@ -786,7 +786,7 @@ def _clear_the_way(video_id: str, existing: Path, processing_dir, reason: str,
     WHY: refusing every existing folder would fail later runs of a video for
     good -- an empty residue, a records-only folder or an old bundle of
     machine outputs would make the gate raise on every run. Merging into the
-    folder would replace a held run's files and a
+    folder (what routes used to do) replaced a held run's files and a
     person's saved review. The state is matched to THIS queue because a
     video held in triage can have a stale deep-review folder of machine
     outputs (and the other way round); refusing on the other queue's state
@@ -941,10 +941,10 @@ def route_to_queue(
         clear_leftover) and the route goes on, unless something in it has no
         current copy elsewhere: that stays where it is, listed for a person,
         and the route raises AlreadyInQueueError; so does the live bundle of
-        a held video. WHY: pouring the source's files into the
-        existing bundle, replacing same-named files, would let an older filed
-        generation replace the held run's results, and a review a person had
-        saved in the bundle be replaced by an older one."""
+        a held video. WHY: the move used to pour the source's files into the
+        existing bundle, replacing same-named files -- an older filed
+        generation replaced the held run's results, and a review a person had
+        saved in the bundle could be replaced by an older one."""
     from .db import CrystallizedError, crystallized_refusal
     locked = crystallized_refusal(db, video_id, "routed to a review queue")
     if locked:
@@ -1018,9 +1018,10 @@ def _route_to_queue_claimed(
         except Exception as e:
             # The bundle has ALREADY been moved into the review queue above, so
             # the filesystem is the ground truth here and the DB has to follow it.
-            # A warning alone would leave the video sitting in a review
-            # folder while the DB reports some other state -- a silent
-            # disagreement between disk and database. Reconcile deliberately instead of diverging.
+            # Previously this only warned, which left the video sitting in a review
+            # folder while the DB reported some other state -- a silent
+            # disagreement between disk and database, visible as one log line and
+            # nothing else. Reconcile deliberately instead of diverging.
             try:
                 db.force_state(
                     video_id, state,
@@ -1039,7 +1040,7 @@ def _route_to_queue_claimed(
         # Nothing is moved and neither the routing record nor the review
         # manifest is rewritten -- the bundle is already where the caller
         # wants it. Only the database is brought in line. WHY: moving each
-        # file onto itself would delete it (review_routing._safe_move).
+        # file onto itself used to delete it (review_routing._safe_move).
         logger.warning(
             f"Routing {video_id}: already in {dest_root} ({reason}); nothing "
             f"moved")
@@ -1077,7 +1078,7 @@ def _route_to_queue_claimed(
     )
     # The hold is recorded the moment the bundle is in the queue, BEFORE the
     # review manifest is written. WHY this order: a manifest write that failed
-    # (a passing hold on the share) would raise out of here with the files
+    # (a passing hold on the share) used to raise out of here with the files
     # already in the queue and the row never set -- the dispatcher then
     # marked the video failed, and its retry needed an mp4 that had moved.
     _record_state(db_state, f"review gate moved bundle to '{reason}'")
@@ -1276,8 +1277,8 @@ def _empty_triage_copy(video_id: str, deep_bundle: Path) -> None:
     read, but once a person has set the new cuts an answer in it given
     before then counts only on a pellet whose frames did not change
     (causal_review_io.answer_survives_recut).
-    WHY at all: deleting the whole folder (shutil.rmtree) would take a
-    person's ground truth and clear markers with it; only reviews have a
+    WHY at all: the whole folder used to be deleted (shutil.rmtree), a
+    person's ground truth and clear markers with it; only reviews had a
     durable copy."""
     from .review_routing import (read_routing_manifest, input_kind, clear_leftover,
                                  _safe_move, note_folder_in_the_way)

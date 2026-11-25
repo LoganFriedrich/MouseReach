@@ -77,7 +77,7 @@ def test_a_video_without_features_is_left_out_and_named(folder):
 
 
 def test_the_quick_summary_counts_the_persons_outcome(folder, monkeypatch, tmp_path):
-    """Since 2026-11-19 the quick summary is the session level of the FILED
+    """The quick summary is the session level of the FILED
     results (export/results.py): it reads the filed tree, not Processing."""
     from mousereach.export import quick_summary
     filed = tmp_path / "Analyzed" / "PRJ" / "PRJ_09"

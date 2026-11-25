@@ -68,7 +68,7 @@ def test_the_existing_database_is_opened(tmp_path, monkeypatch):
 def test_the_review_tool_buttons_pass_the_database():
     from mousereach.review import causal_review_widget as w
     cls = w.CausalReviewWidget
-    # Flag Session moves nothing since 2026-11-19 (a flag is only a note), so
+    # Flag Session moves nothing (a flag is only a note), so
     # Escalate is the one button left that moves a bundle.
     for fn in (cls._escalate_to_deep_review,):
         src = inspect.getsource(fn)

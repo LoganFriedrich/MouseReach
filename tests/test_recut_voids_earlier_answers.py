@@ -1,13 +1,13 @@
 """A re-cut voids the answers given before it.
 
-Rule (owner ruling 2026-11-18, narrowing R2): when a person re-cuts a video,
+Rule: when a person re-cuts a video,
 an earlier answer stands only on a pellet whose frames the re-cut did not
 change at all. Every other earlier answer -- its pellet moved, even by one
 frame, or the files do not show which cuts it was given on -- is void: fitting
 it onto the new cuts by frame overlap or by segment number is a guess about
 footage nobody judged on the new cuts. It is kept in the file as a record and
 dropped: the pellet takes the re-run algorithms' call and is asked only if
-they flag it (owner ruling 2026-11-21).
+they flag it.
 
 Before: every reader matched earlier answers to the new cuts by frame overlap
 (and span-less ones by number), so a person's answer about one stretch of video
@@ -111,9 +111,9 @@ def test_on_the_segmenters_own_cuts_matching_is_unchanged():
 def test_the_results_drop_an_answer_voided_by_a_recut(run_dir, monkeypatch):
     """Kinematics: the person re-cut the video after answering; the old answer
     (frames 0-120, pellet 1 is now 0-99) is not applied, and the algorithm's
-    call is written in its place (owner ruling 2026-11-21: a voided answer is
-    dropped, never re-asked). Until then the extractor refused
-    (RecutVoidedAnswers) until the pellet was asked again."""
+    call is written in its place (a voided answer is
+    dropped, never re-asked), and the extractor does not refuse
+    (RecutVoidedAnswers)."""
     folder, pose = run_dir
     monkeypatch.setattr(io, "review_dirs", lambda *a, **k: [folder])
     _outcomes(folder, outcome="retrieved")

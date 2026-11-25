@@ -99,7 +99,7 @@ CODETECTION_SUSTAINED_FRAMES = 3
 # pillar-geometry formula `pillar_cy = SA_mid_y - 0.944 * ruler`).
 # Empirically, GT displaced_sa pellets sit at p10=3.60, p50=4.49,
 # p90=6.31 radii from the calc'd pillar center after the pellet has
-# settled in the SA (37 train-pool videos, 337 segments).
+# settled in the SA (37 train-pool videos, 337 segments, 2026-05-02).
 # Threshold of 3.0 sits below the bulk of the displaced distribution
 # (catches ~95% of true displaced_sa) while staying clear of pellet-
 # at-pillar-edge calibration artifacts (which sit at 1-2 radii).

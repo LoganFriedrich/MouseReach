@@ -707,8 +707,9 @@ class PillarGeometryAnnotatorWidget(QWidget):
 
 
 # Standalone execution: python -m mousereach.outcomes.pillar_geometry_widget
-# (No napari plugin hook, @napari.hookimpl, belongs here: it belongs to a
-# plugin system napari no longer has, and would make the module fail to import.)
+# (The old napari plugin hook that stood here, @napari.hookimpl, belongs to a
+# plugin system napari no longer has: it made the module fail to import at all,
+# and nothing registered it. Removed 2026-10-24.)
 if __name__ == '__main__':
     import napari
     viewer = napari.Viewer()

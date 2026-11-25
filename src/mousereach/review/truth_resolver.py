@@ -9,7 +9,7 @@ INDEPENDENTLY by taking the HIGHEST layer that has a call:
 
 A layer "has a call" only when it gave a decided answer: a ground-truth outcome
 marked determined but valued "uncertain" (causal_review_io.gt_outcome_is_answer)
-is no call, so the next layer's answer is applied (when
+is no call, so the next layer's answer is applied (owner rule 2026-11-20: when
 human answers disagree, the highest answer wins; a video is never held over it).
 
 Any element no human layer touched keeps its algo value ("unconflicted algo
@@ -44,10 +44,10 @@ Provenance is stamped on every element:
 
 A reviewer's typed causal reach (the review window's "Undetected reach (enter
 frames manually)") that no detected reach covers (causal_review_io.
-typed_reach_match) is a reach the detector missed. It joins the
+typed_reach_match) is a reach the detector missed. Since 2026-10-26 it joins the
 segment's reaches exactly as a supplementary GT reach does -- it replaces the
 detected reach it overlaps, if any, and its kinematics are computed over the
-frames the person typed -- and it is the segment's causal reach. It is not
+frames the person typed -- and it is the segment's causal reach. Before, it was
 resolved only as a pointer into the detected reaches, so its answer was lost or
 landed on a neighbouring reach.
 
@@ -59,9 +59,9 @@ review -- the file or folder the caller names (primary_dir), the triage and
 re-segmentation queue bundles, the video's filed folder and the durable store
 -- merged per segment to the newest answer (or recheck that reopened one) a
 person gave about its frames (causal_review_io.effective_review, the same read
-the review window, the release check and the census use). WHY one read: layering the
-copies by WHERE they sit (a queue bundle outranking the
-durable copy), and not reading the filed folder's copy at all, would mean an answer
+the review window, the release check and the census use). WHY one read: the
+copies used to be layered by WHERE they sat (a queue bundle outranking the
+durable copy), and the filed folder's copy was not read at all, so an answer
 that lived only in a copy this step did not prefer was not applied, and an
 older answer in a queue bundle beat a newer one elsewhere. Triage and
 full-video reviews write the same schema; both are "human_review".
@@ -118,7 +118,7 @@ def _read_json(p) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # What a triage answer says about the reaches themselves
 # ---------------------------------------------------------------------------
-# Rules: (1) a causal answer includes the person checking that
+# Owner rules 2026-11-19: (1) a causal answer includes the person checking that
 # reach's start and end, so the frames saved with it are a person's frames for
 # that reach; (2) naming the causal reach of a segment also answers every other
 # reach of that segment -- they all missed ("untouched": every reach missed).
@@ -202,8 +202,8 @@ def _seg_overrides_from_review(doc: Optional[dict], source: str,
         ans = rec.get("answers") or {}
         # Only a person's ANSWER counts (is_answered): not a reviewed:False
         # placeholder, and not a pellet saved with its outcome left on the
-        # algorithm's "triaged" -- which must not be applied here as a human answer
-        # (the same gap apply_review_overrides had).
+        # algorithm's "triaged" -- which was applied here as a human answer
+        # until 2026-10-26, the same gap apply_review_overrides had.
         if not is_answered(rec):
             continue
         human = rec.get("human") or {}
@@ -347,8 +347,8 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
                           reaches_data: Optional[dict] = None) -> dict:
     """Resolve per-segment outcomes. ``layers`` is ordered LOW -> HIGH.
 
-    Merged per FIELD, not per segment (a higher layer must not replace the
-    lower layer's whole answer, or a ground-truth outcome would throw away the
+    Merged per FIELD, not per segment (a higher layer used to replace the
+    lower layer's whole answer, so a ground-truth outcome threw away the
     review's causal reach, typed reach and ignore windows):
 
     - outcome, its source and who answered: the highest layer with a call.
@@ -403,7 +403,7 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
             reaches; ground-truth reaches may since have replaced that list
             and renumbered it, so the id it carries can name another reach.
             Found again by the pick's frames; None when no reach in the final
-            list is that reach. WHY: a pick of reach 66 at frames
+            list is that reach. WHY (2026-11-20): a pick of reach 66 at frames
             9519-9534 was applied as reach 66 of the ground-truth list, frames
             9494-9504 -- the wrong reach credited with the pellet."""
             pf = ov.get("pick_frames")
@@ -506,7 +506,7 @@ def _apply_outcome_layers(outcomes_data: dict, layers: List[Dict[int, dict]],
 
 
 # ---------------------------------------------------------------------------
-# per-reach layer: GT, and a reviewer-typed reach the
+# per-reach layer: GT, and (since 2026-10-26) a reviewer-typed reach the
 # detector missed; review never edits the boundaries of a detected reach
 # ---------------------------------------------------------------------------
 def _gt_reach_dict(r: dict, reach_num: int) -> dict:
@@ -756,7 +756,7 @@ def _apply_gt_reaches(reaches_data: dict, gt: Optional[dict]) -> dict:
         except (TypeError, ValueError, KeyError):
             continue
     # The first cut: a ground-truth reach that starts before it belongs to no
-    # pellet (reach/core/before_first_cut.py). It goes to
+    # pellet (owner decision D2-3, reach/core/before_first_cut.py). It goes to
     # the file's reaches_before_first_cut list, never into segment 1 by the
     # segment number the tool seeded it with.
     _first_cut = min((a for a, _b in spans.values()), default=None)
@@ -851,9 +851,9 @@ def _drop_excluded_reaches(seg: dict, windows) -> None:
     segment's reaches, and record it under ``excluded_reaches`` (in place).
 
     WHY: the exclusion is a person's statement that those frames are not a
-    valid reach. It removes more than the ground-truth copy of the reach:
-    a detected reach over the same frames would otherwise stay and be measured like any
-    other, unless the reach set was marked complete. It works like a
+    valid reach. It used to remove only the ground-truth copy of the reach;
+    the detected reach over the same frames stayed and was measured like any
+    other, unless the reach set was marked complete. It now works like a
     reviewer's ignore window (feature_extractor.split_reaches_by_ignore_windows):
     every detected reach that overlaps it (inclusive, by one frame is enough)
     is left out, and the features file lists it in the segment's
@@ -1064,7 +1064,7 @@ def resolve_truth_layers(
     # refuses to write features until they are asked again in triage.
     # An answer a re-cut VOIDED (its pellet's frames moved, or no record of
     # its cuts) is not listed: it is dropped, and its pellet takes the call of
-    # the algorithms re-run on the new cuts.
+    # the algorithms re-run on the new cuts (owner ruling 2026-11-21).
     if _cur_segs and review_doc and applied is not None:
         open_ = recut_voided_segments(review_doc, _plain, human_segmentation=human_segmentation)
         open_ -= set((gt_out if gt else {}).keys())

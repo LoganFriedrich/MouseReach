@@ -1209,7 +1209,7 @@ class TestDLCStaleScope:
         scanner = ReprocessingScanner(temp_db, scratch_paths["NAS_ROOT"])
         return scanner.scan(mark_outdated=True)
 
-    # Filed is final (2026-11-19): an older pose model never marks a filed
+    # Filed is final: an older pose model never marks a filed
     # video, whether or not the declared model's pose is on disk.
     def test_declared_pose_already_on_disk_reruns_nothing(
             self, temp_db, scratch_paths, monkeypatch):

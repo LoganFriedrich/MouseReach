@@ -147,7 +147,7 @@ def test_bug_impact():
 
 
 def test_extent_distribution():
-    """Show extent distribution that motivated the v3.4.0 change."""
+    """Show extent distribution that motivated the v3.4.0 fix."""
     # Based on actual ground truth analysis
     extent_examples = {
         "extended (>5px)": [10, 15, 8, 12, 20],

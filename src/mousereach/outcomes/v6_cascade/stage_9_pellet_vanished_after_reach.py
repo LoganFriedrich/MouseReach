@@ -283,7 +283,7 @@ class Stage9PelletVanishedAfterReach(Stage):
             paw_past_y |= (py <= slit_y_line) & (pl >= self.paw_lk_threshold)
 
         # Strict paw-past-y (>=2 paw bodyparts at lk>=0.7) -- empirical
-        # cleanly separates real paw from DLC noise.
+        # 2026-05-03: cleanly separates real paw from DLC noise.
         paw_lks = np.stack([sub_raw[f"{bp}_likelihood"].to_numpy(dtype=float)
                             for bp in PAW_BODYPARTS])
         n_paws_high_lk = (paw_lks >= 0.7).sum(axis=0)

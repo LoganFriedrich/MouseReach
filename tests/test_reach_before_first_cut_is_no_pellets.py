@@ -1,6 +1,6 @@
 """A reach that starts before the first cut belongs to NO pellet.
 
-WHY (owner decision D2-3): before the first cut no pellet is presented, so a
+WHY: before the first cut no pellet is presented, so a
 reach then cannot be one of pellet 1's. The reach step attached such a reach
 to the nearest segment (segment 1) and flagged the segment with a flag nothing
 read, so the reach was counted, measured, assigned and exported as pellet 1's.
@@ -27,7 +27,7 @@ def _reach(rid, s, e, num=1):
 
 
 def _old_reaches_file():
-    """A reaches file as written before 2026-11-19: reach 1 starts before the
+    """A reaches file as an older reach step wrote it: reach 1 starts before the
     first cut and was put into segment 1, which was flagged for it."""
     return {"video_name": VID, "total_frames": N, "n_segments": 2, "segments_flagged": 1,
             "segments": [

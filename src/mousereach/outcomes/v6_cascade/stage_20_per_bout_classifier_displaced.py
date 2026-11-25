@@ -63,7 +63,7 @@ OFF_PILLAR_RADII_MIN = 2.5  # strict: pellet at >= 2.5 radii is
                             # clearly off-pillar in SA (filters
                             # pillar-edge DLC noise)
 
-# Stage 20 disabled. Per-bout classifier with per-video
+# 2026-05-03: Stage 20 disabled. Per-bout classifier with per-video
 # pellet calibration looked promising but hit ~19% trust ceiling.
 # Root cause: DLC noise causes transient off-pillar observations
 # between early bouts, BEFORE actual displacement, fooling the

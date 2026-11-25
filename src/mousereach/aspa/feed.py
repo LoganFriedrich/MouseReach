@@ -15,7 +15,8 @@ in time) and writes it into the recording intake, renamed into pipeline form
 WHICH cuts share a rebuilt recording is read from the cuts themselves: every
 cut of one recording is exactly as long as the recording, to the frame, so the
 lost cuts of one day and tray that have the same frame count (and frame rate)
-are the cuts of one recording. WHY not the groups of other days: groups change from day to day -- on some days the cuts
+are the cuts of one recording. WHY not the groups of other days (it used them
+until 2026-10-23): groups change from day to day -- on some days the cuts
 fall into id-order groups that no surviving recording shows -- and a group
 copied from another day stitched together cuts that were never simultaneous,
 or left an animal alone that had shared its recording.
@@ -43,7 +44,7 @@ written into the rebuild's record. A position nobody's cut fills is empty, so
 the pipeline's cut never produces a video of an animal that is not there.
 Every rebuild is recorded under ``<NAS root>/pipeline_records/rebuilt_recordings/``.
 
-WHY NOT FEED THE CUTS: a single dropped into the
+WHY NOT FEED THE CUTS (it did until 2026-10-23): a single dropped into the
 intake has no link to its recording, and the recording itself never entered
 the pipeline. The originals and any retained analyses are never touched: a lab
 may be required to keep an old generation of results intact, so everything

@@ -114,8 +114,8 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(db_location, "open_watcher_db_if_present", lambda: (fake_db, None))
     # These tests exercise the filing mechanics bring-current shares with the
     # watcher (supersede, staged names, refusals). Whether a FILED video may be
-    # finalized at all is a separate rule -- it may not (filed is final,
-    # 2026-11-19) -- tested in test_filed_is_final.py; here the video counts
+    # finalized at all is a separate rule -- it may not (filed is final)
+    # -- tested in test_filed_is_final.py; here the video counts
     # as not filed.
     import mousereach.pipeline.reprocess_to_current as _rtc
     monkeypatch.setattr(_rtc, "_is_filed", lambda vid, row: False)

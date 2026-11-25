@@ -2,7 +2,7 @@
 
 The review is matched against the detected reaches; ground-truth reaches can
 then replace that list and renumber it. The pick's id then named another reach:
-on 2026-11-20 a pick of reach 66 (frames 9519-9534) was filed as reach 66 of the
+a pick of reach 66 (frames 9519-9534) was filed as reach 66 of the
 ground-truth list (frames 9494-9504), so the wrong reach was credited.
 """
 from mousereach.review.truth_resolver import _apply_outcome_layers

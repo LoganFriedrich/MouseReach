@@ -392,7 +392,7 @@ class FPFNReviewWidget(QWidget):
         )
         layout.addWidget(self.status_label)
 
-        # (There are no marker visibility toggles — each marker now
+        # (Marker visibility toggles removed 2026-05-21 — each marker now
         # fires whenever its frame range contains the playhead, no opt-out.)
 
         # ── Unified events table ──
@@ -426,10 +426,10 @@ class FPFNReviewWidget(QWidget):
         events_layout.addWidget(self.hide_filtered_cb)
 
         # Columns: Reach Type | Start | End | Category | Jump
-        # Reach Type is the topology label:
+        # Reach Type is the topology label (new 2026-05-20):
         # TP / TOLERANCE_ERROR / MERGED / FRAGMENTED / FALSE_POSITIVE /
         # FALSE_NEGATIVE / COMPLEX. Empty for older manifests without the field.
-        # There is no Kind column: it is redundant with Reach Type.
+        # Kind column was removed as redundant with Reach Type.
         self.events_table = QTableWidget(0, 5)
         self.events_table.setHorizontalHeaderLabels(
             ["Reach Type", "Start", "End", "Category", ""]
@@ -1498,7 +1498,7 @@ class FPFNReviewWidget(QWidget):
         "TP": QColor("#66ff88"),  # green
     }
 
-    # Topology colors (alongside the event_types).
+    # Topology colors (added 2026-05-20 alongside the new event_types).
     # Used to color rows by topology when present in the manifest.
     # Falls back to KIND_COLOR for legacy manifests.
     TOPOLOGY_COLOR = {
@@ -1529,7 +1529,7 @@ class FPFNReviewWidget(QWidget):
 
         Combines FP / FN / TP into one chronological view sorted by anchor
         frame (FP/TP anchor = detector.start, FN anchor = gt.start). Rows
-        are color-coded by topology when present,
+        are color-coded by topology when present (the new 2026-05-20 field),
         otherwise by legacy kind.
 
         Columns: Kind | Topology | Start | End | Category | Jump

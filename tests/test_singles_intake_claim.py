@@ -773,7 +773,7 @@ def test_a_stopped_nodes_claims_come_back_in_hours_not_a_day(env):
 
 
 def test_a_removed_cpu_pools_leftover_claim_comes_back(env):
-    """The CPU pose pool (removed 2026-11-18) claimed as ``<host>-cpu``. A claim
+    """The CPU pose pool (removed) claimed as ``<host>-cpu``. A claim
     it left behind has no live status report (its report was renamed aside or
     deleted), so it is judged by its own age and returned like any stopped
     node's -- no code that knows about the pool is needed for that."""

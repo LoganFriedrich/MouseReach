@@ -110,10 +110,11 @@ def _extract_reaches(reach_data):
     The reach detector nests reaches PER SEGMENT under ``segments[].reaches``
     (each reach carries ``start_frame``/``end_frame``); that is the authoritative
     current format. A flat top-level ``reaches`` list is an older/alternate form.
-    Handle both: reading only the flat form returns [] against real reach JSON,
-    starving the v6 cascade of every reach and breaking the reach-dependent
-    outcome stages (e.g. retrieved-via-unique-vanish-reach), which would
-    collapse retrieved->0 and inflate triage.
+    Handle both. Historically this only read the flat form -- so against real
+    reach JSON it returned [], starving the v6 cascade of every reach and breaking
+    the reach-dependent outcome stages (e.g. retrieved-via-unique-vanish-reach),
+    which collapsed retrieved->0 and inflated triage. (Fixed 2026-08; verified to
+    reproduce the 2026-07-03 v6.1 LIVE per-reach Sankey outputs exactly.)
     """
     def _pair(r):
         s = r.get("start_frame")
@@ -126,7 +127,7 @@ def _extract_reaches(reach_data):
 
     reaches = []
     # Reaches that start before the first cut sit in their own top-level list
-    # (reach/core/before_first_cut.py). They are still handed
+    # since 2026-11-19 (reach/core/before_first_cut.py). They are still handed
     # to the cascade, exactly as when they sat inside segment 1: the cascade
     # places reaches by its own segment windows, which start at the first cut,
     # so it never counted them for pellet 1 -- and leaving them out would
@@ -170,9 +171,10 @@ def process_single(
 
     Uses the v6 cascade (VERSION 6.1.0) by DEFAULT -- the current, DLC-4.0-
     calibrated detector that pipeline_versions.json declares and that the review
-    tool + kinematics expect. This entrypoint (the one the watcher /
-    reprocess path calls) defaults to v6 like the CLI, so the pipeline does not
-    emit stale-version outcomes. Pass ``legacy=True``
+    tool + kinematics expect. Historically THIS entrypoint (the one the watcher /
+    reprocess path calls) still ran the legacy v2.4.4-era detector even though the
+    CLI had switched to v6 -- a production wiring gap that made the pipeline emit
+    stale-version outcomes. v6 is now the default here too. Pass ``legacy=True``
     for the old detector. ``video_dir`` locates the source mp4 for the cascade's
     CV stage (defaults to searching ``output_dir``)."""
     if output_dir is None:
@@ -283,8 +285,8 @@ def process_batch(
         
         try:
             # ``legacy`` is passed BY NAME: it is the fifth parameter of
-            # process_single, and a four-positional call would leave it
-            # False -- so ``--legacy`` would announce the legacy
+            # process_single, and the old four-positional call here left it
+            # False -- which is why ``--legacy`` used to announce the legacy
             # detector and then run v6 anyway. ``video_dir`` is looked up in
             # the INPUT dir (where the source video sits when -o differs from
             # -i); process_single falls back to searching the output dir when

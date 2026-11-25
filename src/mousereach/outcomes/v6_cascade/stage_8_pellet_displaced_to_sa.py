@@ -60,8 +60,8 @@ PAW_BODYPARTS = ("RightHand", "RHLeft", "RHOut", "RHRight")
 TRANSITION_ZONE_HALF = 5
 
 # Likelihood thresholds.
-# Pellet lk threshold raised aggressively (from 0.7 default)
-# to filter DLC label-switch cases. Real displaced
+# Pellet lk threshold raised aggressively (from 0.7 default) on
+# 2026-05-02 to filter DLC label-switch cases. Real displaced
 # pellets at rest show very high lk (close to 1.0); label-switch
 # artifacts in problem videos track non-pellet features at
 # moderately high lk (0.7-0.9 range).
@@ -115,7 +115,7 @@ SA_QUAD_Y_BUFFER_PX = 0                 # pellet must have y within
                                         # SA quadrilateral boundary.
 
 # IFR position within causal bout (empirical p50 = 0.4 across 351 GT
-# displaced_sa segments).
+# displaced_sa segments, 2026-05-01).
 IFR_POSITION_IN_BOUT = 0.4
 
 # Late-segment observability: real displaced_sa segments have the
@@ -123,7 +123,7 @@ IFR_POSITION_IN_BOUT = 0.4
 # of the segment (since the pellet can't return to the pillar). For
 # retrieved cases, the pellet briefly appears off-pillar then
 # disappears -- low late-segment observability. Empirical analysis
-# displaced p5 = 324 frames, retrieved p50 = 39, in
+# (2026-05-02): displaced p5 = 324 frames, retrieved p50 = 39, in
 # the last 25% of clean zone. Threshold of 250 cleanly separates.
 LATE_SEGMENT_FRACTION = 0.25
 LATE_SEGMENT_OBSERVABLE_MIN_FRAMES = 250
@@ -494,7 +494,7 @@ class Stage8PelletDisplacedToSA(Stage):
         # near-median frame to find the most recent bout that ended
         # before it. Empirically this picks the same bout as GT in
         # 92.5% of class-matched commits.
-        # The on->off transition test was tried but
+        # The on->off transition test was tried (2026-05-02) but
         # produced same trust % with lower yield -- specifically
         # didn't fix the problem cases where
         # DLC label-switches the pellet to a sustained off-pillar

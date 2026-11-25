@@ -71,7 +71,7 @@ def test_routing_sends_a_left_open_pellet_back(tmp_path, monkeypatch):
     # The stand-in route copies what it is handed into a bundle folder in the
     # queue and names it as the bundle, so the question is written there. (A
     # route of a filed video hands it a COPY of the filed folder; the filed
-    # folder itself stays as it is -- filed is final, 2026-11-19.)
+    # folder itself stays as it is -- filed is final.)
     import shutil
     queue = tmp_path / "Review" / "triage"
     monkeypatch.setattr(Paths, "TRIAGE_REVIEW", queue, raising=False)

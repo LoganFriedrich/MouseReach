@@ -132,10 +132,10 @@ def test_a_ground_truth_reach_never_shares_an_id_with_a_detected_one(tmp_path):
 def test_a_review_pick_a_ground_truth_reach_replaced_follows_its_frames(tmp_path):
     # The review picked detected reach 31 (frames 100-130); a determined
     # ground-truth reach (98-135) replaced it and was renumbered 90. The pick
-    # is found again by its frames (truth_resolver._apply_outcome_layers,
-    # since 2026-11-20): the ground-truth reach IS the reach the person picked,
-    # so it is the causal reach. Before, the id 31 dangled and the pellet was
-    # left to the reach assignment.
+    # is found again by its frames (truth_resolver._apply_outcome_layers):
+    # the ground-truth reach IS the reach the person picked,
+    # so it is the causal reach (a dangling id 31 would leave the pellet
+    # to the reach assignment).
     (tmp_path / f"{STEM}_unified_ground_truth.json").write_text(json.dumps({
         "video_name": STEM,
         "reaches": {"exhaustive": False, "reaches": [

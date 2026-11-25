@@ -52,7 +52,7 @@ PAW_LK_THR = 0.5
 ON_PILLAR_RADII = 1.0
 SLIT_BUFFER_PX = 5.0
 
-# This stage's above-slit-vs-in-SA partition has too many
+# 2026-05-03: this stage's above-slit-vs-in-SA partition has too many
 # false positives in multi-reach segments to converge to 100% trust.
 # Setting threshold prohibitively high to effectively disable this
 # stage; keeping the file for documentation of an attempted approach

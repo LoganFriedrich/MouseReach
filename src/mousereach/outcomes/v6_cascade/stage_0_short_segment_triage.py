@@ -21,7 +21,7 @@ Position in cascade:
     quality check is triaged before any committing stage gets a
     chance to evaluate it.
 
-Empirical calibration (train_pool corpus, 740 segments):
+Empirical calibration (2026-05-02 corpus, train_pool, 740 segments):
 - Normal segments: 1825-1851 frames (very tight, p1-p100)
 - Below 200 frames: 5 untouched + 1 retrieved (all data-quality)
 - Below 300 frames: same 6 (no new touched-class additions)
@@ -41,7 +41,7 @@ from .stage_base import SegmentInput, Stage, StageDecision
 
 
 # Threshold below which a segment is considered "abnormally short" /
-# data-quality issue. Calibrated against the train_pool
+# data-quality issue. Calibrated 2026-05-02 against the train_pool
 # corpus distribution: normal segments are 1825+ frames; below 300
 # only data-quality outliers exist.
 MIN_NORMAL_SEGMENT_LENGTH = 300

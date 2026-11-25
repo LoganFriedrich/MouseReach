@@ -1313,7 +1313,7 @@ class PipelineDashboard(QWidget):
     def _build_lock_tab(self) -> QWidget:
         """Freeze a dataset for a paper: locked videos are never reprocessed
         until unlocked. Workflow (a scientist's deliberate act), so it is a
-        tab with buttons."""
+        tab with buttons -- previously terminal-only."""
         widget = QWidget()
         lay = QVBoxLayout(widget)
         intro = QLabel(

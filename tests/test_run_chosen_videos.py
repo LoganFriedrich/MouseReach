@@ -1,6 +1,5 @@
 """Run chosen videos by hand: run_one.run_chosen_videos, the Run Pipeline
-tab's "Run chosen videos..." and mousereach-run-videos (owner requirement
-MRR-15a, 2026-11-19: everything runnable by hand, easily, CLI and GUI, with
+tab's "Run chosen videos..." and mousereach-run-videos (everything runnable by hand, easily, CLI and GUI, with
 the watcher's own steps).
 
 Pinned here:

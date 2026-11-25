@@ -116,7 +116,7 @@ def _fixer(bundle):
         video_stem=STEM, boundaries=[120, 900, 1700], original_boundaries=[100, 900, 1700],
         n_frames=2400, _pose_frames=2400, status=_Label(),
         _next_video=lambda: None,
-        # Every cut walked (hand_cuts.BOUNDARY_CALLS_KEY, owner decision MRR-08d).
+        # Every cut walked (hand_cuts.BOUNDARY_CALLS_KEY).
         _calls={f: {"frame": f, "action": "accepted"} for f in (120, 900, 1700)},
         _removed_calls=[])
     stub._uncalled = lambda: fsw.FixSegmentationWidget._uncalled(stub)

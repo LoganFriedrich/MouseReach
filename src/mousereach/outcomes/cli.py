@@ -79,12 +79,12 @@ def main_batch():
     ``pipeline/reprocess_to_current.py`` call per video. It has no
     detection or input-reading logic of its own.
 
-    WHY: this command must not carry its own copies of the input
-    readers: a reach reader that only understood a flat top-level
+    WHY: until 2026-08 this command carried its own copies of the input
+    readers, and its reach reader only understood a flat top-level
     ``reaches`` list, while the reach detector (v8) nests reaches under
-    ``segments[].reaches``, would run the cascade here with ZERO reach
+    ``segments[].reaches``. The cascade therefore ran here with ZERO reach
     windows -- every reach-dependent stage deferred and most touched
-    segments falling through to triage -- while the pipeline, reading the
+    segments fell through to triage -- while the pipeline, reading the
     same files through ``core/batch.py``, scored them. Two implementations
     of one step drift apart; there is now one.
 

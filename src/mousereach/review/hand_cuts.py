@@ -15,8 +15,8 @@ lost or poisons the data:
    (causal_review_io.cuts_set_at), so an answer a person gave on the OLD
    cuts stands only on a pellet whose frames did not move; any other is void
    and dropped, and its pellet takes the call of the algorithms re-run on the
-   new cuts, asked in triage only if they flag it
-   (causal_review_io.answer_survives_recut).
+   new cuts, asked in triage only if they flag it (owner rulings 2026-11-18
+   and 2026-11-21, causal_review_io.answer_survives_recut).
 2. Everything computed from the old cuts is archived and removed
    (``invalidate_stale_downstream``), so the pipeline recomputes it from the
    new cuts instead of describing frames that no longer belong together.
@@ -26,9 +26,9 @@ lost or poisons the data:
 The segmentation fixer (review/fix_segmentation_widget.py) has always saved
 this way. The per-step boundary review screen ("Step 2b - Review Boundaries",
 ``mousereach-segment-review``, the Boundaries tab of "Review Tool (Tabbed)")
-must not rewrite the segments file in place WITHOUT the mark: the next segmenter
-run would replace the person's cuts, answers given on the old cuts would not be voided,
-and nothing after segmentation would be recomputed. Both save through here.
+used to rewrite the segments file in place WITHOUT the mark: the next segmenter
+run replaced the person's cuts, answers given on the old cuts were not voided,
+and nothing after segmentation was recomputed. Both now save through here.
 
 WHERE A CUT EDITOR MAY NOT SAVE (``save_refusal``)
 --------------------------------------------------
@@ -66,7 +66,8 @@ DOWNSTREAM_SUFFIXES = ("_reaches.json", "_pellet_outcomes.json",
 
 
 # ---------------------------------------------------------------------------
-# Every boundary is a person's explicit call ("Force a human to at least look at every single boundary ...
+# Every boundary is a person's explicit call (owner decision MRR-08d,
+# 2026-11-19: "Force a human to at least look at every single boundary ...
 # can't save and can't send the video out of resegmentation until they have
 # explicitly accepted that a boundary is already correctly placed or have
 # corrected it.")
@@ -314,7 +315,7 @@ def commit_hand_cuts(seg_path, video_stem: str, seg: dict, archive_dir) -> List[
 # ---------------------------------------------------------------------------
 # Ground truth's cuts are a person's cuts
 # ---------------------------------------------------------------------------
-# WHY: "What a human said is correct and is
+# WHY (owner decision D5-6, 2026-11-19): "What a human said is correct and is
 # what the algorithms that come after ... should use as the correct result."
 # The ground-truth tool (review/ground_truth_widget.py) lets a person set or
 # confirm every cut, and saves each one with ``determined: true`` in
@@ -429,8 +430,8 @@ def apply_ground_truth_cuts(seg_path, video_stem: str, extra_dirs=()) -> Optiona
     the log when they were written, else None.
 
     Never in the filed tree or on a video locked for a publication
-    (save_refusal's first rules): a filed video's results are final,
-    so this applies to videos processed from now on.
+    (save_refusal's first rules): a filed video's results are final (owner
+    decision 2026-11-19), so this applies to videos processed from now on.
     Easy/Flat trays are never cut (segmentation/core/batch.process_single
     returns before calling this)."""
     seg_path = Path(seg_path)
@@ -504,7 +505,7 @@ def release_after_hand_cuts(bundle, stem: str) -> str:
         if not routing.is_file() or marker.exists():
             return ""
         # Every boundary must be a person's explicit call before the video
-        # leaves re-segmentation (comment at
+        # leaves re-segmentation (owner decision MRR-08d, comment at
         # BOUNDARY_CALLS_KEY). The segmentation fixer refuses such a save; this
         # catches any other cut editor that saved into the queue.
         try:

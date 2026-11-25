@@ -1,7 +1,7 @@
 """Put a FILED video into a review queue while its filed copy stays filed.
 
-THE RULE ("filed is final")
-----------------------------
+THE RULE (lab decision, 2026-11-19: "filed is final")
+-----------------------------------------------------
 Once a video is filed its results are the final answer. Nothing automatic ever
 takes a filed video back into a queue. A PERSON may: ``mousereach-route-to-
 queue`` run by hand, or a 'wrong pellet' answer a person saved on that filed

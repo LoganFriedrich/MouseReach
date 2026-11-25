@@ -72,7 +72,7 @@ def held(tmp_path, monkeypatch):
     pose.write_bytes(b"")
     monkeypatch.setattr(o, "resolve_pose_input", lambda *a, **k: pose)
     # The pose stand-in is an empty file; the pose test is not what is tested
-    # (an unusable pose of a video not filed starts it over, 2026-11-19).
+    # (an unusable pose of a video not filed starts it over).
     import mousereach.pipeline.pose_check as _pc
     monkeypatch.setattr(_pc, "check_pose", lambda *a, **k: (True, ""))
 

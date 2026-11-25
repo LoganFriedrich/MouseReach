@@ -2,7 +2,7 @@
 decision about a label mismatch (watcher/hand_scores.suspension,
 record_decision; watcher/label_decision_cli.py).
 
-WHY (owner, 2026-11-18): for sessions whose tray labels disagree with the
+WHY: for sessions whose tray labels disagree with the
 sheet, while nobody knows whether the file names or the sheet rows are the
 swapped ones, "we can't draw any conclusions about manual score mismatch.
 Leave that element out for now when calling triage on exclusively these
@@ -118,7 +118,7 @@ def test_a_sheet_error_decision_files_it_with_the_disagreement_recorded(tmp_path
     _outcomes(folder, P4_ROW)               # every pellet called: nothing else to ask
     orch = _orch(tmp_path, monkeypatch)
     # A sheet-error decision recorded while the label-mismatch hold existed
-    # (retired 2026-11-20) still stands: filed with the disagreement recorded.
+    # (since retired) still stands: filed with the disagreement recorded.
     mm = hs.label_mismatch(VID, hs.algo_classes(_doc(folder)), {VID: P3_ROW, OTHER: P4_ROW})
     hs.record_decision(VID, hs.DECISION_SHEET_ERROR, "a reviewer", mismatch=mm)
     assert orch._hand_score_precheck(VID, folder) is True       # goes on
@@ -139,7 +139,7 @@ def test_a_sheet_error_decision_files_it_with_the_disagreement_recorded(tmp_path
 
 
 def test_a_recorded_name_wrong_decision_changes_nothing_now(tmp_path, monkeypatch):
-    """Retired hold (2026-11-20): the video is compared with its own row."""
+    """Retired hold: the video is compared with its own row."""
     folder = _setup(tmp_path, monkeypatch, {VID: P3_ROW, OTHER: P4_ROW})
     orch = _orch(tmp_path, monkeypatch)
     hs.record_decision(VID, hs.DECISION_NAME_WRONG, "a reviewer", new_name=OTHER)

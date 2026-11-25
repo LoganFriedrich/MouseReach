@@ -1,4 +1,4 @@
-"""A session flag is a note and nothing else (lab decision 2026-11-19, D5-10).
+"""A session flag is a note and nothing else.
 
 "Flags are there so we could in theory find them." Flag Session in the review
 window records who flagged the mouse+day session, when and why. It moves no

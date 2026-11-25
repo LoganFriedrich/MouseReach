@@ -45,8 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Cross-node coordination lives in MouseReach's OWN shared database on the NAS
 # root (watcher_central.db), never inside another tool's database. These
-# tables are not created inside the database file of a separate tool: the tool
-# would own tables in a database it does not own, and could not run anywhere else.
+# tables used to be created inside the database file of a separate tool at a
+# hardcoded path -- the tool owned tables in a database
+# it did not own, and could not run anywhere else.
 def _coordination_db_path():
     try:
         from mousereach.config import Paths
@@ -116,11 +117,11 @@ def _file_on_this_node(video_id: str, remote: dict, hostname: str) -> Optional[P
 
 # A review hold is this node's own verdict that a person must look at the video.
 # Holds sit outside VIDEO_STATE_ORDER, so _state_index ranks them -1 and EVERY
-# remote state would compare as "ahead" of them: a pose-only node's 'archived'
-# (which means "this node handed it off", not "analysed") would overwrite a newer hold
-# on the next restart. That would turn a deep-review
-# hold into 'archived' with no results anywhere, from a remote record written
-# BEFORE the hold.
+# remote state used to compare as "ahead" of them: a pose-only node's 'archived'
+# (which means "this node handed it off", not "analysed") overwrote a newer hold
+# on the next restart. Seen on a GPU node: a deep-review
+# hold became 'archived' with no results anywhere, from a remote record written
+# three weeks BEFORE the hold.
 REVIEW_HOLD_STATES = ('triage', 'deep_review')
 
 
@@ -136,8 +137,9 @@ def _elsewhere_reason(remote: dict, remote_state: str) -> str:
     Before its pose is finished (BEFORE_POSE_STATES) the reason starts with
     single_claim.ELSEWHERE_BEFORE_POSE_REASON, one of REDRIVE_REASONS: the
     singles intake validates the row again when the file is back at the top of
-    the shared folder, stable and claimed by nobody. WHY: a reason the intake never re-drives would
-    bring a video the other node gave back to this node only at its next restart. After the pose (or
+    the shared folder, stable and claimed by nobody. WHY: these rows used to
+    carry a reason the intake never re-drives, so a video the other node gave
+    back came back to this node only at its next restart. After the pose (or
     for a filed video) the plain reason stays: such a video does not come back
     through the singles folder."""
     from mousereach.watcher import single_claim
@@ -168,8 +170,8 @@ def _is_live_local_work(local_row) -> bool:
     node is this node's LIVE work, not stale bookkeeping to be advanced.
 
     WHY: every re-posed video was archived once, so its central record (and
-    its name in the reach table) says 'archived'. Recovery does not advance
-    the local row to match, which would turn a video queued for a new pose back
+    its name in the reach table) says 'archived'. Recovery used to advance
+    the local row to match, which turned a video queued for a new pose back
     into 'archived' on the first restart, with its copied mp4 orphaned in
     DLC_Queue. Disk truth wins, as it does in the archive step.
     """
@@ -205,7 +207,7 @@ COLLAGE_STATE_ORDER = [
 ]
 
 # A collage claim left in 'cropping' this long by another host is taken over.
-# WHY: a permanent claim would let a node that claimed a collage and then
+# WHY: claims used to be permanent, so a node that claimed a collage and then
 # crashed, lost the share, or failed the crop without releasing blocked that
 # collage for every node forever. A crop takes minutes to an hour or two, so a
 # day of silence means the claimant is not coming back; the margin also swamps
@@ -424,7 +426,7 @@ class PipelineCoordinator:
         correct since only one PC works a video at a time -- but only for the
         columns that writer actually supplies.
 
-        This is not INSERT OR REPLACE, which is a DELETE followed by an
+        This used to be INSERT OR REPLACE, which is a DELETE followed by an
         INSERT: every column the caller did not name was reset to NULL. Callers
         name state and a timestamp, never source_path, so every sync erased the
         path again. The result was a coordination table where every row had
@@ -1036,8 +1038,9 @@ class PipelineCoordinator:
                 # central database, so it is finished -- the row exists purely to
                 # stop this node redoing it. 'archived' is truthful whether or not
                 # the file is on this machine, because the archive is on the NAS
-                # and every node can reach it; a placeholder path
-                # ('recovered_from_mousedb') is not, and handlers pass it to Path().
+                # and every node can reach it; the placeholder path that used to
+                # be written here ('recovered_from_mousedb') was not, and four
+                # handlers passed it to Path().
                 try:
                     # No file search here on purpose. This row's only job is to
                     # say "finished, do not redo"; nothing reads its path, and the

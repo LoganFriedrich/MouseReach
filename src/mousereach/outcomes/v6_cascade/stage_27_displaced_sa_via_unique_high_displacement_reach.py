@@ -63,7 +63,7 @@ OKF_OFFSET = 5
 # displacement as unmeasurable rather than confidently zero/large.
 MIN_WINDOW_FRAMES = 5
 # Triage if the chosen causal reach lands within edge buffers of
-# segment boundaries. Empirical: wrong commits cluster at
+# segment boundaries. Empirical 2026-05-04: wrong commits cluster at
 # d_end < 25 frames (ASPA reload / next-pellet position noise); correct
 # commits have d_end >= 595. Start-edge transition zone shorter; correct
 # commits land as close as d_start = 38, so start buffer is set lower.

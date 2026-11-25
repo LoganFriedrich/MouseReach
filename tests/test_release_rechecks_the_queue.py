@@ -23,7 +23,7 @@ def _finished_bundle(root):
     (b / f"{STEM}_segments.json").write_text(json.dumps(
         {"boundaries": [100, 200, 300], "boundary_source": "human",
          "corrected_at": "2099-01-11T09:00:00",
-         # every cut walked (hand_cuts.BOUNDARY_CALLS_KEY, MRR-08d)
+         # every cut walked (hand_cuts.BOUNDARY_CALLS_KEY)
          "boundary_calls": [{"frame": f, "action": "accepted"} for f in (100, 200, 300)]}),
         encoding="utf-8")
     return b

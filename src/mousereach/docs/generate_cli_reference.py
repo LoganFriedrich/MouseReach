@@ -126,8 +126,9 @@ def capture_help(exe_dir: Path, name: str) -> tuple:
     text = (r.stdout or "").strip() or (r.stderr or "").strip()
     if r.returncode not in (0, 2) or not text:
         return ("no_help", (text or "no output") [:2000])
-    # A command that ignores --help does its job instead (setting a system
-    # policy, rewriting a file, printing live data into this public file). No usage line is
+    # A command that ignores --help does its job instead: on 2026-10-22 eight
+    # did -- one set the PowerShell execution policy, one rewrote a summary CSV,
+    # two printed live corpus numbers into this public file. No usage line is
     # how that shows; say so loudly rather than publish the output.
     if not re.search(r"(?im)^\s*usage:", text):
         return ("ran_instead", "--help printed no usage line, so the command "

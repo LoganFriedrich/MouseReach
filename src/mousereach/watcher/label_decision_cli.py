@@ -1,6 +1,6 @@
 """mousereach-label-mismatch: the record of the RETIRED label-mismatch hold.
 
-RETIRED ("just trust what is written down")
+RETIRED 2026-11-20 (owner rule: "Just trust what is written down")
 -------------------------------------------------------------------
 A video is always processed and filed under the name a person gave it. The
 watcher no longer holds a video whose results match another tray's hand
@@ -123,7 +123,7 @@ def main(argv=None) -> int:
         return 0
 
     video = a.sheet_error or a.name_wrong or a.labels_right
-    # RETIRED: no hold, so nothing to decide. Refused before
+    # RETIRED 2026-11-20: no hold, so nothing to decide. Refused before
     # anything is written, so the record keeps only real decisions.
     print("[FAIL] The label-mismatch hold was retired on 2026-11-20 (owner rule: trust "
           "the name a person gave). %s is processed and filed under its own name; no "

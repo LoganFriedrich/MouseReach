@@ -92,7 +92,7 @@ def test_route_to_queue_sees_it_too(tmp_path, empty_gt_index):
 
 
 def test_the_release_check_reads_ground_truth_inside_a_bundle(tmp_path, empty_gt_index):
-    """Owner decision MRR-03d (2026-11-19): a person's answer about the
+    """A person's answer about the
     correct pellet is always true, so ground truth inside a bundle answers
     its flagged pellets on the release side too (see the comment in
     triage_status.triage_status)."""

@@ -129,7 +129,7 @@ def test_the_run_button_runs_the_watchers_own_pass(tab):
 def test_the_tab_leaves_a_persons_cuts_alone(tab):
     """No control on the tab deletes outputs in Processing: a hand-cut
     segments file sitting there is untouched after a run. The old "Reprocess
-    All" button, which deleted them, is gone (2026-11-19)."""
+    All" button, which deleted them, is gone."""
     seg = tab.processing / "20990101_PRJ0101_P1_segments.json"
     seg.write_text(json.dumps({"boundaries": [10, 20], "boundary_source": "human"}),
                    encoding="utf-8")
@@ -170,7 +170,7 @@ def test_on_a_pose_only_pc_the_tab_says_it_poses_and_does_not_analyse(tab):
 
 
 def test_chosen_videos_run_through_the_watchers_own_steps(tab, monkeypatch):
-    """The owner's answer (2026-11-19, MRR-15a): chosen videos are run by hand
+    """Chosen videos are run by hand
     again, through the same code as the watcher (run_one.run_chosen_videos).
     The greyed-out "Select Specific Files...", "Clear Selection" and
     "Reprocess All..." are gone; the tab says what is not run and why."""

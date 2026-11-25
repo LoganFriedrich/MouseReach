@@ -22,7 +22,7 @@ path takes the row out of 'validated' -- finished or held rows are recorded as s
 (and cost no poll, the handler returns True), a vanished file is marked unresolvable,
 a second copy of another node's claim likewise. See test_singles_intake_claim.py.
 
-Since 2026-10-21 the bucket IS checked against a listing of the places the handler
+The bucket IS checked against a listing of the places the handler
 takes a video from (the shared folder among them) -- never against the recorded path
 alone -- so a row whose file is in the shared folder is offered whatever its recorded
 path says, which is what these tests pin. They put the file in a test shared folder.

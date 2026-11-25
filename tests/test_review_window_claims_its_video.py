@@ -1,5 +1,4 @@
-"""One review window per video (MRR-02d; folder approved by the lab owner
-2026-11-19).
+"""One review window per video .
 
 Two review windows could be handed the same video: each picked by priority
 and a random draw, with nothing saying another window had it open. Now a

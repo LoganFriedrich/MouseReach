@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Quick summary: the filed results per session, plus overall totals.
 
-Delegates to ``mousereach-results --level session``
-(export/results.py). WHY: reading only the local Processing folder finds
-nothing after filing empties it, and counting a session's success rate over
-every segment would include a segment with no pellet. It writes the session-level export of the FILED results
+Redirected 2026-11-19 to ``mousereach-results --level session``
+(export/results.py). WHY: this command read only the local Processing folder,
+which filing empties, so after filing it found nothing; and it counted a
+session's success rate over every segment, a segment with no pellet
+included. It now writes the session-level export of the FILED results
 (retrieved / pellets presented) and prints the overall totals from it.
 """
 import sys

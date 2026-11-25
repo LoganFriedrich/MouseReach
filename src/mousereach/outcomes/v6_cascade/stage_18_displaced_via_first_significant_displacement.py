@@ -48,11 +48,11 @@ PELLET_LK_HIGH = 0.95
 PELLET_LK_OFF_PILLAR = 0.7
 PAW_LK_THR = 0.5
 ON_PILLAR_RADII = 1.0
-# This stage's "first significant displacement" approach
+# 2026-05-03: this stage's "first significant displacement" approach
 # yields high-yield commits but with many wrong-bout errors -- GT
 # picks the LAST paw-over-pellet (often a later bout in multi-reach
 # segments). Disabling. Keeping for documentation.
-# Stage 18's bout-pick approaches (FIRST/LAST/MAX of
+# 2026-05-03: Stage 18's bout-pick approaches (FIRST/LAST/MAX of
 # chained pair) all hit ~85-88% trust ceiling -- GT picks
 # inconsistently between FIRST and LAST in chained-pair displaced
 # cases, so neither algorithm reaches 100% trust. Disabled.

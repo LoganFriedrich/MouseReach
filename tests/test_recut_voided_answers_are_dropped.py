@@ -1,7 +1,7 @@
 """A person's answer a re-cut voided is DROPPED, never re-asked; the pellet
 goes to triage only if the re-run algorithms flag it.
 
-Rule (owner ruling 2026-11-21, replacing feb7c62's "voided and re-asked"): a
+Rule: a
 person's re-segmentation voids every earlier answer whose pellet's frames it
 changed (or whose cuts the files do not show)
 (test_recut_voids_earlier_answers.py covers the voiding). The voided answer is
@@ -143,7 +143,7 @@ def _aside_unchanged(folder, where=None):
 def test_the_gate_passes_a_video_whose_only_question_was_a_voided_answer(run_folder):
     """Pellet 1's answer was voided (frames moved) and the re-run algorithm
     flagged nothing: the answer is dropped, nobody is asked, the video is
-    clean. Until 2026-11-21 it went to triage."""
+    clean. It does not go to triage."""
     decision, reason, _ = rg.evaluate_gate(VID, run_folder)
     assert decision == rg.DECISION_CLEAN, reason
     assert rg.flag_recut_voided(VID, run_folder) == []
@@ -243,7 +243,7 @@ from test_filed_rerun_skips_checks import VID as FILED_VID, rig  # noqa: E402,F4
 def test_a_filed_kinematics_rerun_never_asks_the_voided_pellet_and_files_nothing(
         rig, tmp_path, monkeypatch):
     """A filed video re-run when only a downstream calculation changed runs no
-    gate and asks nobody anything (lab decision 2026-11-19: a kinematics
+    gate and asks nobody anything (a kinematics
     recalculation never holds or re-asks). Its review holds an answer given
     before a person re-cut it: nothing is routed to triage."""
     monkeypatch.setattr(rg, "run_gate", REAL_RUN_GATE)

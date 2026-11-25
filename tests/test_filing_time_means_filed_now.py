@@ -1,4 +1,4 @@
-"""A video's filing time means "filed now" (lab rule, 2026-11-24).
+"""A video's filing time means "filed now".
 
 archived_at is set by filing and holds only while the row is in a filed state
 ('archived', 'outdated', 'crystallized'). Every path that takes a video out of

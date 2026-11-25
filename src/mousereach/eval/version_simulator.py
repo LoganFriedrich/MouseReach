@@ -94,7 +94,7 @@ v3.3.0 - The Bug
     PROBLEM: Many valid reaches have extent -2 to -15px because BOXR_x
              reference point is beyond the actual slit opening
 
-v3.4.0 - Current
+v3.4.0 - Current (Bug Fixed)
     Philosophy: "Detect all intentional reaches, preserve extent for downstream filtering"
     Entry: Hand likelihood > 0.5 AND nose within 25px of slit
     Exit: Hand disappears OR retracts
@@ -300,7 +300,7 @@ ALGORITHMIC_VERSIONS: Dict[str, AlgorithmicVersion] = {
         exit_method="combined",
         exit_retraction_threshold_px=10.0,
         min_duration_frames=2,  # Minimal duration filter
-        min_extent_pixels=None,  # NO EXTENT FILTER
+        min_extent_pixels=None,  # NO EXTENT FILTER - key fix
         merge_gap_frames=2,
         split_threshold_frames=25,
         expected_behavior="Best recall, extent preserved for researcher filtering",
@@ -414,11 +414,12 @@ def simulate_version(
         segment["n_reaches"] = len(filtered_reaches)
 
     # Evaluated from a temporary folder of its own, never beside the real
-    # reaches file. WHY: renaming the simulated file over
-    # <video>_reaches.json in the reaches file's own folder and writing the
-    # original back afterwards would, run on filed results, overwrite
-    # (and, if it stopped half-way, lose) a filed file. Evaluation
-    # re-runs write outside Analyzed and never overwrite.
+    # reaches file. WHY: this used to rename the simulated file over
+    # <video>_reaches.json in the reaches file's own folder and write the
+    # original back afterwards -- run on filed results, an evaluation
+    # overwrote (and, if it stopped half-way, lost) a filed file. Lab rule
+    # 2026-11-19: evaluation re-runs write outside Analyzed and never
+    # overwrite.
     import tempfile
     video_id = evaluator.extract_video_id(reaches_path)
     original_algo_dir = evaluator.algo_dir

@@ -14,9 +14,9 @@ lock and refuses.
 Every way of starting a watcher takes the SAME lock: the command line
 (``mousereach-watch``, cli.main_watch) and the Watcher Control panel's Start
 and Run Once buttons. WHY the panel too: its watcher runs inside the panel's
-own program, and looking for another watcher only by reading the
+own program, and it used to look for another watcher only by reading the
 command lines of running programs -- which may not show a watcher started by
-another Windows login -- could start a second watcher next to one
+another Windows login -- so it could start a second watcher next to one
 already running.
 
 "Held" means another watcher exists. "Access denied" is read as held as

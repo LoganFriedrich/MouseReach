@@ -33,7 +33,7 @@ to reach, outcome or assignment because an output is out of date (below).
 A RE-CUT VOIDS THE EARLIER ANSWERS ON PELLETS IT MOVED. The
 design rule is that re-segmentation voids everything after it, a person's
 earlier outcome and causal-reach answers included -- except an answer on a
-pellet whose frames the re-cut did not change:
+pellet whose frames the re-cut did not change (owner ruling 2026-11-18):
 voided answers are kept as a record only and never applied. Every review
 reader does this when the current cuts come from a re-cut, by a person or
 by the segmenter (causal_review_io.index_review_by_segment, keyed on
@@ -43,7 +43,7 @@ re-cut replaced): an answer given before then counts
 only on an unchanged pellet (causal_review_io.answer_survives_recut). So the deep-review return (resumes at reach on the new
 cuts) treats those pellets as unanswered: the voided answer is dropped and
 the pellet takes the re-run algorithms' call, sent to triage only if they
-flag it (causal_review_io.recut_voided_segments). The
+flag it (owner ruling 2026-11-21; causal_review_io.recut_voided_segments). The
 same holds for a triage return whose algorithm cuts are out of date or
 unreadable (current_start moves its start back to segmentation, so the
 segmenter cuts again): the segmenter records in its new file when its cuts
@@ -170,7 +170,7 @@ def current_start(processing_dir, video_id: str, wanted: str, declared: dict,
     # starts at segmentation, which writes them as the video's cuts, and every
     # later step runs on them. WHY: a video released from a review queue on
     # its ground truth would otherwise resume after the gate and be filed with
-    # the segmenter's cuts the person corrected.
+    # the segmenter's cuts the person corrected (owner decision D5-6).
     try:
         from mousereach.review.hand_cuts import ground_truth_cuts, ground_truth_cuts_due
         _gt_why = ground_truth_cuts_due(seg_doc, ground_truth_cuts(video_id, (folder,)))

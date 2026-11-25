@@ -1,7 +1,7 @@
 """The CPU pose pool (``mousereach-cpu-pose``) is gone, and what it left behind
 is harmless.
 
-WHY: posing on a machine's CPUs was removed on 2026-11-18 -- it did not work
+WHY: posing on a machine's CPUs was removed -- it did not work
 well enough to keep -- so posing is done by graphics-card machines only. These
 tests hold that removal in place and prove the pieces a machine that ran the
 pool may still carry do no harm:

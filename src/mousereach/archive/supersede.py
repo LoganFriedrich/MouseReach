@@ -314,9 +314,10 @@ def supersede_video_outputs(
         # one, and protecting a person's file here would refuse every filing of
         # such a video for good. The review tools treat those trays as uncut
         # (the segmentation fixer's queue releases them rather than asking for
-        # cuts), so a person's cuts on one are not expected (see
-        # docs/PIPELINE_AS_BUILT.md). Without this rule every filing
-        # would replace such a file too.
+        # cuts), so a person's cuts on one are not expected; whether a
+        # person can ever set them is a question for the lab owner, recorded in
+        # docs/PIPELINE_AS_BUILT.md. Before this rule existed every filing
+        # replaced such a file too.
         if (f.name.endswith("_segments.json") and is_human_cuts(f)
                 and not is_outcome_free_tray(video_id)):
             repl = (incoming or {}).get(f.name)

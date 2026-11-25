@@ -120,7 +120,7 @@ def actions_for(item: dict, db=None) -> List[Action]:
     if item.get("kind") in ("left_for_a_person", "queue_folder_in_the_way"):
         return _folder_actions(item)
     if item.get("kind") == "triage_ground_truth_not_counted":
-        # Only a listing written by older code: ground truth
+        # Only a listing written by older code: since 2026-11-19 ground truth
         # inside a triage bundle counts as its answers and the return scan
         # releases such a bundle, then takes the listing off
         # (review_return.GT_NOT_COUNTED_KIND).

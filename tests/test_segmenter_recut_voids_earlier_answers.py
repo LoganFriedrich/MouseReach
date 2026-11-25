@@ -1,6 +1,6 @@
 """A re-cut by the SEGMENTER voids earlier answers exactly as a person's does.
 
-Owner ruling R2 (narrowed the same day): a re-cut voids every answer given
+A re-cut voids every answer given
 before it, except an answer on a pellet whose frames the re-cut did not
 change. A person's re-cut in the segment fixer has followed it since the
 fixer stamps its save (``corrected_at`` and the cuts it replaced). But a
@@ -111,7 +111,7 @@ def test_a_segmenter_recut_voids_answers_on_pellets_it_moved(tmp_path, segment):
 
 
 def test_the_gate_drops_the_voided_answers_and_asks_nothing(tmp_path, segment):
-    # owner ruling 2026-11-21: the voided answers on pellets 2 and 3 are
+    # the voided answers on pellets 2 and 3 are
     # dropped; the re-run algorithm flagged nothing, so the video is clean
     work = _folder(tmp_path / "work")
     segment(NEW_CUTS, work)

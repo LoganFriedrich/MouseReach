@@ -50,7 +50,7 @@ TRANSITION_ZONE_HALF = 5
 PELLET_LK_HIGH = 0.7
 PAW_LK_THR = 0.5
 ON_PILLAR_RADII = 1.0
-# Disabled. Aggressive class commit (post-transition pellet
+# 2026-05-03: disabled. Aggressive class commit (post-transition pellet
 # visibility + cluster check) yields high commits but breaks trust.
 # Conservative version (require very clear signal) yields too few
 # commits with 50% trust to be useful. The class discriminator is
