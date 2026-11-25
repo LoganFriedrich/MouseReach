@@ -194,8 +194,23 @@ Timestamps (ISO strings, on the writing machine's clock)
   dlc_started_at, dlc_completed_at, processing_started_at,
   processing_completed_at, archived_at, created_at, updated_at
 
-  archived_at is when the video was filed. It is NOT when a reprocess_scope was
-  assigned; nothing records that, so a scope cannot be dated from the row.
+  archived_at is when the video was filed, and it is set ONLY while the video
+  is filed now: state 'archived', 'outdated' or 'crystallized'
+  (db.FILED_STATES). Every change to any other state -- routed to a review
+  queue, re-run, re-posed, retired to 'unresolvable', failed, re-cut --
+  moves the time into previously_filed_at and clears archived_at in the same
+  write; filing again sets a new archived_at. A move between the filed states
+  (marked outdated, un-marked, locked, unlocked) keeps the time. Since
+  2026-11-24; before that archived_at was never cleared, and rows from then
+  were corrected once with `python -m mousereach.watcher.filing_time --apply`.
+  So: "is it filed now?" = archived_at set. "Has it ever been filed?" =
+  archived_at or previously_filed_at (db.last_filed_at), which is what the
+  watcher's own re-run decisions read.
+  It is NOT when a reprocess_scope was assigned; nothing records that, so a
+  scope cannot be dated from the row.
+  previously_filed_at (TEXT, added 2026-11-24) the filing time the row had
+  when it last left the filed state; kept when it is filed again. Not copied
+  to watcher_central.db (that record's own line in processing_log says it).
 
 Version tracking (added by migration, db.py:331)
 
@@ -219,7 +234,7 @@ Version tracking (added by migration, db.py:331)
                             'reach', 'outcome', 'kinematics'
                                             re-run from that stage onward
                             A 'kinematics' re-run of a filed video
-                            (archived_at set) reuses every algorithm output
+                            (db.last_filed_at set) reuses every algorithm output
                             and skips the quality triage and the hand-score
                             check; the review gate still runs and asks only
                             about segments no person answered (since

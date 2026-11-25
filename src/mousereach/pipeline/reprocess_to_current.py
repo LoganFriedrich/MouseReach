@@ -173,10 +173,12 @@ FILED_IS_FINAL_SAYS = (
 
 def _is_filed(video_id: str, row: Optional[Dict]) -> bool:
     """True when the video has been filed: its watcher row says so (state
-    'archived', or a filing time), or -- with no row -- its features file is in
+    'archived', or a filing time now or before -- watcher.db.last_filed_at), or
+    -- with no row -- its features file is in
     its filed folder. Never raises; a doubt counts as filed (refusing a
     finalize is the safe side)."""
-    if row and (row.get("state") == "archived" or row.get("archived_at")):
+    if row and (row.get("state") == "archived" or row.get("archived_at")
+                or row.get("previously_filed_at")):
         return True
     try:
         from mousereach.archive.core import get_archive_destination

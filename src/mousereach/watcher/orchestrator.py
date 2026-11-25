@@ -36,7 +36,7 @@ from datetime import datetime, timedelta
 from mousereach import shared_drive
 from mousereach.watcher import claim_marker, node_status
 from mousereach.watcher.cycle_timer import CycleTimer
-from mousereach.watcher.db import INTAKE_COPY_FAILED, INTAKE_MISS_REASON, WatcherDB
+from mousereach.watcher.db import INTAKE_COPY_FAILED, INTAKE_MISS_REASON, WatcherDB, last_filed_at
 from mousereach.watcher.state import WatcherStateManager
 from mousereach.watcher.watcher import FileWatcher
 from mousereach.watcher.router import TrayRouter
@@ -182,7 +182,7 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
         is set -- _reprocess_video sets it for an 'outdated' row, which the
         version scan makes from an 'archived' one, and a retry or a restart of
         that run reads it back from the row, kept_rerun_start_stage);
-      * the video has been filed before (archived_at is set);
+      * the video has been filed before (db.last_filed_at: filed now, or filed before this re-run);
       * none of the four algorithms ran in this run (``recomputed_stages`` is
         empty: every output was reused).
 
@@ -232,7 +232,7 @@ def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
     'kinematics' ONLY, and only when all of these hold:
       * the row's reprocess_scope is 'kinematics' (written by the version scan
         when the scan marks the video 'outdated');
-      * the video has been filed before (archived_at is set);
+      * the video has been filed before (db.last_filed_at: filed now, or filed before this re-run);
       * this watcher does not hold it for its hand scores (such a video ran
         every check already and is picked again only to be compared again).
     A scope of 'segmentation', 'reach' or 'outcome' is not carried over: such
@@ -249,7 +249,7 @@ def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
         return None
     if (row.get('reprocess_scope') or '') != 'kinematics':
         return None
-    return 'kinematics' if row.get('archived_at') else None
+    return 'kinematics' if last_filed_at(row) else None
 
 
 def scope_for_recomputed(recomputed_stages) -> str:
@@ -893,7 +893,7 @@ class BaseOrchestrator:
                 row = self.db.get_video(video_id) or {}
             except Exception:
                 row = {}
-            keep = bool(row.get('archived_at')) and (row.get('reprocess_scope') == 'kinematics')
+            keep = bool(last_filed_at(row)) and (row.get('reprocess_scope') == 'kinematics')
             why = self._make_features(video_id, Path(folder), pose, False,
                                       keep_filed_decisions=keep)
             if isinstance(why, RoutedToReview):
@@ -1187,7 +1187,7 @@ class BaseOrchestrator:
         try:
             from mousereach.watcher import repose
             row = self.db.get_video(video_id) or {}
-            if not (row.get('archived_at') and repose.archived_video(video_id) is not None):
+            if not (last_filed_at(row) and repose.archived_video(video_id) is not None):
                 return False
             declared = repose.declared_scorer()
             scorer = repose.scorer_of(Path(pose_path)) if pose_path else ""
@@ -1217,7 +1217,7 @@ class BaseOrchestrator:
         release = getattr(self, "_release_claim", None)
         # Only the processing server restarts (it holds the posed claim and
         # runs the re-posed video afterwards); elsewhere: as before.
-        if row.get('archived_at') or not nas or not proc_dir or release is None:
+        if last_filed_at(row) or not nas or not proc_dir or release is None:
             return False
         try:
             p = rr.plan(video_id, error, nas_root=nas, db=self.db)
@@ -7657,20 +7657,21 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     def _is_filed_rerun(self, row) -> bool:
         """A row whose current run is a re-run of a video whose FILED results
-        still stand: it has been filed (archived_at) AND this video's filed
+        still stand: it has been filed (db.last_filed_at) AND this video's filed
         features and processing manifest are in its filed folder now
         (_filed_results_present).
 
-        WHY both, and why not the row's re-run scope: archived_at is never
-        cleared, so on its own it means "was filed once", not "its filed
-        results are in Analyzed now" -- mousereach-repose-videos moves the
+        WHY both, and why not the row's re-run scope: "has been filed" is
+        db.last_filed_at (archived_at, or previously_filed_at once the row
+        has left the filed state for this re-run), so on its own it means
+        "was filed once", not "its filed results are in Analyzed now" -- mousereach-repose-videos moves the
         filed pose and every output computed from it into Analyzed/Archive/
         before the re-run, and such a video put back to 'archived' would read
         as filed with nothing filed. The scope is not a reliable sign either:
         a review return clears it, and a stale-outputs gate clears it, yet
         either run is still a re-run of a video whose filed results stand.
         Filed results on disk are the one fact that decides it."""
-        if not row or not row.get('archived_at'):
+        if not row or not last_filed_at(row):
             return False
         return self._filed_results_present(row['video_id'])
 
@@ -7710,7 +7711,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         does not mean the run's files are gone -- one passing failure of such
         a run would have put the video back to 'archived' at once and parked
         the answers the person had just given."""
-        if not row or not row.get('archived_at'):
+        if not row or not last_filed_at(row):
             return False
         try:
             out = int(row.get('error_count') or 0) >= self._max_retries()
@@ -7896,7 +7897,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         again, so no later declaration change or review could bring it current.
 
         What is done:
-          * the row goes back to 'archived', keeping its archived_at (when it
+          * the row goes back to 'archived', with the filing time it had (db.last_filed_at: when it
             was filed), with error_message
             "<FAILED_RERUN_PREFIX>: <why>" -- kept across restarts
             (clear_errors_on_archived), cleared when the video is filed again;
@@ -7929,7 +7930,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         failure (ReprocessingScanner.scan, 'failed_rerun_waiting'); a person
         can press Re-run at any time.
 
-        Only for a video that has been filed (archived_at set) whose filed
+        Only for a video that has been filed (db.last_filed_at set) whose filed
         features and manifest are still in its filed folder (_is_filed_rerun)
         -- whichever run it was: the version scan's, a person's Re-run, a
         review return, or a run a stale-outputs gate sent back. Any other row
@@ -7962,7 +7963,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                 logger.error(f"{video_id}: could not mark it failed ({e})")
             return
         if not self._is_filed_rerun(row):
-            # Never filed (archived_at unset): a first pass that failed and had
+            # Never filed (db.last_filed_at unset): a first pass that failed and had
             # Re-run pressed, or an 'unresolvable' row narrowed to 'outdated'.
             # Or filed once, but its filed results are no longer in its filed
             # folder (mousereach-repose-videos moved them into
@@ -7990,7 +7991,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             self.db.force_state(
                 video_id, 'archived',
                 reason="re-run of a filed video failed; its filed results stand",
-                archived_at=row.get('archived_at'),
+                archived_at=last_filed_at(row),
                 error_message=message, error_count=0,
                 last_error_at=self.db._now(),
                 pipeline_versions_hash=stamp,
@@ -8909,7 +8910,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             row = self.db.get_video(video_id) or {}
             start = (video_data or {}).get("reprocess_start_stage")
             if start:
-                return start == "kinematics" and bool(row.get("archived_at"))
+                return start == "kinematics" and bool(last_filed_at(row))
             held = self._held_for_hand_scores(video_id)
             restored = held and bool(
                 (getattr(self, "_score_waits", {}).get(video_id) or {}).get("restored"))
@@ -9324,7 +9325,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # hand-score comparison; the gate still runs and can only ask about a
         # segment no person has answered.
         try:
-            _archived_at = (self.db.get_video(video_id) or {}).get('archived_at')
+            _archived_at = last_filed_at(self.db.get_video(video_id) or {})
         except Exception as e:
             # Cannot tell whether it was filed: a full set of checks (the cautious way).
             logger.warning(f"{video_id}: could not read whether it was filed before "
