@@ -19,10 +19,9 @@ old folder as a leftover (clear_leftover), before anything moves.
 
 A NEW bundle is never visible half-built. It is assembled in the hidden
 ``dest_root/.incoming/{stem}/`` and published with ONE directory rename, so a
-queue reader sees either no bundle or the whole bundle. WHY: the move used to
-create the empty ``{stem}`` folder first and then fill it file by file
-(cross-volume copies take seconds); the running watcher's return scan saw the
-empty folder, retired it mid-route, and every remaining move failed with
+queue reader sees either no bundle or the whole bundle. WHY: creating the empty ``{stem}`` folder first and then filling it file by file
+(cross-volume copies take seconds) lets the running watcher's return scan see the
+empty folder, retire it mid-route, and fail every remaining move with
 "No such file or directory".
 
 ASCII-only console output (Windows cp1252 consoles cannot print Unicode).
@@ -707,7 +706,7 @@ def move_video_bundle(
             pass
     else:
         # Once files have moved, the publish is ALWAYS attempted. WHY: an
-        # exception here used to skip it, stranding every file -- the video's
+        # exception here must not skip it, stranding every file -- the video's
         # only copy, already gone from Processing -- in the hidden staging
         # folder that no queue reader lists, while the caller marked the video
         # failed with nothing left to retry.
@@ -779,9 +778,9 @@ def read_routing_manifest(bundle_dir: Path, video_id: str) -> Optional[Dict]:
 # return scan skips it, no reader counts it as the video's hold, and a route
 # meeting it is refused instead of merging into it.
 #
-# WHY this rule: a folder a person wrote in used to be either deleted with
+# WHY this rule: a folder a person wrote in must not be either deleted with
 # everything in it (a triage copy of a video moving into deep review) or moved
-# out of the queue to a folder nobody looks at; and machine leftovers piled up
+# out of the queue to a folder nobody looks at; and machine leftovers must not pile up
 # in an archive folder that is meant only for cases the pipeline cannot
 # process at all. A machine leftover with a current copy elsewhere is worth
 # nothing; a person's work is never thrown away or hidden by the machine.

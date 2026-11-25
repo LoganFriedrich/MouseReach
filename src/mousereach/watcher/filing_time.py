@@ -1,4 +1,4 @@
-"""A video's filing time means "filed NOW" (lab rule, 2026-11-24).
+"""A video's filing time means "filed NOW".
 
 THE RULE. ``videos.archived_at`` -- the filing time -- is set when a video
 is filed and holds only while the row is in a filed state (db.FILED_STATES:
@@ -14,9 +14,9 @@ passes through). Filing the video again sets ``archived_at`` again;
 between filed states (marked 'outdated' for a re-run, un-marked, locked or
 unlocked for a publication) is not a new filing and keeps the time.
 
-WHY: archived_at used to be kept for ever once set. On 2026-11-24 the
-processing server had 271 rows with a filing time and nothing filed: videos
-an old route-to-queue had MOVED out of Analyzed into triage, some of them
+WHY: archived_at must not be kept for ever once set, or rows keep a filing time
+with nothing filed: videos
+routed back out of Analyzed into triage, some of them
 escalated to deep review since, re-posed videos whose re-run was held in
 triage, and retired rows whose files had gone to manual corrections. Every
 count or report that read the filing time took them for filed videos.

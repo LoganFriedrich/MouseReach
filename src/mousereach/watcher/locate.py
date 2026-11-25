@@ -9,7 +9,7 @@ pipeline down:
                       and failed nearly every video on a GPU node.
   ``Path(x or '')``   is ``Path('.')``, the current directory, which *exists* --
                       so the obvious guard never fires, the algorithms are handed
-                      a directory as their HDF5 file, and hundreds of videos went to the
+                      a directory as their HDF5 file, and videos go to the
                       human review queue as "[Errno 13] Permission denied: '.'".
   a placeholder       ``source_path='recovered'`` let cross-node recovery mint
                       rows for videos this node has no files for. They sit in a
@@ -158,9 +158,9 @@ def is_in_archive(path) -> bool:
     directly or anywhere beneath it). False when none is configured or the
     path is empty.
 
-    WHY: ``search_archive=False`` used to drop the archive only from the
-    SEARCH; a recorded path pointing into it was still returned. A handler
-    that moves what it finds (staging) would then move a filed video's
+    WHY: ``search_archive=False`` drops the archive from the SEARCH and from a
+    recorded path pointing into it. A handler
+    that moves what it finds (staging) would otherwise move a filed video's
     results out of the archive."""
     if not path:
         return False
@@ -389,8 +389,8 @@ def locate_video_file(video_id: str, raw=None, extra_dirs: Iterable = (),
     what it finds -- staging and DLC inference both do. A hit in the archive is
     the finished copy of the video; moving it out, or dropping a new pose file
     next to it, would damage the archive to satisfy a queue. A recorded
-    ``raw`` path inside the filed folder is then ignored too (it used to be
-    returned whenever the file existed).
+    ``raw`` path inside the filed folder is then ignored too (not returned
+    merely because the file exists).
 
     Pass ``search_staging=False`` from every GPU-node handler: the processing
     server's intake folder is not searched, and a recorded ``raw`` path inside

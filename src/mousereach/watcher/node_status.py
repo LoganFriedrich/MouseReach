@@ -43,11 +43,11 @@ DIR_NAME = ".node_status"
 
 # States a node can report. Deliberately few -- the state answers "should anyone care?".
 # WORKING means the loop is alive and not paused. It does NOT mean the node has work
-# in hand: a node with an empty queue reports "working" too. Since 2026-10-22 the report
+# in hand: a node with an empty queue reports "working" too. The report
 # also says what work is in hand ("doing": type, video, since when -- written as the item
 # starts, so a long pose reads as busy, not stale), the last item finished ("last_done")
-# and how many finished in the past hour ("done_last_hour"); before that, a node
-# churning on nothing looked exactly like a productive one.
+# and how many finished in the past hour ("done_last_hour"), so a node
+# churning on nothing does not look like a productive one.
 WORKING = "working"      # running and willing, whether or not it has anything to do
 PAUSED = "paused"        # running, deliberately not taking work (with a reason)
 STOPPING = "stopping"    # shutting down cleanly
@@ -201,15 +201,15 @@ def describe(nas_root, color: bool = False) -> str:
             lines.append("  %-20s waiting       %s" % (
                 host, r.get("reason") or "shared drive unavailable -- waiting"))
         elif "doing" not in r:
-            # A node on code from before 2026-10-22 does not report its work. Saying
+            # A node on older code does not report its work. Saying
             # "idle" for it would be wrong -- it may be mid-pose -- so say so instead.
             lines.append("  %-20s %-13s (this node's version does not report what it is doing)"
                          % (host, r.get("state", "?")))
         else:
             doing = r.get("doing") or {}
             # One node's odd report must cost only its own line: a list here
-            # (the CPU pose pool's first version wrote one; the pool was removed
-            # 2026-11-18, but an old report can still sit on the share) used to
+            # (the CPU pose pool's first version wrote one; the pool was removed,
+            # but an old report can still sit on the share) must not
             # raise and blank the whole overview.
             if isinstance(doing, dict):
                 now = ("%s %s since %s" % (doing.get("type"), doing.get("id"),

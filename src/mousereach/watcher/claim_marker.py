@@ -147,9 +147,9 @@ def _create(p: Path, host: str, process: Optional[str]) -> bool:
     call created it; raises FileExistsError when a marker is already there.
 
     WHY the text is written first, under a temporary name, and then published
-    with one operation that refuses to replace: the marker used to be created
-    empty and filled in afterwards. A process stopped between the two (a
-    crash, a kill, a share that dropped) left an EMPTY marker; holder() reads
+    with one operation that refuses to replace: a marker created
+    empty and filled in afterwards would let a process stopped between the two (a
+    crash, a kill, a share that dropped) leave an EMPTY marker; holder() reads
     that as "claimed by an unknown host", so even the node that made it was
     refused (take) and could not release it, and nobody could touch the item
     until sweep_gone broke the marker hours later. Published whole, a marker
@@ -226,7 +226,7 @@ def take(claim_dir, key: str, host: str, suffix: str = ".claimed",
     no process (an older version's) counts as held by another process until
     it is LEGACY_MARKER_TAKEOVER_S old. False when another host holds it, or
     when the claim could not be made at all -- the claim folder cannot be
-    created or written. WHY false then (it used to be true, "single node
+    created or written. WHY false then (not true, "single node
     mode"): with several nodes sharing the pool, acting without a claim is
     exactly the double work the claim exists to stop. A node that cannot
     claim waits and tries again.

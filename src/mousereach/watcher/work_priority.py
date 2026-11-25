@@ -643,7 +643,7 @@ def read_lab_priority(nas_root=None, strict: bool = False) -> Optional[dict]:
     """The shared order file's contents, or None when absent/unreadable.
 
     The read has a time limit (shared_drive.read_text_bounded): on a drive that
-    does not answer it used to hang the watcher's pick step. With ``strict``, a
+    does not answer it would hang the watcher's pick step. With ``strict``, a
     drive that is away raises SharedDriveUnavailable instead of reading as "no
     file", so the caller can keep the order it already has."""
     from mousereach.shared_drive import SharedDriveUnavailable, read_text_bounded
@@ -676,7 +676,7 @@ def save_lab_priority(projects=None, cohorts=None, tray_types=None,
 
     Keys this call does not set are KEPT from the file (notes, raw selectors,
     anything written by hand). WHY: a Save from the priority
-    panel used to rewrite the file from the form alone and wiped them."""
+    panel must not rewrite the file from the form alone and wipe them."""
     path = lab_priority_path(nas_root)
     if not path:
         raise ValueError("no shared drive configured, so there is nowhere to "

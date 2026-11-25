@@ -435,7 +435,7 @@ def _drive(video_id, video, cfg, result, _p, _refuse) -> Dict:
 # WHY: on a single machine a chosen video may not be posed yet (it waits in
 # the shared singles folder or this machine's pose queue), or may be a whole
 # multi-animal recording in the intake folder. The processing machine never
-# poses, so run_one_video used to refuse such a video ("no pose yet; the pose
+# poses, so run_one_video would refuse such a video ("no pose yet; the pose
 # is made on a graphics-card PC") -- on a single machine there is no other PC.
 # The posing half's OWN handlers do it here (DLCOrchestrator._dispatch_work,
 # the same calls its watcher makes): adopt the single, pose it, hand the pose

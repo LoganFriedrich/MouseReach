@@ -73,8 +73,8 @@ AFTER THE ROUND TRIP: THE PARKED FOLDER IS CLEARED
 --------------------------------------------------
 The re-run copies the parked video down, and when it ends the video has a
 new home: its filed folder in Analyzed, or a new bundle in a review queue.
-The parked folder is then a leftover copy, and it used to stay for good --
-and while it existed this command refused any later re-pose of the video.
+The parked folder is then a leftover copy, which would stay for good --
+and while it existed this command would refuse any later re-pose of the video.
 ``clear_parked`` deletes it, but only when every one of these holds
 (the lab's rule for machine leftovers: deleted once a current copy elsewhere
 is verified, never set aside, and anything that may be a person's work is
@@ -459,8 +459,8 @@ def plan_and_move(db, video_id: str, *, label: str, reason: str, hostname: str,
     held = bundle is not None or rep["where"] == "parked (resumed)"
 
     # ---- 0. a held bundle leaves its queue in ONE rename, under the queue's
-    # own claim. WHY (2026-11-09): files used to be moved out of the bundle
-    # while it still sat in the queue. The watcher's review-return scan then
+    # own claim. WHY: moving files out of the bundle
+    # while it still sat in the queue would let the watcher's review-return scan
     # read a bundle with no segments file as "segmentation failed" and
     # diverted what was left of it into deep review in the middle of the
     # move. Renaming the whole folder first means the queue only ever holds
