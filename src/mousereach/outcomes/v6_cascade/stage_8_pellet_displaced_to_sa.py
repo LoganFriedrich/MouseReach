@@ -122,8 +122,8 @@ IFR_POSITION_IN_BOUT = 0.4
 # pellet sustained near its rest position throughout the LATER part
 # of the segment (since the pellet can't return to the pillar). For
 # retrieved cases, the pellet briefly appears off-pillar then
-# disappears -- low late-segment observability. Empirical analysis
-# displaced p5 = 324 frames, retrieved p50 = 39, in
+# disappears -- low late-segment observability. Empirical analysis on
+# the training corpus: displaced p5 = 324 frames, retrieved p50 = 39, in
 # the last 25% of clean zone. Threshold of 250 cleanly separates.
 LATE_SEGMENT_FRACTION = 0.25
 LATE_SEGMENT_OBSERVABLE_MIN_FRAMES = 250

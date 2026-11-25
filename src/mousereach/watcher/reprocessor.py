@@ -875,7 +875,7 @@ class ReprocessingScanner:
                 # precisely that the current-version OUTPUTS are wrong). The
                 # protection must not live only in the compat branch below, or
                 # a version-current-outright row would lose its hand-mark within one
-                # scan: the dashboard Re-run button's promise would self-cancel
+                # scan (inside 30 minutes): the dashboard Re-run button's promise would self-cancel
                 # for every current video, and a repair
                 # re-mark would be wiped mid-repair. Never un-mark a
                 # row carrying a reason; only the drain clears it.

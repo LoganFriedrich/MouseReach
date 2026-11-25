@@ -346,8 +346,8 @@ def copy_to_dlc_queue(
 ) -> int:
     """Hand the mp4s of ``source_dir`` to the pose step (``hand_to_pose``).
 
-    Kept under its old name for scripts that call it. It no longer copies or
-    moves anything into a DLC queue (``dest_dir`` and ``move`` are ignored):
+    Kept under this name for scripts that call it. It does not copy or
+    move anything into a DLC queue (``dest_dir`` and ``move`` are ignored):
     the only way into a DLC queue is a watcher's claim (``hand_to_pose`` says
     why). Returns how many videos are now waiting for a pose in the shared
     singles folder (handed on, or already there)."""

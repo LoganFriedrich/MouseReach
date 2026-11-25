@@ -208,8 +208,7 @@ def describe(nas_root, color: bool = False) -> str:
         else:
             doing = r.get("doing") or {}
             # One node's odd report must cost only its own line: a list here
-            # (the CPU pose pool's first version wrote one; the pool was removed,
-            # but an old report can still sit on the share) must not
+            # (a report written by a different version can still sit on the share) must not
             # raise and blank the whole overview.
             if isinstance(doing, dict):
                 now = ("%s %s since %s" % (doing.get("type"), doing.get("id"),

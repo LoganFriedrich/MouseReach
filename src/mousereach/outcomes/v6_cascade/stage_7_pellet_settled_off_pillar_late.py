@@ -12,7 +12,7 @@ what happened pre-reach. Mirror of Stage 1's "position-never-changed"
 applied to the END of the segment.
 
 Why this stage exists:
-    Stage 8 (formerly the only displaced_sa stage) requires the pellet
+    Stage 8 (the strict displaced_sa stage) requires the pellet
     to have been confidently on-pillar BEFORE the causal reach AND
     sustained off-pillar after AND a clean causal-bout walk-back. Real
     displaced cases often fail the pre-reach precondition because the

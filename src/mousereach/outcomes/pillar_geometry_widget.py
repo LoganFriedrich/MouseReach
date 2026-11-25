@@ -509,7 +509,7 @@ class PillarGeometryAnnotatorWidget(QWidget):
 
         self.pillar_circle_layer.data = [circle]
 
-        # Update info (no longer auto)
+        # Update info (the circle is set by hand)
         center_y = (circle[0, 1] + circle[1, 1]) / 2
         center_x = (circle[0, 2] + circle[1, 2]) / 2
         radius = (circle[1, 1] - circle[0, 1]) / 2

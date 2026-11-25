@@ -2000,7 +2000,7 @@ class BaseOrchestrator:
         stop on Windows is a hard kill. psutil's terminate() is an alias for
         kill() there, and a watcher started detached (as the Restart button
         starts it) has no console, so a Ctrl+C event cannot reach it either.
-        Killing a watcher mid-pose throws away a long GPU run and can
+        Killing a watcher mid-pose throws away a 14-minute GPU run and can
         strand the video outright.
 
         The loop checks this between work items, so the item in flight always

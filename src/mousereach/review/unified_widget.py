@@ -461,7 +461,7 @@ class UnifiedReviewWidget(QWidget):
             self._load_video_from_path(Path(path))
 
     def _load_video(self):
-        """Load video via file dialog (legacy method, now uses dropdown)."""
+        """Load a video through the browse dialog."""
         self._browse_for_video()
 
     def _load_video_from_path(self, video_path: Path):

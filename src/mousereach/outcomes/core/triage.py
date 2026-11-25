@@ -11,14 +11,14 @@ import shutil
 from typing import Dict, List, Optional
 
 
-# v2.5 (2026-02): Recalibrated from empirical data on 27 processed videos.
-#   - Accept 20 or 21 segments (segmenter produces 21 boundaries)
-#   - Confidence threshold lowered to 0.80 (was 0.90). At 0.90 only 22%
-#     of segments pass; at 0.80, 97.6% pass. The detector's 0.85 mode
-#     represents confident classifications that shouldn't trigger review.
-#   - "retrieved" outcomes no longer auto-flag for review. The 68%
-#     accuracy concern is captured in the confidence score itself —
-#     low-confidence retrievals still get flagged via the threshold.
+# Thresholds, set from empirical data on processed videos:
+#   - Accept 20 or 21 segments (the segmenter produces 21 boundaries).
+#   - Confidence threshold 0.80: at 0.90 only 22% of segments pass, at 0.80
+#     97.6% pass. The detector's 0.85 mode represents confident
+#     classifications that should not trigger review.
+#   - "retrieved" outcomes are not auto-flagged for review: the confidence
+#     score already captures that uncertainty, so low-confidence retrievals
+#     are flagged via the threshold.
 EXPECTED_SEGMENTS_MIN = 20
 EXPECTED_SEGMENTS_MAX = 21
 OUTCOME_LOW_CONFIDENCE = 0.80
@@ -98,12 +98,12 @@ def check_anomalies(result: Dict, gt_data: Optional[Dict] = None) -> List[str]:
     If gt_data is provided, segments with human_verified=True are considered
     resolved and won't trigger anomalies.
 
-    v2.5: Recalibrated thresholds from empirical data (27 videos).
-      - Accept 20 or 21 segments (was: exactly 20)
-      - Confidence threshold lowered to 0.80 (was: 0.90). At 0.90 only
-        22% of segments pass; at 0.80, 97.6% pass.
-      - "retrieved" outcomes no longer auto-flag. The confidence score
-        already captures uncertainty — low-confidence retrievals are
+    Thresholds (from empirical data):
+      - Accept 20 or 21 segments.
+      - Confidence threshold 0.80: at 0.90 only 22% of segments pass, at
+        0.80 97.6% pass.
+      - "retrieved" outcomes are not auto-flagged. The confidence score
+        already captures uncertainty: low-confidence retrievals are
         caught by the threshold, high-confidence ones are fine.
     """
     anomalies = []
@@ -148,7 +148,7 @@ def triage_results(input_dir: Path, output_base: Path = None, verbose: bool = Tr
     files in Processing/ and tracks status via validation_status in JSON.
     Use the watcher (mousereach-watch, or the "2 - Run Pipeline" tab) instead.
 
-    v2.3+: No longer creates folders or moves files. Updates JSON metadata only.
+    Creates no folders and moves no files; updates JSON metadata only.
     """
     import warnings
     warnings.warn(

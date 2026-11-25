@@ -10,7 +10,7 @@ strategy approach with primary, secondary, and fallback detection methods.
 SCIENTIFIC DESCRIPTION
 ======================
 During the single-pellet reaching task, an automated pellet dispensing system
-presents 21 pellets in sequence. Each presentation causes the scoring area
+presents 20 pellets in sequence (21 cuts). Each presentation causes the scoring area
 frame (tracked via corner points SABL, SABR, SATL, SATR) to move as the tray
 advances. This algorithm detects trial boundaries by tracking when the SABL
 point crosses the box center position with sufficient velocity, indicating

@@ -1,4 +1,4 @@
-"""One review window per video .
+"""One review window per video.
 
 Two review windows could be handed the same video: each picked by priority
 and a random draw, with nothing saying another window had it open. Now a

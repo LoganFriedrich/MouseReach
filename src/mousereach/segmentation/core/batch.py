@@ -161,7 +161,7 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
     # boundary at frame 0, which every reach detector reads as one segment
     # running to the end of the video -- so reaches are found across the whole
     # session, and the ruler is one estimate over the whole video. Running the
-    # segmenter on them cut 21 pellet windows nobody uses and, when it failed,
+    # segmenter on them cut pellet windows nobody uses and, when it failed,
     # held the session for a person. Checked before the human-boundary rule
     # below: a hand-set cut on one of these is no more used than a machine one.
     if is_outcome_free_tray(video_id):

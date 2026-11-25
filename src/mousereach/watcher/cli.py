@@ -273,8 +273,8 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         sys.exit(1)
 
     # Print startup banner
-    # Determine mode label. An unknown role is refused here: a typo in
-    # watcher.mode would start a pose-only node without a word.
+    # Determine mode label. An unknown role is refused here: a mistyped
+    # watcher.mode would otherwise run a node with the wrong job and no warning.
     from mousereach.watcher.standalone import (
         KNOWN_ROLES, analyses_and_files, poses, role_label)
     if config.mode not in KNOWN_ROLES:

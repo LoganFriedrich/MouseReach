@@ -4,7 +4,7 @@ Production entry point for the v6 cascade outcome detector.
 Takes (dlc_df, segments, reaches) and returns the standard
 pellet_outcomes dict that the rest of the pipeline expects.
 
-This is a thin wrapper around the 30 cascade stages (0-29 + 98 + 99).
+This is a thin wrapper around the 33 cascade stages (0-29, 6b, 98 and 99).
 The stages themselves are deterministic rule-based classifiers --
 no model artifact required.
 

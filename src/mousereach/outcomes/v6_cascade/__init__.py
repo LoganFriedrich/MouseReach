@@ -1,7 +1,7 @@
 """
 Outcome detection v6 -- confidence-cascaded ensemble.
 
-30 sequential stages testing physics-grounded predicates.
+33 sequential stages (0-29, 6b, 98, 99) testing physics-grounded predicates.
 Each stage either COMMITS a class (if a high-confidence signal fires),
 CONTINUES to the next stage, or TRIAGES (final stages only).
 First stage to commit wins. Deterministic -- no model artifact required.
