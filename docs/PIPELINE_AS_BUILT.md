@@ -1,29 +1,13 @@
 # How the MouseReach pipeline actually works
 
 Describes: src/mousereach/watcher, src/mousereach/archive, src/mousereach/config.py, src/mousereach/pipeline/
-Verified against: b65fcf0 (2026-08-23; that commit id predates the 2026-08-28
-history rewrite and no longer exists -- see the dated updates for later
-verification), with sections 4, 5 and 6 re-verified
-against the pathless-row and DLC-staleness fixes of 2026-08-24 (see the
-update section at the end), and the collage-claim, re-crop and Posed
-statements in sections 2, 3 and 4 corrected against 05de530 plus the
-GPU-node guards of 2026-09-15. The pausing statements in sections 1, 3 and 4
-and the update "the watcher pauses itself while a recording program runs"
-were verified against the working tree on top of 73f9f48 (2026-09-15).
-
-Written 2026-08-21 by reading the code, not the documentation. Each section
-was traced against the source by a separate reviewer, and every statement
-that contradicted the intended process was then handed to a second reviewer
-whose job was to disprove it. Only the ones that survived are stated here as
-differences.
-
 The companion document is `PIPELINE_PROCESS_AS_DESCRIBED.md`, which records
 how the pipeline is *supposed* to work.
 
-**This describes behaviour as of 2026-08-21.** If you change the pipeline,
+This file describes how the pipeline works today, read from the code. If you change the pipeline,
 change this file in the same commit.
 
-Update 2026-11-18: the file:line references below were taken from an older
+The file:line references below were taken from an older
 version of the code and many no longer match; find the code by the function,
 class or constant named beside each reference.
 
@@ -45,7 +29,7 @@ Three things about this folder are easy to get wrong:
   - Only five file extensions count: .mkv, .avi, .mp4, .mov, .wmv (src/mousereach/watcher/state.py:27 and :75).
   - The filename is a hard gate. It must read YYYYMMDD_{eight comma-separated animal IDs}_{tray letter}{run number}.ext - for example 20250101_CNT0101,CNT0102,...,CNT0108_P1.mkv. The date must be a real date and not in the future, and the tray letter must be P, E or F (src/mousereach/watcher/validator.py:106 and :111-118). A file that fails any of these is moved to a quarantine folder and never processed (src/mousereach/watcher/state.py:112). The quarantine folder defaults to NAS_ROOT\Processing\Quarantine (src/mousereach/config.py:720-726).
 
-What software records the videos is outside the code. Recording and naming are human steps. Copying the file into Unanalyzed\Multi-Animal is a human step too, unless the recording PC's watcher has watcher.recording_outbox set: then that watcher sends named recordings there itself, outside recording time (update 2026-11-18; docs/SENDING_RECORDINGS.md). The recording-related settings (section 4 lists them) are: watcher.pause_while_running (a GPU node pauses itself while the named recording program is open; see the update of 2026-09-15, "the watcher pauses itself while a recording program runs", at the end), watcher.recording_days / recording_hours, watcher.pause_during_recording_hours, and the recording check (watcher.recording_min_minutes / recording_min_frames / recording_min_kb_per_second).
+What software records the videos is outside the code. Recording and naming are human steps. Copying the file into Unanalyzed\Multi-Animal is a human step too, unless the recording PC's watcher has watcher.recording_outbox set: then that watcher sends named recordings there itself, outside recording time (docs/SENDING_RECORDINGS.md). The recording-related settings (section 4 lists them) are: watcher.pause_while_running (a GPU node pauses itself while the named recording program is open; see "the watcher pauses itself while a recording program runs" at the end), watcher.recording_days / recording_hours, watcher.pause_during_recording_hours, and the recording check (watcher.recording_min_minutes / recording_min_frames / recording_min_kb_per_second).
 
 There is one other, deliberate way in: a one-off command copies archived ASPA collages into that same folder, re-encoding their names into the required format first (src/mousereach/aspa/import_collages.py:84, :229). It is run by hand, not on a timer.
 
@@ -87,16 +71,16 @@ The processing-server role has no graphics-card requirement, which is consistent
 
 4. THE SETTINGS THAT DECIDE ALL OF THIS
 
-All of these live in ~/.mousereach/config.json on each machine, and setup defaults for a lab's machines come from the lab's own profiles file (found via MOUSEREACH_LAB_PROFILES, then ~/.mousereach/lab_profiles.json, then src/mousereach/setup/lab_profiles.json; the shipped .example is only a template), matched by hostname and by which drive letters are present (the hostname rule is checked since 2026-10-22).
+All of these live in ~/.mousereach/config.json on each machine, and setup defaults for a lab's machines come from the lab's own profiles file (found via MOUSEREACH_LAB_PROFILES, then ~/.mousereach/lab_profiles.json, then src/mousereach/setup/lab_profiles.json; the shipped .example is only a template), matched by hostname and by which drive letters are present.
 
-  - nas_root - the shared pipeline root. Everything above (the front door, the staging folder, the review queues, the final Analyzed folder) hangs off it. If it is unset, every one of those paths is unset too and each tool says "nas_root is not configured" and names mousereach-setup (since 2026-10-22; before that the code guessed an older fixed layout -- see the update of that date at the end).
+  - nas_root - the shared pipeline root. Everything above (the front door, the staging folder, the review queues, the final Analyzed folder) hangs off it. If it is unset, every one of those paths is unset too and each tool says "nas_root is not configured" and names mousereach-setup.
   - processing_root - the local fast drive where work actually happens.
   - watcher.mode - "dlc_pc" (the default when absent) or "processing_server". Chooses which of the two roles the one watcher program plays.
   - watcher.also_process - true means a graphics-card machine runs the whole pipeline itself instead of handing off; false means it stops after DeepLabCut and stages the result for the server.
   - watcher.dlc_gpu_device - which graphics card number DeepLabCut uses, default 0.
   - watcher.pause_while_running - programs that pause this watcher while they run (process names such as recorder.exe). Empty by default, which means the watcher never checks for any program. A running watcher follows edits to it without a restart.
   - watcher.pause_resume_grace_seconds - how long every listed program must have been closed before work starts again, default 120.
-  - watcher.recording_days / watcher.recording_hours - optional, e.g. "Mon-Fri" and "08:00-18:00" on the machine's clock: when recording can happen at all. Outside them an open listed program does not pause the watcher. Empty = any day / any hour (since 2026-10-22).
+  - watcher.recording_days / watcher.recording_hours - optional, e.g. "Mon-Fri" and "08:00-18:00" on the machine's clock: when recording can happen at all. Outside them an open listed program does not pause the watcher. Empty = any day / any hour.
   - watcher.pause_during_recording_hours - optional, true/false (default false). True = the recording days/hours ARE the rule: no work at all inside them, whether or not a recording program is open, and full work outside them whatever is open (a pose running when the window starts is stopped). Set it on a machine that films in fixed hours, where a recording program left open after filming would otherwise keep the node idle. Edit ~/.mousereach/config.json; a running watcher follows the change without a restart. It needs recording_days and/or recording_hours. With it true and neither set, the watcher never pauses for recording at all -- the program list is not consulted either (deliberate: no window). While it pauses, the reason shown is 'recording hours (<days>, <hours>): no work until they end'.
   - backup.enabled - whether the separate backup daemon will start.
 
@@ -113,7 +97,7 @@ Other watcher settings (all under "watcher" in the same file; the default applie
   - watcher.quarantine_dir - where misnamed files are moved. Unset = <nas_root>\Processing\Quarantine.
   - watcher.work_priority - which work is taken first (docs/WORK_PRIORITY.md). Unset = the default order.
   - watcher.notify_safe_to_record - default true: show on this machine's screen when its work has stopped for a recording program. Only used when pause_while_running lists programs.
-  - watcher.recording_outbox - unset by default. Set on a recording PC to the folder where people save and rename recordings: the watcher then sends every correctly named recording to Unanalyzed\Multi-Animal outside recording time (docs/SENDING_RECORDINGS.md). Its companions: recording_outbox_stable_minutes (default 5, how long a file must stay unchanged), recording_outbox_warn_after_failures (default 3 failed copies in a row before the file is shown in red), recording_outbox_cycle_seconds (default 120, how long the running watcher may spend starting sends each cycle before its work item; since 2026-11-19) and recording_outbox_pass_minutes (default 30, how long a hand-started `mousereach-send-recordings --once` pass may take).
+  - watcher.recording_outbox - unset by default. Set on a recording PC to the folder where people save and rename recordings: the watcher then sends every correctly named recording to Unanalyzed\Multi-Animal outside recording time (docs/SENDING_RECORDINGS.md). Its companions: recording_outbox_stable_minutes (default 5, how long a file must stay unchanged), recording_outbox_warn_after_failures (default 3 failed copies in a row before the file is shown in red), recording_outbox_cycle_seconds (default 120, how long the running watcher may spend starting sends each cycle before its work item) and recording_outbox_pass_minutes (default 30, how long a hand-started `mousereach-send-recordings --once` pass may take).
   - watcher.recording_min_minutes (default 5), watcher.recording_min_frames (default 3000), watcher.recording_min_kb_per_second (default 5) - the recording check: a collage shorter, with fewer frames, or smaller per second than these is a failed recording, set aside in Processing/Review/_Problematic with a reason file and never cut (docs/RECORDING_ISSUES.md).
 
 ---
@@ -136,11 +120,11 @@ Every newly seen collage has its file name validated (watcher/validator.py:103-2
 
 When cropping actually runs
 
-Cropping is the LOWEST-priority job the graphics-card machine does. On each cycle it first stages already-finished work back to the network, then runs pose estimation on any single-mouse video waiting for it, and only if both of those queues are empty does it pick up a new collage (watcher/orchestrator.py:530-580). Before starting, it claims the collage in a shared database (the pipeline_collages table of watcher_central.db on the shared root) so two machines cannot crop the same one. Since 2026-09-15 this fails closed: a node that cannot obtain a claim does not crop, and a collage whose children are all already finished or held for review is not cropped at all. The update section of 2026-09-15 at the end of this document has the details.
+Cropping is the LOWEST-priority job the graphics-card machine does. On each cycle it first stages already-finished work back to the network, then runs pose estimation on any single-mouse video waiting for it, and only if both of those queues are empty does it pick up a new collage (watcher/orchestrator.py:530-580). Before starting, it claims the collage in a shared database (the pipeline_collages table of watcher_central.db on the shared root) so two machines cannot crop the same one. This fails closed: a node that cannot obtain a claim does not crop, and a collage whose children are all already finished or held for review is not cropped at all. See "extra GPU nodes cannot re-pose finished videos, spin on collage claims, or touch Processing/Posed" at the end of this document.
 
 The cropping step itself
 
-The collage is copied - copied, not moved - from the network folder to a scratch folder on the machine's own fast disk, at PROCESSING_ROOT/watcher_working (watcher/orchestrator.py:146, 741-745). The original stays on the network untouched; nothing in the watcher ever moves or deletes it. (A separate archive_collages function, reachable only from the hand-run command `mousereach-prep --archive` and never from the watcher, moves a collage to Analyzed/Multi-Animal - since 2026-11-18 only when every single-animal video cut from it is filed with the current versions and has no review pending, the watcher's own retire_completed_collages rule; see "Update 2026-11-18: the hand crop tools use the claim; prep --archive moves only finished collages" near the end of this document.)
+The collage is copied - copied, not moved - from the network folder to a scratch folder on the machine's own fast disk, at PROCESSING_ROOT/watcher_working (watcher/orchestrator.py:146, 741-745). The original stays on the network untouched; nothing in the watcher ever moves or deletes it. (A separate archive_collages function, reachable only from the hand-run command `mousereach-prep --archive` and never from the watcher, moves a collage to Analyzed/Multi-Animal - only when every single-animal video cut from it is filed with the current versions and has no review pending, the watcher's own retire_completed_collages rule; see "the hand crop tools use the claim; prep --archive moves only finished collages" near the end of this document.)
 
 crop_collage then does the split (video_prep/core/cropper.py:105-184). It reads the eight mouse identifiers out of the file name and pairs them, strictly in order, with eight fixed rectangles: four across the top row and four across the bottom, each 480 pixels wide and 540 tall, which assumes the collage is exactly 1920 by 1080 (video_prep/core/cropper.py:39-48, 129). Nothing checks the real resolution of the incoming file. For each occupied position it shells out to ffmpeg with a crop filter and writes an .mp4 (video_prep/core/cropper.py:149-158). Video is re-encoded (only audio is copied through). Failures are recorded per position and the other positions continue.
 
@@ -150,7 +134,7 @@ The output name is DATE_MOUSEID_TRAYLABEL.mp4 - for instance 20250101_CNT0101_P1
 
 Empty positions
 
-A position whose cohort digits are "00" means an empty box and is meant to be skipped with no video produced (video_prep/core/cropper.py:133-142). Empty positions are found by AnimalID.is_blank, which finds where the letters end, so any prefix length works (cropper.is_blank_animal). Until it was fixed, a fixed offset matched only 3-letter prefixes and empty boxes of 4-letter projects were cropped and analyzed.
+A position whose cohort digits are "00" means an empty box and is meant to be skipped with no video produced (video_prep/core/cropper.py:133-142). Empty positions are found by AnimalID.is_blank, which finds where the letters end, so any prefix length works (cropper.is_blank_animal).
 
 Provenance written next to the collage
 
@@ -158,11 +142,11 @@ Immediately after cropping, a small record file named <collagename>_crop_manifes
 
 Where the single-mouse videos go
 
-This is where the real behaviour differs from the folder names people use in conversation. Each successful crop is registered in the watcher's bookkeeping database with its mouse identifier, project, cohort, subject, tray type and grid position (watcher/orchestrator.py:769-787). After cutting, the node keeps single_claim.KEEP_AHEAD (2) singles for its own GPU: each is put on the shared drive in its claim folder Unanalyzed/Single_Animal/.inflight/<machine>/ (_publish_cropped_single) and copied into its local DLC_Queue. Every further single is put, unclaimed, at the top of Unanalyzed/Single_Animal for any node to take (_hand_out_instead_of_keeping); this node's row for it is parked 'unresolvable' with a reason that begins 'in the shared singles folder for any node to take'. See the update of 2026-10-21 'a node keeps only what it starts'. Finally, the local scratch copies of the collage and the crops are deleted; the original collage stays untouched on the network.
+This is where the real behaviour differs from the folder names people use in conversation. Each successful crop is registered in the watcher's bookkeeping database with its mouse identifier, project, cohort, subject, tray type and grid position (watcher/orchestrator.py:769-787). After cutting, the node keeps single_claim.KEEP_AHEAD (2) singles for its own GPU: each is put on the shared drive in its claim folder Unanalyzed/Single_Animal/.inflight/<machine>/ (_publish_cropped_single) and copied into its local DLC_Queue. Every further single is put, unclaimed, at the top of Unanalyzed/Single_Animal for any node to take (_hand_out_instead_of_keeping); this node's row for it is parked 'unresolvable' with a reason that begins 'in the shared singles folder for any node to take'. See 'a node keeps only what it starts' near the end of this document. Finally, the local scratch copies of the collage and the crops are deleted; the original collage stays untouched on the network.
 
 Re-running a collage
 
-If a collage is picked up again later - its file is still sitting in the intake folder, after all - each child is checked first. A child that has already moved past the earliest stages is left alone rather than being reset and re-queued. Only children in the states "discovered", "validated" or "failed" are re-driven (watcher/orchestrator.py:791-812). Since 2026-09-15 the shared drive is asked too, because this node's database may be new or rebuilt. If a child's archive folder holds its processing manifest, or its bundle is in the triage or deep-review queue (or that queue's .incoming build folder), the child is recorded in that state and not queued for pose. If every child is in that position, the collage is not cropped.
+If a collage is picked up again later - its file is still sitting in the intake folder, after all - each child is checked first. A child that has already moved past the earliest stages is left alone rather than being reset and re-queued. Only children in the states "discovered", "validated" or "failed" are re-driven (watcher/orchestrator.py:791-812). The shared drive is asked too, because this node's database may be new or rebuilt. If a child's archive folder holds its processing manifest, or its bundle is in the triage or deep-review queue (or that queue's .incoming build folder), the child is recorded in that state and not queued for pose. If every child is in that position, the collage is not cropped.
 
 Other ways cropping can be started
 
@@ -182,11 +166,11 @@ Step 1 - noticing a collage. Every thirty seconds the watcher lists the shared f
 
 Step 2 - choosing what to do next. The watcher does exactly one job per cycle, chosen by a fixed priority order: finish videos whose pose is already done, then pose a video that is waiting, and only when nothing at all is in flight does it start cropping the next collage. So cropping is deliberately the lowest priority - the machine drains what it has started before opening a new collage.
 
-Step 3 - cropping. Before touching the file the machine claims the collage in the shared coordination database (the pipeline_collages table of watcher_central.db on the shared root), so two GPU machines watching the same folder cannot crop the same collage twice. No claim means no crop (since 2026-09-15). This covers a database that cannot be reached, a claim check that errors, and a claim another machine holds. A claim left unfinished for a day can be taken over, and a failed crop gives its claim back; the 2026-09-15 update section at the end has the rules and the reasons. It then COPIES the collage from the network into a scratch folder on its own disk (processing_root\watcher_working) and verifies the copy by size. The collage on the network is not moved, renamed or deleted. The scratch copy is cut with ffmpeg into eight fixed rectangles - the recording is a 1920x1080 grid of eight camera views, two rows of four, each cell 480x540. Grid positions whose animal identifier has cohort "00" mean "no mouse here" and are skipped. Each surviving cell is written as its own mp4 named {date}_{animal}_{tray}.mp4, into the same scratch folder.
+Step 3 - cropping. Before touching the file the machine claims the collage in the shared coordination database (the pipeline_collages table of watcher_central.db on the shared root), so two GPU machines watching the same folder cannot crop the same collage twice. No claim means no crop. This covers a database that cannot be reached, a claim check that errors, and a claim another machine holds. A claim left unfinished for a day can be taken over, and a failed crop gives its claim back; the section "extra GPU nodes cannot re-pose finished videos, spin on collage claims, or touch Processing/Posed" at the end has the rules and the reasons. It then COPIES the collage from the network into a scratch folder on its own disk (processing_root\watcher_working) and verifies the copy by size. The collage on the network is not moved, renamed or deleted. The scratch copy is cut with ffmpeg into eight fixed rectangles - the recording is a 1920x1080 grid of eight camera views, two rows of four, each cell 480x540. Grid positions whose animal identifier has cohort "00" mean "no mouse here" and are skipped. Each surviving cell is written as its own mp4 named {date}_{animal}_{tray}.mp4, into the same scratch folder.
 
-Step 4 - where the cropped singles go. Each single is registered in the watcher's database. The node keeps two singles (single_claim.KEEP_AHEAD) for its own graphics card: each of those is put on the shared drive in its claim folder Unanalyzed\Single_Animal\.inflight\<machine>\ and COPIED (with a size check) into the local folder processing_root\DLC_Queue. Every further single is put, unclaimed, at the top of Unanalyzed\Single_Animal for any node to take (see the update of 2026-10-21, 'a node keeps only what it starts'). The scratch copies, and the scratch copy of the collage, are then deleted. Note what this means: the cropped singles do NOT go to any folder called Processing. Between cropping and the end of pose estimation, each single is on the shared drive (in .inflight\<machine>\ or at the top of Single_Animal) and in at most one node's DLC_Queue. If a single had already been cropped and taken past this point in an earlier pass, it is left alone rather than reset; the two exceptions the code deliberately re-drives are children recorded as "failed" and children recorded as merely "validated", the latter because that state means the copy into DLC_Queue never succeeded and no file exists anywhere.
+Step 4 - where the cropped singles go. Each single is registered in the watcher's database. The node keeps two singles (single_claim.KEEP_AHEAD) for its own graphics card: each of those is put on the shared drive in its claim folder Unanalyzed\Single_Animal\.inflight\<machine>\ and COPIED (with a size check) into the local folder processing_root\DLC_Queue. Every further single is put, unclaimed, at the top of Unanalyzed\Single_Animal for any node to take (see 'a node keeps only what it starts' near the end of this document). The scratch copies, and the scratch copy of the collage, are then deleted. Note what this means: the cropped singles do NOT go to any folder called Processing. Between cropping and the end of pose estimation, each single is on the shared drive (in .inflight\<machine>\ or at the top of Single_Animal) and in at most one node's DLC_Queue. If a single had already been cropped and taken past this point in an earlier pass, it is left alone rather than reset; the two exceptions the code deliberately re-drives are children recorded as "failed" and children recorded as merely "validated", the latter because that state means the copy into DLC_Queue never succeeded and no file exists anywhere.
 
-Since 2026-09-15 each child is also checked against the shared drive before it is queued. An archive manifest, or a bundle in a review queue, means the child is recorded as finished or held rather than posed again; a new or rebuilt node database cannot know that on its own.
+Each child is also checked against the shared drive before it is queued. An archive manifest, or a bundle in a review queue, means the child is recorded as finished or held rather than posed again; a new or rebuilt node database cannot know that on its own.
 
 A gap worth recording: the cropper is meant to leave a small provenance file beside the collage listing which child came from which grid position, but in the automatic path it is written beside the temporary copy in the scratch folder, so it never appears next to the collage on the network. Nothing downstream breaks, because the later retirement sweep falls back to reconstructing the child list from the collage filename.
 
@@ -195,16 +179,16 @@ Step 5 - pose estimation. When a single is sitting in DLC_Queue the watcher runs
   - Which trained network inside that project - DeepLabCut calls these "shuffles" - is resolved in order from: an explicit argument, then watcher.dlc_shuffle in the machine's settings file, then the shuffle number parsed out of the dlc_scorer entry in the shared file pipeline_versions.json at the top of nas_root. For example, on a machine that does not set dlc_shuffle, a declared scorer ending in shuffle3_100000 means shuffle 3 is what runs. If none of the three sources names a shuffle, the code refuses to pose at all rather than accept DeepLabCut's silent default of shuffle 1, and it stops posing on that machine instead of failing the video, because an unresolvable model is a machine problem and not a video problem. After each video the code reads the model name out of the pose filename DeepLabCut just wrote and rejects the result if it is not the declared one, so a mismatched model cannot be handed downstream. Both safeguards exist so the watcher cannot quietly produce pose from an older model while the rest of the pipeline is calibrated for a newer one.
 The watcher also re-checks the queue folder each cycle for pose files that appeared without its noticing - for instance after a crash mid-run - and records those videos as posed.
 
-That only rescues a video whose pose file made it to disk. A watcher stopped DURING the pose left the video in 'dlc_running', which no job list selects, so it stopped moving for good - and silently, because the queue looked busy rather than broken. The same held for a video stopped mid-archive ('archiving') and a collage stopped mid-crop ('cropping'). Since 2026-09-13 every watcher, before it takes on anything new, puts such work back where it came from: 'dlc_running' returns to the pose queue, 'archiving' returns to 'processed' to be filed again, 'cropping' returns to 'stable' to be cut again, and each is named in the log as it happens (`BaseOrchestrator._reclaim_orphaned_work`). This is safe rather than a guess about a live run because a named global mutex allows exactly one watcher per machine, so anything still sitting in one of those states at startup was left by a process that is already gone. A video stopped mid-ANALYSIS needs no rescue and gets none: both watchers already select 'processing', and the pipeline reuses whatever stage outputs already exist, so it resumes rather than restarts. `mousereach-watch-status` names anything caught this way, so it is visible even while the watcher is down.
+That only rescues a video whose pose file made it to disk. A watcher stopped DURING the pose left the video in 'dlc_running', which no job list selects, so it stopped moving for good - and silently, because the queue looked busy rather than broken. The same held for a video stopped mid-archive ('archiving') and a collage stopped mid-crop ('cropping'). Every watcher, before it takes on anything new, puts such work back where it came from: 'dlc_running' returns to the pose queue, 'archiving' returns to 'processed' to be filed again, 'cropping' returns to 'stable' to be cut again, and each is named in the log as it happens (`BaseOrchestrator._reclaim_orphaned_work`). This is safe rather than a guess about a live run because a named global mutex allows exactly one watcher per machine, so anything still sitting in one of those states at startup was left by a process that is already gone. A video stopped mid-ANALYSIS needs no rescue and gets none: both watchers already select 'processing', and the pipeline reuses whatever stage outputs already exist, so it resumes rather than restarts. `mousereach-watch-status` names anything caught this way, so it is visible even while the watcher is down.
 
 Step 6 - what happens after pose, and the setting that decides it. watcher.also_process in the machine's settings file controls this:
-  - also_process = false: the machine is finished. Every file belonging to that video - the mp4, the .h5, the .csv - is MOVED out of the local DLC_Queue onto the shared network folder Processing\Posed, and the video is recorded as done-on-this-machine with both recorded paths (video and pose) pointing at the staged copies. (Until 2026-09-12 only the video path was updated; the recorded pose path kept naming the local DLC_Queue file the move had just removed, so archived rows pointed at a pose file that no longer existed.) Some other machine picks it up from there and runs the analysis steps. This is the arrangement the plain description assumes.
-  - also_process = true: the machine keeps the work. It stages the pose and the video into its local Processing folder, runs segmentation, reach detection, outcome detection and reach assignment there, and then archives the results from that folder straight to the network under Analyzed\{project}\{cohort}, deleting its local copies in both Processing and DLC_Queue. (Until 2026-09-12 the pipeline had already moved to Processing but the archive step still read DLC_Queue, so it filed the mp4 and the raw pose with no manifest, segments, reaches or outcomes.) Nothing is ever staged to Processing\Posed.
+  - also_process = false: the machine is finished. Every file belonging to that video - the mp4, the .h5, the .csv - is MOVED out of the local DLC_Queue onto the shared network folder Processing\Posed, and the video is recorded as done-on-this-machine with both recorded paths (video and pose) pointing at the staged copies. Some other machine picks it up from there and runs the analysis steps. This is the arrangement the plain description assumes.
+  - also_process = true: the machine keeps the work. It stages the pose and the video into its local Processing folder, runs segmentation, reach detection, outcome detection and reach assignment there, and then archives the results from that folder straight to the network under Analyzed\{project}\{cohort}, deleting its local copies in both Processing and DLC_Queue. Nothing is ever staged to Processing\Posed.
 On a machine configured with also_process = true, the crop-and-pose watcher in fact runs the entire pipeline, and the "hand off to the server" route is unused.
 
 Step 7 - what eventually happens to the collage. It stays in Unanalyzed\Multi-Animal throughout everything above. It is removed only by the OTHER watcher - the analysis-server one - which runs a slow sweep every 3 hours (the first pass 3 hours after the watcher starts) over that folder. For each collage it works out the set of single-mouse children implied by the filename and checks whether every one of them has reached the final Analyzed output, was processed with the currently declared tool versions, and has no review outstanding. Only if all of that holds for every child does it stamp a completion record and MOVE the collage (and its provenance file, if one exists) to Analyzed\Multi-Animal, which the backup watcher can mirror to a backup location. It never deletes. So a collage still sitting in Unanalyzed means at least one of its children is unfinished, out of date, or waiting on a human.
 
-Dropping a single-mouse video by hand into the shared folder Unanalyzed\Single_Animal works, and is the supported way to do it. The crop-and-pose watcher notices the file, records it, copies it onto its own disk and queues it for pose, and it goes through the rest of the pipeline like anything else. Until 2026-09-13 it did not: the file was noticed and written into the database in a state ("validated") that no job list selected, so it was recorded and then never worked on, silently and for good. `mousereach-watch-process-animal` still exists and still works, but nobody needs it for this any more. A file dropped straight into a node's OWN DLC_Queue is picked up too, on the next cycle rather than only at the next restart; DeepLabCut's own by-products (a `..._labeled.mp4` beside a pose) are skipped rather than mistaken for unprocessed videos.
+Dropping a single-mouse video by hand into the shared folder Unanalyzed\Single_Animal works, and is the supported way to do it. The crop-and-pose watcher notices the file, records it, copies it onto its own disk and queues it for pose, and it goes through the rest of the pipeline like anything else. `mousereach-watch-process-animal` still exists and still works, but nobody needs it for this any more. A file dropped straight into a node's OWN DLC_Queue is picked up too, on the next cycle rather than only at the next restart; DeepLabCut's own by-products (a `..._labeled.mp4` beside a pose) are skipped rather than mistaken for unprocessed videos.
 
 ---
 
@@ -212,11 +196,11 @@ Dropping a single-mouse video by hand into the shared folder Unanalyzed\Single_A
 
 HOW THIS PART OF THE PIPELINE ACTUALLY WORKS TODAY
 
-There are two watcher programs in the code, and one machine runs exactly one of them. The choice is made at startup from that machine's own settings file (~/.mousereach/config.json), from the key watcher.mode. The value "dlc_pc" starts the first watcher; the value "processing_server" starts the second. Until 2026-11-19 there was no way to run both on one machine; since then the value "standalone" runs both on one machine (see "Update 2026-11-19 (single-machine role)" at the end of this file).
+There are two watcher programs in the code, and one machine runs exactly one of them. The choice is made at startup from that machine's own settings file (~/.mousereach/config.json), from the key watcher.mode. The value "dlc_pc" starts the first watcher; the value "processing_server" starts the second. The value "standalone" runs both on one machine (see "single-machine role" at the end of this file).
 
 WHAT THE FIRST WATCHER DOES
 
-The first watcher runs on a machine with a graphics card. Each cycle it scans two folders on the network drive: the collage intake folder (Unanalyzed/Multi-Animal) and the network folder Unanalyzed/Single_Animal (src/mousereach/watcher/watcher.py:60-72). Files whose names it cannot parse are moved to a quarantine folder (src/mousereach/watcher/state.py:110-124); since 2026-09-15 a misnamed single is quarantined only once it has stopped changing, because moving a file mid-copy breaks the copy. It then picks one job per cycle. Priority order (DLCOrchestrator._select_work_item): file a locally analyzed video (also_process); run the local pipeline (also_process); stage a posed video to Processing/Posed (or run it locally); pose one queued single; adopt a single from Unanalyzed/Single_Animal; and, lowest, crop one collage. The numbered steps below follow one recording, not the priority order.
+The first watcher runs on a machine with a graphics card. Each cycle it scans two folders on the network drive: the collage intake folder (Unanalyzed/Multi-Animal) and the network folder Unanalyzed/Single_Animal (src/mousereach/watcher/watcher.py:60-72). Files whose names it cannot parse are moved to a quarantine folder (src/mousereach/watcher/state.py:110-124); a misnamed single is quarantined only once it has stopped changing, because moving a file mid-copy breaks the copy. It then picks one job per cycle. Priority order (DLCOrchestrator._select_work_item): file a locally analyzed video (also_process); run the local pipeline (also_process); stage a posed video to Processing/Posed (or run it locally); pose one queued single; adopt a single from Unanalyzed/Single_Animal; and, lowest, crop one collage. The numbered steps below follow one recording, not the priority order.
 
 1. Crop one collage. It copies the collage from the network drive to a local scratch folder, cuts it into single-mouse videos, names each one by which mouse it contains, registers each in its local tracking database, keeps two singles for its own graphics card (each put in its claim folder Unanalyzed/Single_Animal/.inflight/<machine>/ and copied into DLC_Queue on its OWN LOCAL DISK), and puts every further single, unclaimed, at the top of Unanalyzed/Single_Animal for any node to take. The local scratch copies are then deleted; the original collage is left where it was (src/mousereach/watcher/orchestrator.py:711-866, and src/mousereach/config.py:149).
 
@@ -230,13 +214,13 @@ The first watcher runs on a machine with a graphics card. Each cycle it scans tw
 
 So the statement "cropping and DeepLabCut are all the first watcher does" is not accurate in either configuration. With also_process off it also performs the handoff move; with also_process on it produces the final scientific product.
 
-Two further things the first watcher does that are easy to miss. It USED TO inherit a periodic housekeeping scan from the shared base class, running at startup and then roughly every 30 minutes, which walks the archived videos in its own database, reads each one's manifest out of the final Analyzed folder, and re-labels as "outdated" any video whose recorded tool versions no longer match the declared current versions or whose human review file is newer than its archived kinematics (`ReprocessingScanner.scan`). On a first-watcher machine that had no follow-through: the first watcher's job list has no entry for "outdated" videos, so a video re-labelled this way left the "archived" state and nothing on that machine ever picked it up again. Worse, the state was not inert - it synced to the results database (central_db), other nodes adopted it during startup recovery, and it came back as a pathless row on a machine that had no file for the video. As of 2026-08-24 the scan is gated on `handles_reprocessing`, which is true only for the second watcher, so the first watcher no longer marks anything outdated. Only the second watcher acts on "outdated" (`ProcessingOrchestrator._get_next_work_item`). Separately, single-mouse videos found sitting in the network Unanalyzed/Single_Animal folder are registered in the database at state "validated" (`WatcherStateManager.discover_new_singles`). Until 2026-09-13 "validated" was not one of the states the first watcher's job list selected from, so those videos were recorded and then never processed; the job list now has a branch for them. Since 2026-09-15 a single is registered only once it has stopped changing. The branch first claims it by renaming it into Single_Animal/.inflight/<machine>/, then copies it onto the node and queues it for pose. See "videos can be dropped into either Unanalyzed folder at any time" at the end of this document.
+Two further things the first watcher does that are easy to miss. It USED TO inherit a periodic housekeeping scan from the shared base class, running at startup and then roughly every 30 minutes, which walks the archived videos in its own database, reads each one's manifest out of the final Analyzed folder, and re-labels as "outdated" any video whose recorded tool versions no longer match the declared current versions or whose human review file is newer than its archived kinematics (`ReprocessingScanner.scan`). On a first-watcher machine that had no follow-through: the first watcher's job list has no entry for "outdated" videos, so a video re-labelled this way left the "archived" state and nothing on that machine ever picked it up again. Worse, the state was not inert - it synced to the results database (central_db), other nodes adopted it during startup recovery, and it came back as a pathless row on a machine that had no file for the video. The scan is gated on `handles_reprocessing`, which is true only for the second watcher, so the first watcher no longer marks anything outdated. Only the second watcher acts on "outdated" (`ProcessingOrchestrator._get_next_work_item`). Separately, single-mouse videos found sitting in the network Unanalyzed/Single_Animal folder are registered in the database at state "validated" (`WatcherStateManager.discover_new_singles`). The first watcher's job list has a branch for these videos. A single is registered only once it has stopped changing. The branch first claims it by renaming it into Single_Animal/.inflight/<machine>/, then copies it onto the node and queues it for pose. See "videos can be dropped into either Unanalyzed folder at any time" at the end of this document.
 
 WHAT THE SECOND WATCHER REQUIRES BEFORE IT WILL TOUCH A VIDEO
 
 The second watcher runs on the server. It has exactly one source of new work: the network handoff folder Processing/Posed. Each cycle it globs that folder for DeepLabCut output files, and for each one it requires a matching video file with the same name to also be present in that same folder before it will register the video at all. If the video's filename does not parse, the video is quarantined instead (src/mousereach/watcher/orchestrator.py:1363-1372; src/mousereach/watcher/state.py:212-300). It does not scan the network Unanalyzed/Single_Animal folder, and it does not walk the final Analyzed folder looking for work.
 
-Before copying a registered video in, it takes a claim: it creates a marker file named after the video, containing its own hostname, in a hidden .claims subfolder of the handoff folder. The create is exclusive (watcher/claim_marker.py), so when several machines race exactly one succeeds; a machine that loses leaves the video out of its choices for 10 minutes and takes the next one in the work order. The holder keeps the claim while the video's files are in the handoff folder -- through analysis, review and failure -- and lets go after archiving has removed them. A sweep every 10 minutes makes the claims match what the machine holds: it claims any video in the handoff folder that it has in hand (taken in and not given back -- in analysis, review, failed or filed) and that has no claim, and lets go of a video that has left the folder or is waiting again (a lifted review hold goes back as 'dlc_complete' for a fresh run, which any machine may take). Another machine's claim is broken only when that machine has stopped writing its status report for 3 hours by the file server's clock, never for its age (`ProcessingOrchestrator._claim_video`, `_sweep_posed_claims`; changed 2026-10-22 from write, wait half a second, read back, and delete after 24 hours). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the pipeline_collages table of watcher_central.db on the shared root and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
+Before copying a registered video in, it takes a claim: it creates a marker file named after the video, containing its own hostname, in a hidden .claims subfolder of the handoff folder. The create is exclusive (watcher/claim_marker.py), so when several machines race exactly one succeeds; a machine that loses leaves the video out of its choices for 10 minutes and takes the next one in the work order. The holder keeps the claim while the video's files are in the handoff folder -- through analysis, review and failure -- and lets go after archiving has removed them. A sweep every 10 minutes makes the claims match what the machine holds: it claims any video in the handoff folder that it has in hand (taken in and not given back -- in analysis, review, failed or filed) and that has no claim, and lets go of a video that has left the folder or is waiting again (a lifted review hold goes back as 'dlc_complete' for a fresh run, which any machine may take). Another machine's claim is broken only when that machine has stopped writing its status report for 3 hours by the file server's clock, never for its age (`ProcessingOrchestrator._claim_video`, `_sweep_posed_claims`). This claim exists only to stop two PROCESSING machines watching the same handoff folder from grabbing the same video. It is not a check against the first watcher: the first watcher never reads or writes those markers, and the second watcher never reads the first watcher's own collage-level claims, which live in the pipeline_collages table of watcher_central.db on the shared root and are only created by the first watcher (src/mousereach/watcher/orchestrator.py:721-727 versus the second watcher's constructor at :1326-1361, which never builds a coordinator).
 
 There is therefore no explicit "is the other watcher still working on this?" check anywhere. What keeps the two apart is the shape of the handoff: the first watcher holds the files on its own local disk until DeepLabCut has finished, and only then moves them into the shared folder. Two caveats. First, the move is implemented as copy-to-the-final-name then delete the source (src/mousereach/watcher/transfer.py:108-130), and discovery only tests that the names exist - there is no wait for the files to stop growing. A partially copied video is visible under its finished name. The subsequent intake copy compares source and destination sizes and rejects a mismatch (src/mousereach/watcher/transfer.py:85-95), which usually turns such a race into a failed intake rather than a truncated file being analysed, but that is an after-the-fact guard, not a wait. Second, on a machine with also_process = true nothing is ever staged, so no contention arises there at all.
 
@@ -244,7 +228,7 @@ Once a video is claimed, its files are copied - copied, not moved, so the handof
 
 What the second watcher does NOT check before running the algorithms: it does not verify that the pose file was produced by the currently declared DeepLabCut model. There is no version comparison anywhere in the run-the-algorithms path (src/mousereach/watcher/orchestrator.py:1811-2120). The only thing resembling a version check at this point is tie-breaking: if a video has more than one pose file, the code prefers the one from the declared model, and otherwise takes the newest and logs a warning that the video should be re-posed - but it still proceeds (src/mousereach/pipeline/manifest.py:89-134). Version currency is checked later and after the fact, by the staleness scanner walking already-archived videos in the Analyzed folder.
 
-The second watcher's full job list, in priority order, is: archive a finished video to the network drive (first since 2026-08-30, so results reach the share continuously); retry a video that failed on this node, at least an hour after its last failure (RETRY_FAILED_AFTER_S), while its error count is below watcher.max_retries; take in a newly discovered video from the handoff folder; run the algorithms on a video sitting in its local Processing folder; and re-run an "outdated" video (`ProcessingOrchestrator._select_work_item`). Within each kind of job, which video goes next follows the configured work order (docs/WORK_PRIORITY.md; since 2026-10-22 including session lists and "not until nothing else is waiting" work, which comes last everywhere). For that last case, if the staleness scanner decided the video genuinely needs a NEW pose, the server cannot help - it has no suitable graphics card. Until 2026-08-24 it pushed the video into the 'dlc_queued' state and left it, which went nowhere: the server's own job list never selects that state, the GPU node's queue folder is local and invisible to the server, and the only thing that crossed machines was the state itself, through the results database (central_db), where it became a pathless row that crashed the GPU node's stager. It now holds those videos in 'outdated', names them once in the log, and lets the videos that CAN be re-run here through - so one un-poseable video no longer blocks the rest of the queue. Otherwise it pulls that video's pose file and video back out of the Analyzed folder into its local Processing folder and re-runs from the earliest stale stage (:1540-1605). Its local Processing folder is also refilled from a third direction: every 2 minutes, on its own clock, it scans the two human review queues and moves any bundle a human has finished clearing back into Processing so the pipeline re-runs it (:1388-1397; src/mousereach/watcher/review_return.py:118-260). The review queues are shared storage, so when more than one node runs this scan, every queue mutation (return, retire, divert, a route-to-queue question or move) first takes a per-video claim marker in Review/.return_claims/ -- an exclusive create, so exactly one node's claim succeeds (watcher/claim_marker.py); the marker names the holding process (id and start time), so another live process of the same machine is refused too and a crashed process's claim is taken over (`claim_marker.take(..., process=this_process())`) -- by renaming the old marker to a name of its own first and deleting it only if it still names the ended process, so two processes that both saw the crashed holder can never both end up holding the claim; a marker of the same machine that names no process (an older version's) counts as another process's until it is `claim_marker.LEGACY_MARKER_TAKEOVER_S` (one hour) old, so an old review window and an updated watcher never both hold it; and within a process the claim is counted per thread so a route started by the scan does not drop the scan's claim; broken only when its holder has stopped writing its status report for 3 hours by the file server's clock, never for its age; no claim is needed when no shared root is configured, and none is taken (the move is skipped) when the claim folder cannot be made (review_return.py, _claim_return; changed 2026-10-21 from write, wait, read back and a 2-hour age rule). Intake is throttled by watcher.max_local_pending (default 2 since 2026-10-21; it was 200): once that many videos are sitting in the local Processing folder, no new videos are taken in until one is analysed, archived or cleared (:1444-1465). WHY 2: intake is visited before the pipeline, so with 200 the server took videos in for hours before analysing any, and every video it held was one no other node could take.
+The second watcher's full job list, in priority order, is: archive a finished video to the network drive (first so results reach the share continuously); retry a video that failed on this node, at least an hour after its last failure (RETRY_FAILED_AFTER_S), while its error count is below watcher.max_retries; take in a newly discovered video from the handoff folder; run the algorithms on a video sitting in its local Processing folder; and re-run an "outdated" video (`ProcessingOrchestrator._select_work_item`). Within each kind of job, which video goes next follows the configured work order (docs/WORK_PRIORITY.md; including session lists and "not until nothing else is waiting" work, which comes last everywhere). For that last case, if the staleness scanner decided the video genuinely needs a NEW pose, the server cannot help - it has no suitable graphics card. It holds those videos in 'outdated', names them once in the log, and lets the videos that CAN be re-run here through - so one un-poseable video no longer blocks the rest of the queue. Otherwise it pulls that video's pose file and video back out of the Analyzed folder into its local Processing folder and re-runs from the earliest stale stage (:1540-1605). Its local Processing folder is also refilled from a third direction: every 2 minutes, on its own clock, it scans the two human review queues and moves any bundle a human has finished clearing back into Processing so the pipeline re-runs it (:1388-1397; src/mousereach/watcher/review_return.py:118-260). The review queues are shared storage, so when more than one node runs this scan, every queue mutation (return, retire, divert, a route-to-queue question or move) first takes a per-video claim marker in Review/.return_claims/ -- an exclusive create, so exactly one node's claim succeeds (watcher/claim_marker.py); the marker names the holding process (id and start time), so another live process of the same machine is refused too and a crashed process's claim is taken over (`claim_marker.take(..., process=this_process())`) -- by renaming the old marker to a name of its own first and deleting it only if it still names the ended process, so two processes that both saw the crashed holder can never both end up holding the claim; a marker of the same machine that names no process (an older version's) counts as another process's until it is `claim_marker.LEGACY_MARKER_TAKEOVER_S` (one hour) old, so an old review window and an updated watcher never both hold it; and within a process the claim is counted per thread so a route started by the scan does not drop the scan's claim; broken only when its holder has stopped writing its status report for 3 hours by the file server's clock, never for its age; no claim is needed when no shared root is configured, and none is taken (the move is skipped) when the claim folder cannot be made (review_return.py, _claim_return). Intake is throttled by watcher.max_local_pending (default 2): once that many videos are sitting in the local Processing folder, no new videos are taken in until one is analysed, archived or cleared (:1444-1465). WHY 2: intake is visited before the pipeline, so with 200 the server took videos in for hours before analysing any, and every video it held was one no other node could take.
 
 ---
 
@@ -261,36 +245,36 @@ WHICH PROGRAM DOES THIS
 One program, mousereach.watcher, runs on every machine. What it does is decided by watcher.mode in that machine's ~/.mousereach/config.json (config.py:676): "processing_server" builds the ProcessingOrchestrator, anything else builds the DLCOrchestrator (watcher/cli.py:298-302). A second setting, watcher.also_process (config.py:678), lets a graphics-card machine run the analysis algorithms itself instead of handing them off; when it is true the DLCOrchestrator runs a near-copy of the same pipeline code locally (orchestrator.py:968). So "the second watcher's job" is really "the analysis half of the program", and it runs on a processing_server-mode node always and on a graphics-card machine when watcher.also_process is true.
 
 1. DOES A POSE FILE EXIST? — yes, checked, every time
-Before the algorithms run, the code resolves the pose file through `resolve_pose_input` (moved 2026-08-24 from orchestrator.py to `watcher/locate.py`, which now holds every "is this claimed path a real file?" helper). It tries the path recorded in the watcher's database; if that is blank or is not a real file it globs the working folder for <video id>DLC*.h5. It deliberately asks "is this a file?" rather than "does this path exist?", because an empty string in Python turns into the current directory, which exists — that exact bug once fed a directory to the algorithms as a pose file and dumped videos into the human review queue (the comment at orchestrator.py:48-89 records it). No real file means the video is marked failed with "DLC h5 not found" and nothing else runs (orchestrator.py:1837-1839; the graphics-card copy at 992-996). Two other doors have the same guard: the path that pulls a finished video back for re-running does not run without a pose either -- but since 2026-10-22 it no longer fails the video for it (`_no_pose_for_reprocess`): a pose found only in the video's review bundle puts the video in that queue's state, a video still in Analyzed is marked as needing a new pose (the GPU nodes are asked for one), and only a video with neither pose nor video file is marked failed, saying so, and the path that returns a human-cleared video from the review queue refuses to return it rather than re-run it blind (review_return.py:152-159). Note the check is only "a readable file is there" — it does not open the file or judge whether it is complete.
+Before the algorithms run, the code resolves the pose file through `resolve_pose_input` (in `watcher/locate.py`, which holds every "is this claimed path a real file?" helper). It tries the path recorded in the watcher's database; if that is blank or is not a real file it globs the working folder for <video id>DLC*.h5. It deliberately asks "is this a file?" rather than "does this path exist?", because an empty string in Python turns into the current directory, which exists — that exact bug once fed a directory to the algorithms as a pose file and dumped videos into the human review queue (the comment at orchestrator.py:48-89 records it). No real file means the video is marked failed with "DLC h5 not found" and nothing else runs (orchestrator.py:1837-1839; the graphics-card copy at 992-996). Two other doors have the same guard: the path that pulls a finished video back for re-running does not run without a pose either -- but it no longer fails the video for it (`_no_pose_for_reprocess`): a pose found only in the video's review bundle puts the video in that queue's state, a video still in Analyzed is marked as needing a new pose (the GPU nodes are asked for one), and only a video with neither pose nor video file is marked failed, saying so, and the path that returns a human-cleared video from the review queue refuses to return it rather than re-run it blind (review_return.py:152-159). Note the check is only "a readable file is there" — it does not open the file or judge whether it is complete.
 
 2. IS THE POSE CURRENT? — checked, but only for already-finished videos, and from the manifest, not the file
 About every thirty minutes (a wall-clock timer, 30 minutes after the previous scan -- reprocess_scan_interval_seconds, which config.json cannot set; the review-return scan runs on its own much shorter cadence, since it is a cheap queue listdir while this sweep walks the whole archive) the processing side runs a sweep called the ReprocessingScanner (orchestrator.py:1341, 1373-1382). It walks the videos its database lists as 'archived' — videos that already completed and were moved into the final Analyzed output tree (reprocessor.py:97) — and then re-checks the rows already marked 'outdated', un-marking any whose versions compare current again (the two-way door; without it a declaration accident could mark rows forever). Rows carrying an explicit `mark_reason` (hand-marked targeted re-runs, e.g. of videos a compatible-version bugfix applies to) are never un-marked; scanner marks write no reason. For each it loads that video's manifest (reprocessor.py:106) and compares it to the version declaration (versions.py:138-195):
-- scorer differs -> the video's ANALYSIS is stale, because segments, reaches and outcomes were computed from the older pose. Whether the POSE has to be made again is a separate question, and since 2026-08-24 the scanner asks it: it indexes the pose files in the Analyzed tree once and checks whether a pose from the declared scorer already exists for that video. If it does, the scope is 'segmentation' - every post-DLC stage re-runs against the pose that is already there, and no GPU is used. If it does not, the scope is 'full' and the video genuinely needs re-posing;
+- scorer differs -> the video's ANALYSIS is stale, because segments, reaches and outcomes were computed from the older pose. Whether the POSE has to be made again is a separate question, and the scanner asks it: it indexes the pose files in the Analyzed tree once and checks whether a pose from the declared scorer already exists for that video. If it does, the scope is 'segmentation' - every post-DLC stage re-runs against the pose that is already there, and no GPU is used. If it does not, the scope is 'full' and the video genuinely needs re-posing;
 - one of segmenter / reach detector / outcome detector / kinematic extractor differs -> stale from that stage onward, and the re-run reuses the still-current earlier outputs (reprocessor.py:35-42, orchestrator.py:1846-1853). Exception: a manifest version listed under `compatible_versions` for that stage in `pipeline_versions.json` does NOT stale the video (versions.py) -- this is how a bugfix bump whose output only changes for pathological videos (which get re-marked by hand) avoids marking the whole corpus outdated;
-- a human review the archived kinematics have not APPLIED also triggers a re-run of kinematics alone, so the reviewer's corrections reach the results and the central database. "Applied" is decided by content identity since 2026-09-09: the manifest records which review the extractor applied (reviewed_at + sha256, stamped by record_kinematic_version), and the scanner compares that stamp against the resolved review. It used to be a file-mtime comparison, which mixed two clocks -- SMB-written reviews carry the NAS server's clock, archived features keep the local clock -- and a NAS clock skew could make every fresh re-run look staler than the review it had just applied, reprocessing reviewed videos in a loop. Legacy manifests without the stamp fall back to the review's in-file reviewed_at vs the manifest's created_at (same process clock), and only lastly to mtimes;
+- a human review the archived kinematics have not APPLIED also triggers a re-run of kinematics alone, so the reviewer's corrections reach the results and the central database. "Applied" is decided by content identity: the manifest records which review the extractor applied (reviewed_at + sha256, stamped by record_kinematic_version), and the scanner compares that stamp against the resolved review. A file-mtime comparison is not used, because it mixes two clocks -- SMB-written reviews carry the NAS server's clock, archived features keep the local clock -- and a NAS clock skew could make every fresh re-run look staler than the review it had just applied, reprocessing reviewed videos in a loop. Legacy manifests without the stamp fall back to the review's in-file reviewed_at vs the manifest's created_at (same process clock), and only lastly to mtimes;
 - a video whose archived segmentation is HUMAN-authored (segments boundary_source == "human") is exempt from segmenter-version staleness, on both the mark side and the un-mark door: a human's cuts are facts about the video, no segmenter release stales them, and the re-run preserves rather than re-cuts them -- so before this exemption the manifest kept recording the old segmenter version and the scanner re-marked such videos after every single re-run, sweeping the same video into the versioned Archive over and over.
 Videos found stale get the database state 'outdated' plus a 'reprocess_scope' (reprocessor.py:150). The same sweep is what "mousereach-version-check" prints, and "--mark" is the manual way to trigger it (watcher/cli.py:1231-1290).
 Three things this does NOT do, which matter:
-- It inspects the pose file only to answer "does a pose from the declared model already exist?", and only when the manifest names an older model (added 2026-08-24). It still never opens a pose file or judges its contents. If the manifest is absent the video is counted "no_manifest" and skipped. Where the manifest and the file on disk disagree, the manifest still wins on the question of what produced the current results - which is correct, because that is what it records. It is not corrected in place; the reprocess run rewrites it with the pose that actually ran, which is the only honest way for it to change.
+- It inspects the pose file only to answer "does a pose from the declared model already exist?", and only when the manifest names an older model. It still never opens a pose file or judges its contents. If the manifest is absent the video is counted "no_manifest" and skipped. Where the manifest and the file on disk disagree, the manifest still wins on the question of what produced the current results - which is correct, because that is what it records. It is not corrected in place; the reprocess run rewrites it with the pose that actually ran, which is the only honest way for it to change.
 - Videos on their way through for the first time are never checked. The pipeline function itself (orchestrator.py:1811) has no version comparison anywhere in it. A fresh video is analysed with whatever pose the graphics-card machine produced.
 - If either side of a comparison is an empty string, that component is treated as current (versions.py:159, 167, 183). An unset "dlc_scorer" in pipeline_versions.json makes the pose-currency check a silent no-op with no warning.
 Videos deliberately locked for a publication are put in the state 'crystallized', not 'archived', so the sweep never sees them (versions.py:242, reprocessor.py:164).
 One related safeguard falls short of a check: when a video has pose files from two models side by side, select_pose_file prefers the one matching the declared current scorer; if none matches it takes the newest, logs a warning that the video should be re-posed, and proceeds anyway (manifest.py:89-135).
 
-Bench-sheet disagreement ROUTING of filed videos is NOT part of the watcher (it was, briefly, 2026-08-25 to 2026-08-28). What the watcher does since 2026-10-26 is compare each video it analyses with a hand-scores FILE, if one is configured -- since 2026-10-28 right before the review gate (`_hand_score_precheck`, `watcher/hand_scores.py`; see the 2026-10-28 update) -- and MouseReach runs exactly as before with no such file. Comparing already-filed videos with the sheets stays an integrator's job -- a database tool that holds both -- and MouseReach must run with no such tool present. What MouseReach provides is the generic command `mousereach-route-to-queue` (watcher/route_cli.py): flag specific segments of an archived video and move it into the triage or deep-review queue with a recorded reason, through the same route_to_queue the pipeline uses itself. Whatever decides a video needs a person asks through that command; the watcher never reaches into another tool's environment or database. Likewise the central-database sync (sync/database.py) is configuration (`central_db`), absent by default, and cross-node coordination lives in MouseReach's own watcher_central.db on the NAS root.
+Bench-sheet disagreement ROUTING of filed videos is NOT part of the watcher. What the watcher does is compare each video it analyses with a hand-scores FILE, if one is configured -- right before the review gate (`_hand_score_precheck`, `watcher/hand_scores.py`; see "the hand-score check runs before triage, not before filing") -- and MouseReach runs exactly as before with no such file. Comparing already-filed videos with the sheets stays an integrator's job -- a database tool that holds both -- and MouseReach must run with no such tool present. What MouseReach provides is the generic command `mousereach-route-to-queue` (watcher/route_cli.py): flag specific segments of an archived video and move it into the triage or deep-review queue with a recorded reason, through the same route_to_queue the pipeline uses itself. Whatever decides a video needs a person asks through that command; the watcher never reaches into another tool's environment or database. Likewise the central-database sync (sync/database.py) is configuration (`central_db`), absent by default, and cross-node coordination lives in MouseReach's own watcher_central.db on the NAS root.
 
-3. WHAT HAPPENS TO THE OLD FILES - superseded, not overwritten (since 2026-08-21)
-For a video marked outdated with a narrow scope, the second watcher copies every file whose name starts with the video identifier from Analyzed down to the local Processing folder — a copy, so the originals stay where they are (orchestrator.py:1574-1577). The algorithms re-run and overwrite the copies. Then the finished set is moved back to Analyzed/<project>/<cohort> by archive_video. That move used to be a bare shutil.move onto the same filename, which silently replaced whatever was there, destroying the previous generation's segments, reaches, outcomes, assignments, triage record, manifest and kinematics with nothing kept. Since 2026-08-21 archive_video calls supersede_video_outputs FIRST whenever anything for that video is already at the destination: the earlier generation is swept, checksum-verified, into the versioned Archive tree, and if that sweep reports any failure the archive REFUSES to proceed rather than move new files on top of old ones. The video itself and any ground-truth or human-review file are deliberately left in place, so a review still travels with its video. Since 2026-10-22 a file that is identical to the archived one (same size and time, or the same SHA-256 when the times differ) is not swept either: a re-run copies the video and pose down and hands them back unchanged, and sweeping them stored a duplicate pose per re-run and cost needless copying time.
+3. WHAT HAPPENS TO THE OLD FILES - superseded, not overwritten
+For a video marked outdated with a narrow scope, the second watcher copies every file whose name starts with the video identifier from Analyzed down to the local Processing folder — a copy, so the originals stay where they are (orchestrator.py:1574-1577). The algorithms re-run and overwrite the copies. Then the finished set is moved back to Analyzed/<project>/<cohort> by archive_video. A bare move onto the same filename would silently replace the previous generation. Archive_video calls supersede_video_outputs FIRST whenever anything for that video is already at the destination: the earlier generation is swept, checksum-verified, into the versioned Archive tree, and if that sweep reports any failure the archive REFUSES to proceed rather than move new files on top of old ones. The video itself and any ground-truth or human-review file are deliberately left in place, so a review still travels with its video. A file that is identical to the archived one (same size and time, or the same SHA-256 when the times differ) is not swept either: a re-run copies the video and pose down and hands them back unchanged, and sweeping them stored a duplicate pose per re-run and cost needless copying time.
 The old pose file is the one exception, and only by accident: it is never moved or deleted. Because the model name is part of the filename, a new-model pose lands beside the old one and both stay.
-For a video marked outdated because the pose model changed AND which has no pose from the declared model on disk (scope 'full'), the processing node does not do the copy-down. Before 2026-08-24 it forced the state to 'dlc_queued'; that reached no graphics-card machine and did reach cross-node recovery, where it produced pathless rows, so from then until 2026-09-12 it simply held the video in 'outdated' and logged the list once, and a person had to carry the video to a GPU and back. Since 2026-09-12 the ask travels over shared storage instead (src/mousereach/watcher/repose.py): right after each version scan the node writes one small request file per such video into Processing/Repose_Queue/; any graphics-card watcher pulls a couple at a time (claiming each by an atomic rename into Repose_Queue/.inflight/, copying the archived mp4 into its own local DLC_Queue, and queueing it for pose by the ordinary transitions, archived -> outdated -> dlc_queued); when the new pose lands in Processing/Posed the processing node ADOPTS it -- the row stays 'outdated' but its scope narrows to 'segmentation' and its recorded pose path points at the staged file -- and the copy-down route below re-runs every post-DLC stage against it, with the archived results folder (human segmentation and reviews included) copied down beside it. The request file is the idempotency key: it exists, queued or inflight, from publish until adoption (or until a GPU node that also processes archives the result itself), the GPU node heartbeats it while it holds the video, and a request nobody has touched for a day returns to the queue. Nothing is pushed to any machine; a lab with one GPU PC and a shared drive publishes and consumes on its own drive. Videos whose manifest names an old model but which DO have the declared pose on disk are not in this category at all: they get scope 'segmentation' and take the ordinary copy-down route below.
+For a video marked outdated because the pose model changed AND which has no pose from the declared model on disk (scope 'full'), the processing node does not do the copy-down. The ask travels over shared storage instead (src/mousereach/watcher/repose.py): right after each version scan the node writes one small request file per such video into Processing/Repose_Queue/; any graphics-card watcher pulls a couple at a time (claiming each by an atomic rename into Repose_Queue/.inflight/, copying the archived mp4 into its own local DLC_Queue, and queueing it for pose by the ordinary transitions, archived -> outdated -> dlc_queued); when the new pose lands in Processing/Posed the processing node ADOPTS it -- the row stays 'outdated' but its scope narrows to 'segmentation' and its recorded pose path points at the staged file -- and the copy-down route below re-runs every post-DLC stage against it, with the archived results folder (human segmentation and reviews included) copied down beside it. The request file is the idempotency key: it exists, queued or inflight, from publish until adoption (or until a GPU node that also processes archives the result itself), the GPU node heartbeats it while it holds the video, and a request nobody has touched for a day returns to the queue. Nothing is pushed to any machine; a lab with one GPU PC and a shared drive publishes and consumes on its own drive. Videos whose manifest names an old model but which DO have the declared pose on disk are not in this category at all: they get scope 'segmentation' and take the ordinary copy-down route below.
 Be careful with the word "archive" in this code: the watcher's archive step means "move the finished outputs from the working folder into Analyzed/<project>/<cohort>", which is the live current-results location, not a historical store.
 
-4. THE ARCHIVING CODE THE DESCRIPTION DESCRIBES DOES EXIST - and the watcher now calls it (since 2026-08-21)
-mousereach/archive/supersede.py does exactly what the description says should happen. supersede_video_outputs (supersede.py:161) moves a video's about-to-be-replaced pose and algorithm outputs into a separate Archive tree at <pipeline root>/Analyzed/Archive, organised as "DLC Model <generation>/<seg…_reach…_out…_asn… version stack>/" so one pose is stored once per model generation while many algorithm variants live under it. Every move is checksum-verified: copy, compare sha256, and only then delete the source (supersede.py:105-128). It never overwrites — an identical file already there (under the base name OR any existing .N version, checked since 2026-09-09) means the incoming copy is simply dropped, and a genuinely different same-named file is saved as .1, .2 and so on. Before the .N identity check, a reprocess loop that re-swept unchanged content added another byte-identical multi-MB copy per lap. The video itself, the ground-truth file and the human review file are explicitly never archived (supersede.py:55-57, 204-206), matching the rule that human judgements are facts about the video and stay with it.
-It now has two callers: archive_video (archive/core.py), which is the watcher's own filing step, and pipeline/reprocess_to_current.py:293-294, a hand-run bring-one-video-up-to-the-current-stack tool with no command-line entry point. The sentence that stood here -- that nothing automatic called it -- was true until 2026-08-21 and is not now. It has to be invoked by hand, and only does the archiving when called with finalize=True and only for videos the review gate judged clean; held videos are staged into a review queue instead and their old outputs are left untouched (reprocess_to_current.py:66-108, 280-300).
+4. THE ARCHIVING CODE THE DESCRIPTION DESCRIBES DOES EXIST - and the watcher now calls it
+mousereach/archive/supersede.py does exactly what the description says should happen. supersede_video_outputs (supersede.py:161) moves a video's about-to-be-replaced pose and algorithm outputs into a separate Archive tree at <pipeline root>/Analyzed/Archive, organised as "DLC Model <generation>/<seg…_reach…_out…_asn… version stack>/" so one pose is stored once per model generation while many algorithm variants live under it. Every move is checksum-verified: copy, compare sha256, and only then delete the source (supersede.py:105-128). It never overwrites: an identical file already there (under the base name OR any existing .N version) means the incoming copy is simply dropped, and a genuinely different same-named file is saved as .1, .2 and so on. The video itself, the ground-truth file and the human review file are explicitly never archived (supersede.py:55-57, 204-206), matching the rule that human judgements are facts about the video and stay with it.
+It now has two callers: archive_video (archive/core.py), which is the watcher's own filing step, and pipeline/reprocess_to_current.py:293-294, a hand-run bring-one-video-up-to-the-current-stack tool with no command-line entry point. It has to be invoked by hand, and only does the archiving when called with finalize=True and only for videos the review gate judged clean; held videos are staged into a review queue instead and their old outputs are left untouched (reprocess_to_current.py:66-108, 280-300).
 
 NET EFFECT
-Existence of the pose file is properly guarded on every route into the algorithms. Currency of the pose is checked only as a background sweep over already-finished videos, from a text record rather than the file, and can be inert if the version declaration leaves the scorer blank. When a re-run happens inside the watcher, the previous generation's results are now swept into the versioned Archive tree first, checksum-verified, and the archive refuses to proceed if that sweep fails -- so what an earlier model produced for a video remains recoverable. That was not true before 2026-08-21, when the previous generation was overwritten in place.
+Existence of the pose file is properly guarded on every route into the algorithms. Currency of the pose is checked only as a background sweep over already-finished videos, from a text record rather than the file, and can be inert if the version declaration leaves the scorer blank. When a re-run happens inside the watcher, the previous generation's results are now swept into the versioned Archive tree first, checksum-verified, and the archive refuses to proceed if that sweep fails -- so what an earlier model produced for a video remains recoverable.
 
 ---
 
@@ -306,14 +290,14 @@ Vocabulary first, because the folder names in the code are not the words people 
 STEP 1 - DECIDING A VIDEO IS OUT OF DATE
 A scanner walks every video the local database calls 'archived' and reads that video's provenance file, <video>_processing_manifest.json, out of the Analyzed tree (reprocessor.py:100-113, 193-217). It compares that file against the declared current versions in MouseReach_Pipeline/pipeline_versions.json (versions.py:138-200). A video is out of date if the pose model differs, if any tracked stage's recorded version differs, or if a stage recorded no version at all. A video that is fully current is ALSO pulled back if a saved human review is newer than its kinematics output, so a reviewer's answer reaches the final data (reprocessor.py:114-136, 175-191).
 
-The scanner writes no pipeline data (its only file is a cache of what it has read, version_scan_cache.json in the machine's own processing root; see the update of 2026-10-22 on keeping it across restarts). It sets the database state to 'outdated' and stores a "scope": 'full' when the pose model changed, otherwise the earliest stale stage - segmentation, reach, outcome or kinematics - so that stage and everything after it re-run while current upstream results are reused (reprocessor.py:26-42, 149-157). This scan runs at watcher start-up and then on one wall-clock timer (30 minutes). It can also be run by hand with `mousereach-version-check --mark` (cli.py:1275-1285).
+The scanner writes no pipeline data (its only file is a cache of what it has read, version_scan_cache.json in the machine's own processing root; see "the version scan keeps what it has read across restarts"). It sets the database state to 'outdated' and stores a "scope": 'full' when the pose model changed, otherwise the earliest stale stage - segmentation, reach, outcome or kinematics - so that stage and everything after it re-run while current upstream results are reused (reprocessor.py:26-42, 149-157). This scan runs at watcher start-up and then on one wall-clock timer (30 minutes). It can also be run by hand with `mousereach-version-check --mark` (cli.py:1275-1285).
 
 STEP 2 - WHAT HAPPENS TO AN OUTDATED VIDEO
-Re-running an outdated video is the processing-server watcher's last priority, after archiving, the failed-video retry, intake and the pipeline (order changed 2026-08-30: archiving moved from last to first so finished results reach the NAS continuously instead of only when the staged supply runs dry).
+Re-running an outdated video is the processing-server watcher's last priority, after archiving, the failed-video retry, intake and the pipeline (archiving comes first so finished results reach the NAS continuously instead of only when the staged supply runs dry).
 
-If the scope is 'full', nothing is copied or moved and the video stays 'outdated'. Since 2026-08-24 'full' means only "this video has no pose from the declared model anywhere in the archive" - a manifest naming an old model is not enough on its own, because the bulk re-pose had already produced current pose files for most of them. The row is no longer forced to 'dlc_queued': that reached no graphics-card machine (the DLC queue folder is local to each node) and did reach cross-node recovery, where the state became a pathless row that crashed the stager. Videos in this state are listed in the log once, and since 2026-09-12 a re-pose request for each is published to the shared Processing/Repose_Queue folder after every version scan, for any graphics-card watcher to pull (section 5 describes the round trip; watcher/repose.py implements it). When the new pose is staged back, the row's scope narrows to 'segmentation' and the ordinary copy-down re-run below takes over. On a DLC machine the pose handler now resolves the video file rather than trusting the recorded path, and a video with no file on that node is recorded 'unresolvable' instead of failed-and-retried.
+If the scope is 'full', nothing is copied or moved and the video stays 'outdated'. 'full' means only "this video has no pose from the declared model anywhere in the archive" - a manifest naming an old model is not enough on its own. The row is no longer forced to 'dlc_queued': that reached no graphics-card machine (the DLC queue folder is local to each node) and did reach cross-node recovery, where the state became a pathless row that crashed the stager. Videos in this state are listed in the log once, and a re-pose request for each is published to the shared Processing/Repose_Queue folder after every version scan, for any graphics-card watcher to pull (section 5 describes the round trip; watcher/repose.py implements it). When the new pose is staged back, the row's scope narrows to 'segmentation' and the ordinary copy-down re-run below takes over. On a DLC machine the pose handler now resolves the video file rather than trusting the recorded path, and a video with no file on that node is recorded 'unresolvable' instead of failed-and-retried.
 
-If the scope is anything else, the watcher picks the pose to re-run against -- since 2026-09-12 a pose the row already points at (a freshly staged one from the declared model, adopted by the re-pose round trip) first, then a declared-model pose in Processing\Posed, and only then the video's results folder and the same cohort folder of each DLC Model tree, with a search of the whole Analyzed tree only when no declared-model pose is there (since 2026-10-22; the walk took minutes per re-run) (preferring the declared current model, else the newest - manifest.py:90-124) -- and copies two folders' worth of files into the local Processing folder, verifying every copy: from the pose file's own folder only the DLC files, and from the video's results folder (Analyzed/<project>/<cohort>) everything whose name begins with the video id, the video, the previous outputs and any human files included (orchestrator.py _reprocess_copy_set). Nothing is deleted from Analyzed - this is a copy, so the archived set stays intact until a re-archive overwrites it. The state is forced to 'processing' and the standard algorithm run starts immediately, skipping the stages upstream of the stale one (orchestrator.py:1581-1602, 1843-1853).
+If the scope is anything else, the watcher picks the pose to re-run against -- a pose the row already points at (a freshly staged one from the declared model, adopted by the re-pose round trip) first, then a declared-model pose in Processing\Posed, and only then the video's results folder and the same cohort folder of each DLC Model tree, with a search of the whole Analyzed tree only when no declared-model pose is there (the walk takes minutes per re-run) (preferring the declared current model, else the newest - manifest.py:90-124) -- and copies two folders' worth of files into the local Processing folder, verifying every copy: from the pose file's own folder only the DLC files, and from the video's results folder (Analyzed/<project>/<cohort>) everything whose name begins with the video id, the video, the previous outputs and any human files included (orchestrator.py _reprocess_copy_set). Nothing is deleted from Analyzed - this is a copy, so the archived set stays intact until a re-archive overwrites it. The state is forced to 'processing' and the standard algorithm run starts immediately, skipping the stages upstream of the stale one (orchestrator.py:1581-1602, 1843-1853).
 
 When the declared current pose files live in a separate pose-only tree, the pose comes from one folder and everything else from the video's results folder; that two-folder copy set (added after a pose-folder-only copy re-segmented away a reviewer's hand-set cuts) is what puts the video, the older pose and any human files beside the new pose in Processing.
 
@@ -322,7 +306,7 @@ A second, entirely separate route exists for bringing videos current by hand: pi
 STEP 3 - HUMAN FILES
 There are two human file types, not three. Ground truth is <video>_unified_ground_truth.json. Both the causal review tool and the fast triage review tool write the same file, <video>_causal_review.json - a segment counts as resolved when that file's record for it says it was reviewed (triage_status.py:16-18). The separate <video>_triage.json is the algorithm's own quality verdict, not a human file.
 
-Nothing in any reprocessing path deletes either human file -- but until 2026-08-24 that sentence was true and still misleading. Nothing had to delete a review to lose it. The review was written into the triage bundle, the bundle is transient, and returning a cleared bundle MOVES its files onto one node's LOCAL disk and removes the directory. Shared storage then held no copy until the video was archived, so a review could exist only on one machine's local disk, or only inside a NAS bundle, one reprocess from gone. Reviews are now written to {NAS}/review_records/reviews/ at save time, before the working copy, and that copy belongs to no bundle's lifecycle. The version-driven reprocess only copies. The archiving step moves every file starting with the video id from Processing into the cohort folder, so human files travel with everything else (archive/core.py:144-190). The one routine that deliberately clears out old outputs - the versioned "supersede" move, called by the watcher's own filing step (archive/core.py, archive_video) and by the manual bring-current tool - carries an explicit never-touch list containing the ground-truth file, the causal-review file and the video itself, and records them as kept (archive/supersede.py). It also keeps a segments file whose cuts a person set (boundary_source "human") unless that person's own newer cuts replace it, and filing then refuses to put the algorithm's cuts over it (the Easy and Flat trays, which are never cut, are the one exception: there the whole-video span replaces it; see the section on bulk re-run paths). The only deletions in this area are queue bookkeeping files when a cleared bundle leaves a review queue (review_return.py:36-37, 166-170), staging copies after archiving (orchestrator.py:1225-1231, 2151-2158). (A manual reset helper that removed algorithm outputs, pipeline/core.py, was removed together with the old Run Pipeline processor.)
+Nothing in any reprocessing path deletes either human file. A review written only into the transient triage bundle could still be lost, because returning a cleared bundle MOVES its files onto one node's LOCAL disk and removes the directory, so reviews are written to {NAS}/review_records/reviews/ at save time, before the working copy, and that copy belongs to no bundle's lifecycle. The version-driven reprocess only copies. The archiving step moves every file starting with the video id from Processing into the cohort folder, so human files travel with everything else (archive/core.py:144-190). The one routine that deliberately clears out old outputs - the versioned "supersede" move, called by the watcher's own filing step (archive/core.py, archive_video) and by the manual bring-current tool - carries an explicit never-touch list containing the ground-truth file, the causal-review file and the video itself, and records them as kept (archive/supersede.py). It also keeps a segments file whose cuts a person set (boundary_source "human") unless that person's own newer cuts replace it, and filing then refuses to put the algorithm's cuts over it (the Easy and Flat trays, which are never cut, are the one exception: there the whole-video span replaces it; see the section on bulk re-run paths). The only deletions in this area are queue bookkeeping files when a cleared bundle leaves a review queue (review_return.py:36-37, 166-170), staging copies after archiving (orchestrator.py:1225-1231, 2151-2158). (A manual reset helper that removed algorithm outputs, pipeline/core.py, was removed together with the old Run Pipeline processor.)
 
 Do the human files travel with the video? Only on one of the two return routes. When a person clears a video that was held in the triage or deep-review queue, every file in that bundle - review file, ground truth, clearance marker - is MOVED into the local Processing folder, minus the two bookkeeping files, and the video is set back to 'processing' (review_return.py:118-214). On the version-staleness route they travel too, because the copy set takes everything beginning with the video id from the results folder (only the DLC files from the pose folder).
 
@@ -331,17 +315,17 @@ That mostly does not matter, because the code goes looking for the review rather
 STEP 4 - THE RE-RUN ITSELF
 The re-run regenerates the algorithm outputs from scratch; it does not preserve the human flags that were written into the old algorithm files. The human decision lives in the review file and is re-applied at the very end: the gate treats a segment as resolved if the review says so, and the kinematics step passes the review file to the feature extractor so the human's outcome and chosen causal reach replace the algorithm's, with the algorithm's originals kept alongside for provenance (review_gate.py:96-101; orchestrator.py:2067-2078; causal_review_io.py:298-345). If the video comes out clean it goes to 'processed', gets archived into Analyzed/<project>/<cohort>, and the database tool pulls its kinematics from there (neither the watcher's filing nor bring-current pushes anything into a database). If anything is still unresolved, the whole bundle is moved back out to the triage or deep-review queue and nothing reaches kinematics or the database (review_gate.py:191-222).
 
-THE ONE THING THAT IS NOT TRUE YET -- CORRECTED 2026-08-24
-This section used to say that a review is re-attached by segment number and that nothing reads "segment_span" back. That was true when it was written and is no longer. `index_review_by_segment` (causal_review_io.py) matches a review to the CURRENT segmentation on frame overlap, ignoring the numbers: it needs 50% overlap, requires the best candidate to beat the runner-up by 15%, and DROPS a review whose frames straddle two segments or match none, saying so in its notes rather than guessing. `resolve_truth_layers` threads the current segments into it, and the kinematics extractor calls that. So a re-cut no longer stamps a human judgement onto footage nobody looked at.
+HOW A REVIEW IS RE-ATTACHED AFTER A RE-CUT
+A review is re-attached by frames, not by segment number. `index_review_by_segment` (causal_review_io.py) matches a review to the CURRENT segmentation on frame overlap, ignoring the numbers: it needs 50% overlap, requires the best candidate to beat the runner-up by 15%, and DROPS a review whose frames straddle two segments or match none, saying so in its notes rather than guessing. `resolve_truth_layers` threads the current segments into it, and the kinematics extractor calls that. So a re-cut no longer stamps a human judgement onto footage nobody looked at.
 
-What WAS still broken, and was fixed the same day: the resolver looked for a review only in the two NAS review queues and the caller's processing dir -- all three places a review can vanish from. A review that outlived its bundle but whose video was not archived yet was in none of them, so the extractor fell back to the algorithm's answer while the human's sat in the durable store unread. The durable store is now the lowest-priority layer in that stack (any live copy still wins, since a reviewer may have edited it). Pinned by a test that fails against the previous code with the human's outcome discarded.
+The resolver also reads the durable store: a review that outlived its bundle but whose video is not archived yet is in none of the two NAS review queues or the caller's processing dir, and without the durable store the extractor would fall back to the algorithm's answer while the human's sat unread. The durable store is the lowest-priority layer in that stack (any live copy still wins, since a reviewer may have edited it).
 
-The corpus index also now stores segment_span, the human's chosen causal reach and their answers, so a review whose file is lost is reconstructable; it previously held a file path plus two summary fields. A module that guards human decisions across a re-run does exist, and reports rather than silently drops decisions whose segment vanished (clear_guard.py:1-18), but it is wired only into the bundle re-staging tool (staging.py:340), not into the watcher pipeline.
+The corpus index stores segment_span, the human's chosen causal reach and their answers, so a review whose file is lost is reconstructable. A module that guards human decisions across a re-run does exist, and reports rather than silently drops decisions whose segment vanished (clear_guard.py:1-18), but it is wired only into the bundle re-staging tool (staging.py:340), not into the watcher pipeline.
 
 CONFIGURATION THAT CHANGES ANY OF THIS
 - watcher.mode ('dlc_pc' or 'processing_server', config.py:676): selects which watcher class runs. Only the processing-server watcher acts on 'outdated' videos and returns cleared review bundles; only the DLC watcher consumes 'dlc_queued'.
 - watcher.also_process (config.py:678): on a pose machine, run the algorithms locally straight after posing and archive directly, instead of staging for another machine.
-- processing_root and nas_root in ~/.mousereach/config.json (config.py:56-57, 99-105): set the local scratch Processing folder and the network tree respectively. If nas_root is left unset every derived path - staging, Analyzed, the review queues - is unset too, and the tools say so (until 2026-10-22 the code silently fell back to an old layout instead).
+- processing_root and nas_root in ~/.mousereach/config.json (config.py:56-57, 99-105): set the local scratch Processing folder and the network tree respectively. If nas_root is left unset every derived path - staging, Analyzed, the review queues - is unset too, and the tools say so.
 - watcher.dlc_shuffle (config.py:665-667): if unset, the pose model used is taken from the declared dlc_scorer in pipeline_versions.json, so producer and version checker cannot disagree.
 - MouseReach_Pipeline/pipeline_versions.json: the declared current versions. Editing it is what makes existing videos outdated on the next scan.
 
@@ -352,7 +336,7 @@ CONFIGURATION THAT CHANGES ANY OF THIS
 HOW THE ALGORITHMS ACTUALLY GET RUN, AND WHAT HAPPENS WHEN ONE DOES NOT SUCCEED
 (code root: <repo>, branch master)
 
-HISTORICAL SNAPSHOT: this block describes the code as it was when it was written; its line numbers are stale, and two of its statements are no longer true -- (1) a 'failed' video IS picked up again: the processing watcher retries it after a wait, up to watcher.max_retries times, and a filed video whose re-run fails for good goes back to 'archived' (see "a filed video whose re-run fails stays filed"); (2) a returned video does NOT re-run from segmentation: it resumes just after the step that sent it (see "a returned video resumes just after the step that sent it"). Where this block and those updates disagree, the updates are right.
+Line numbers in this block are stale: find the code by the function or constant named beside each reference. A 'failed' video is picked up again: the processing watcher retries it after a wait, up to watcher.max_retries times, and a filed video whose re-run fails for good goes back to 'archived' (see "a filed video whose re-run fails stays filed"). A returned video does not re-run from segmentation: it resumes just after the step that sent it (see "a returned video resumes just after the step that sent it").
 
 WHICH MACHINE RUNS THE ALGORITHMS
 Each machine has a file ~/.mousereach/config.json with a "watcher" section. Two settings decide the behaviour here:
@@ -396,19 +380,19 @@ WHAT HAPPENS WHEN A STEP DOES NOT SUCCEED - THIS IS NOT THE SAME AS TRIAGE
 - The automatic quality check raises: a warning; the verdict stays 'auto approved' and the video proceeds (orchestrator.py:2039).
 - Kinematic feature extraction raises: a warning only. The video is still marked 'processed' and will be archived - with no kinematics and nothing written to the results database (central_db) (orchestrator.py:2105-2110).
 - The database write fails: a warning only (orchestrator.py:2102).
-[SUPERSEDED: a failed video is now retried after a wait, up to watcher.max_retries times, and a filed video whose re-run fails for good goes back to 'archived' -- see the update named above.] No watcher ever picks up a video in state 'failed' - none of the work queues query that state (orchestrator.py:1432-1512, :501-580). A person has to run mousereach-watch-reprocess, optionally with --all-failed, to reset them (src/mousereach/watcher/cli.py:540-640).
+A video in state 'failed' is retried by the processing watcher after a wait, up to watcher.max_retries times, and a filed video whose re-run fails for good goes back to 'archived' (see "a filed video whose re-run fails stays filed"). A person can reset failed videos with mousereach-watch-reprocess, optionally with --all-failed (src/mousereach/watcher/cli.py:540-640).
 
 GETTING A TRIAGED VIDEO BACK INTO THE PIPELINE
 The review tool, opened on a bundle, saves the human's answers as {video}_causal_review.json inside that bundle folder (src/mousereach/review/causal_review_widget.py:880-885, :2843-2850). The {video}_triage.json file in the same folder is the automatic quality check's record and plays no part in release.
 
 A watcher in processing-server mode calls the return scan from its scan step every tenth polling cycle - roughly every five minutes at the default 30-second poll - and returns at most 10 bundles per scan so a deep queue does not starve actual processing (orchestrator.py:1388-1397, :1348, src/mousereach/watcher/review_return.py:222). A watcher in dlc_pc mode never calls it (its scan step, orchestrator.py:483-496, does only file discovery and DeepLabCut completion checks), so a GPU machine running with also_process true can put videos into triage but cannot take them out.
 
-For each bundle in the triage queue the scan recomputes the picture from the bundle's own files and releases it only when there is at least one flagged segment, every flagged segment has an answer whose "reviewed" field is not false, and segmentation reads as sound OR a human's deep-review clear marker is in the bundle (since 2026-09-09 the scan honors {video}_deep_review_cleared.json exactly as the gate does: such a bundle is never diverted to deep review and releases once its segments are answered -- previously the gate's honor and the scan's raw seg_failed divert fought each other and a cleared video lapped the three states indefinitely). Before touching anything it makes sure the video has a row in this machine's watcher database, registering it if the review was cleared on another machine (review_return.py:134-146). It then locates the mp4 and pose file - in the bundle, then via the bundle manifest, then by searching the Analyzed archive - and refuses to return the bundle if no pose file can be found, so a cleared review is not spent on a run guaranteed to fail (review_return.py:40-95, :152-159). The data files are moved into the local Processing directory, the two bookkeeping files are deleted, the state is set to 'processing' (forced if the normal transition is rejected), and the now-empty bundle folder is removed (review_return.py:161-214).
+For each bundle in the triage queue the scan recomputes the picture from the bundle's own files and releases it only when there is at least one flagged segment, every flagged segment has an answer whose "reviewed" field is not false, and segmentation reads as sound OR a human's deep-review clear marker is in the bundle (the scan honors {video}_deep_review_cleared.json exactly as the gate does: such a bundle is never diverted to deep review and releases once its segments are answered -- otherwise the gate's honor and the scan's raw seg_failed divert would fight each other and a cleared video would lap the three states indefinitely). Before touching anything it makes sure the video has a row in this machine's watcher database, registering it if the review was cleared on another machine (review_return.py:134-146). It then locates the mp4 and pose file - in the bundle, then via the bundle manifest, then by searching the Analyzed archive - and refuses to return the bundle if no pose file can be found, so a cleared review is not spent on a run guaranteed to fail (review_return.py:40-95, :152-159). The data files are moved into the local Processing directory, the two bookkeeping files are deleted, the state is set to 'processing' (forced if the normal transition is rejected), and the now-empty bundle folder is removed (review_return.py:161-214).
 
-[SUPERSEDED: a returned video now resumes just after the step that sent it -- triage at reach assignment or at the checks, deep review at reach detection -- and every later step and check runs; see "a returned video resumes just after the step that sent it".] The returned video then re-runs the whole sequence from segmentation. The human's review file came back with it, so the gate sees the answers and lets it through, and feature extraction loads that same file and applies the reviewer's corrections before computing kinematics (orchestrator.py:2066-2078). Deep-review bundles come back the same way (now: resuming at reach detection, the person's cuts kept), but the release signal is different: either a {video}_deep_review_cleared.json marker written by the deep tools, or a {video}_unified_ground_truth.json produced by the ground-truth tool (review_return.py:108-115, :252-259).
+A returned video resumes just after the step that sent it -- triage at reach assignment or at the checks, deep review at reach detection -- and every later step and check runs; see "a returned video resumes just after the step that sent it". The human's review file came back with it, so the gate sees the answers and lets it through, and feature extraction loads that same file and applies the reviewer's corrections before computing kinematics (orchestrator.py:2066-2078). Deep-review bundles come back the same way (resuming at reach detection, the person's cuts kept), but the release signal is different: either a {video}_deep_review_cleared.json marker written by the deep tools, or a {video}_unified_ground_truth.json produced by the ground-truth tool (review_return.py:108-115, :252-259).
 
 TWO EDGES WORTH KNOWING
-- [SUPERSEDED 2026-11-19: the return scan reads ground truth too, in the bundle and in the index; see "Update 2026-11-19 (triage release reads ground truth inside the bundle)".] The gate treats a segment as resolved if ground truth determined it, or if a review file found in any of several locations answers it. The return scan is stricter: it only reads {video}_causal_review.json inside the bundle and does not consider ground truth. A video whose flagged segments include ground-truth-determined ones can therefore sit in the queue after the reviewer has answered everything actually asked of them (review_gate.py:91-100 vs review_return.py:244-249).
+- The gate treats a segment as resolved if ground truth determined it, or if a review file found in any of several locations answers it. The return scan reads ground truth too, in the bundle and in the index (see "triage release reads ground truth inside the bundle"), so a video whose flagged segments include ground-truth-determined ones does not sit in the queue after the reviewer has answered everything actually asked of them.
 - The server's scan step returns immediately if no DeepLabCut staging directory is configured (orchestrator.py:1364-1366), and that staging path only exists when nas_root is set. With nas_root missing, the review-return scan never runs at all.
 
 ---
@@ -461,7 +445,7 @@ Two more things worth knowing. Easy and Flat videos are not segmented and get a 
 
 THE ONE PATH THAT DOES MATCH THE DESCRIPTION
 
-A separate tool, the "bring current" routine (`reprocess_video_to_current` in pipeline/reprocess_to_current.py, run from Python by hand), re-runs an old filed video on the current algorithm versions with the watcher's rules (listed in the section "bring-current keeps the watcher's rules" further down): it compares the video with its hand scores, checks the same gate, and sends a held video to its review queue through the watcher's own router. A clean video is filed only with its features file, through archive/core.archive_video (the finalize step, after the gate, in reprocess_video_to_current): the new files are staged, a verified copy of each file they replace is kept in a version-stamped Archive tree, the new files are renamed into place with the features file last, and only then are the older leftover files swept. A failed move is an error, never a success (see the 2026-11-18 update "bring-current files all or nothing, and its holds are visible" below). Bring-current pushes NOTHING to any database: the database tool pulls filed results from Analyzed itself. (It used to push the features file into the database right after filing; that push was removed.) That file-level archiver never archives the video itself or the human ground-truth and human-review files, which stay with the video permanently (archive/supersede.py). The watcher's own filing step calls the same archiver.
+A separate tool, the "bring current" routine (`reprocess_video_to_current` in pipeline/reprocess_to_current.py, run from Python by hand), re-runs an old filed video on the current algorithm versions with the watcher's rules (listed in the section "bring-current keeps the watcher's rules" further down): it compares the video with its hand scores, checks the same gate, and sends a held video to its review queue through the watcher's own router. A clean video is filed only with its features file, through archive/core.archive_video (the finalize step, after the gate, in reprocess_video_to_current): the new files are staged, a verified copy of each file they replace is kept in a version-stamped Archive tree, the new files are renamed into place with the features file last, and only then are the older leftover files swept. A failed move is an error, never a success (see "bring-current files all or nothing, and its holds are visible" below). Bring-current pushes NOTHING to any database: the database tool pulls filed results from Analyzed itself. That file-level archiver never archives the video itself or the human ground-truth and human-review files, which stay with the video permanently (archive/supersede.py). The watcher's own filing step calls the same archiver.
 
 BACKUPS
 
@@ -471,7 +455,7 @@ A periodic job copies the configured folders (backup.sync_dirs, or the built-in 
 
 ---
 
-## Segmentation now says when it forced the answer (added 2026-08-21)
+## Segmentation now says when it forced the answer
 
 The segmenter emits exactly 21 boundaries every time. That count is hard-coded
 and guaranteed by a safety net, so a forced segmentation and a measured one
@@ -487,8 +471,8 @@ Three changes:
 - `segment_video_multi` now keeps every candidate timepoint it considered, used
   or not, in a `candidates` list in `{video}_segments.json` -- frame, which of
   the four tray corners proposed it, how strongly they agreed, and whether it
-  became a boundary. These were previously discarded, so when the chosen
-  boundaries were wrong nobody could see what the alternatives had been.
+  became a boundary. They are kept so that when the chosen
+  boundaries are wrong the alternatives can be seen.
 - It also writes `needs_human`: its own account of why the boundaries want
   checking. It is non-empty when boundaries were invented at the median cadence
   to reach 21, when real detections were discarded to fit that count, when
@@ -640,9 +624,7 @@ established here.
 
 THE DASHBOARD STILL HARDCODES THE PATH THE CLI STOPPED HARDCODING
 
-The 2026-08-23 update above moved all eight watcher commands onto
-`_resolve_db_path`, which honours the node's `db_path` override and prints the
-path it chose so a wrong database is loud. The dashboard was never included. It
+All eight watcher commands resolve their database through `_resolve_db_path`, which honours the node's `db_path` override and prints the path it chose so a wrong database is loud. The dashboard does not. It
 resolves correctly in one place (dashboard/widget.py:892) and hardcodes the
 fallback in four others: :365, :593, :1284 and :1415.
 
@@ -812,11 +794,7 @@ A QUEUE BUNDLE APPEARS IN ONE RENAME
 
 `review_routing.move_video_bundle` builds a NEW bundle in
 `<queue>/.incoming/<stem>/` and publishes it as `<queue>/<stem>/` with one
-directory rename. WHY: it used to create the empty `<queue>/<stem>/` first and
-move the files in one at a time, and a move onto the share is a copy that takes
-seconds per file. The running watcher's return scan saw the empty folder,
-retired it to `_Problematic` mid-route, and every remaining move failed with
-"No such file or directory". A partly filled folder could also be judged as a
+directory rename. WHY: creating the empty `<queue>/<stem>/` first and moving the files in one at a time would let the running watcher's return scan see the empty folder, retire it to `_Problematic` mid-route and fail every remaining move with "No such file or directory", because a move onto the share is a copy that takes seconds per file. A partly filled folder could also be judged as a
 bundle (`triage_status`) before all its files had arrived.
 
 WHY a dot-folder under the queue root: the queue readers that judge, retire or
@@ -844,15 +822,11 @@ created `<queue>/<stem>/` first and filled it file by file).
   * Two routes of the same video share `<queue>/.incoming/<stem>/`. If one
     publishes it while the other is still filling it, the other moves its
     remaining files, and writes its routing manifest, into the published
-    bundle. WHY: its moves used to fail and its manifest write raised out of
-    the route, losing its record and leaving files in their source.
+    bundle. WHY: otherwise its moves would fail and its manifest write would raise out of the route, losing its record and leaving files in their source.
   * Once files have moved, the publish is always attempted, even when writing
     the routing manifest into the build folder fails; the manifest is then
     written into the published bundle (with the retrying JSON writer,
-    `fsutil.dump_json_with_retry`). WHY: that exception used to skip the
-    publish and strand every file -- the video's only copy -- in the hidden
-    folder, while the caller marked the video failed with nothing left in
-    Processing to retry.
+    `fsutil.dump_json_with_retry`). WHY: otherwise that exception would skip the publish and strand every file -- the video's only copy -- in the hidden folder, while the caller marked the video failed with nothing left in Processing to retry.
   * A file that could not be moved in the fallback stays in
     `<queue>/.incoming/<stem>/` beside the published bundle (never deleted),
     and `review_return._return_to_processing` refuses to return that bundle,
@@ -862,8 +836,7 @@ created `<queue>/<stem>/` first and filled it file by file).
     without it. `mousereach-reconcile` adds a note naming the leftover to that
     video's queue verdict.
   * The routing manifest `<stem>_routing.json` records `failed_files` beside
-    `moved_files`: each file that could not be moved, with its error. WHY: a
-    part-moved bundle used to be a log warning only, invisible in the record the
+    `moved_files`: each file that could not be moved, with its error. WHY: a part-moved bundle would otherwise be a log warning only, invisible in the record the
     review tool and audits read.
   * A route that dies partway leaves its files in `<queue>/.incoming/<stem>/`,
     and the next route of that video reuses them. `mousereach-reconcile` lists
@@ -911,9 +884,7 @@ RETURNING A CLEARED BUNDLE KEEPS ITS PROVENANCE AND ITS CHOSEN POSE
     segmentation failure is routed to deep review before the manifest is
     regenerated, so that re-routed bundle carries the previous run's manifest.
   * The pose recorded for the re-run is the one `_resolve_inputs` selected
-    (`select_pose_file`). WHY: it used to be whichever `.h5` the move loop moved
-    last, so a bundle holding two pose generations re-ran on the wrong, often
-    older, one.
+    (`select_pose_file`). WHY: whichever `.h5` the move loop moved last could be the wrong, often older, one in a bundle holding two pose generations.
   * Gate-routed bundles are self-contained (the mp4 and pose move in with the
     algorithm outputs); only legacy staged bundles point at an mp4 and pose left
     in Analyzed. The docstring had said the opposite.
@@ -960,10 +931,7 @@ THE ARCHIVE STEP ADOPTS A QUEUE FOLDER ONLY IF IT HOLDS THIS RUN
 A folder named after the video in a review queue is not always that video's
 bundle. When a return cannot delete a file the review tool still has open (the
 .mp4, typically), a husk holding just that file stays behind in the queue.
-`_archive_to_nas` used to adopt the queue's state for any such folder; the clean
-re-run that followed the person's answers was then forced back to 'triage', the
-return scan read the husk as a failed segmentation, and the video went to deep
-review as a bare .mp4 for a person to clear a second time. Now (`queue_folder_holds_this_run`) the folder counts as this
+`_archive_to_nas` does not adopt the queue's state for such a folder: the clean re-run that follows the person's answers would be forced back to 'triage', the return scan would read the husk as a failed segmentation, and the video would go to deep review as a bare .mp4 for a person to clear a second time. The folder counts (`queue_folder_holds_this_run`) as this
 run's bundle only when this run's results are no longer in Processing (every
 route moves them out together, the processing manifest among them -- this is
 what the bench-disagreement router does), or when the folder's routing record,
@@ -1079,8 +1047,7 @@ The rules now, each with its reason:
      `Collage coordination database is available again` when it recovers.
      Cross-node recovery runs only at the next restart, because it rewrites
      rows and must not run under live work.
-     WHY: a node that started while the share was still coming up used to crop
-     every collage without a claim, and a restart was the only cure.
+     WHY: a node that started while the share was still coming up would otherwise crop every collage without a claim, and a restart would be the only cure.
   2. A claim check that raises (share or database trouble) means no crop this
      poll. The collage stays 'stable' and is tried again next poll. Log: one
      WARNING per collage per outage, `could not check the shared claim`; a
@@ -1189,7 +1156,7 @@ left, the row becomes 'unresolvable': INFO `already in NAS staging
 server`. The files in Posed are left untouched. WHY 'unresolvable' and not
 'failed': nothing went wrong with the video (this node may even have staged it
 fully and been stopped before recording that). 'failed' is a retry state that
-reads as a verdict on the data, and its ERROR trace used to fill the failed
+reads as a verdict on the data, and its ERROR trace would fill the failed
 count with videos already safely with the server.
 
 Every no-work path in the GPU handlers now returns False, so the main loop
@@ -1198,8 +1165,7 @@ sleeps for a poll interval instead of re-picking the same row at full speed.
 Known gaps, not yet closed: `WatcherDB.register_video` called without a
 source_path, and `mousereach-watch-unresolvable --retry`, still search with the
 default folder list, which includes Posed. Neither runs in the GPU work loop's
-normal path. [`--retry` is closed: see "Update: failed and unresolvable videos"
-near the end of this document.]
+normal path. [`--retry` is closed: see "failed and unresolvable videos -- state changes, resets, retries and re-drives" near the end of this document.]
 
 ---
 
@@ -1270,10 +1236,7 @@ WHERE THE PAUSE IS CHECKED
     of claims already held still runs.
   * `run_once` (the panel's Run Once and `mousereach-watch --once`): before the
     scan and before every item, for the stop flag and for BOTH pause causes.
-    This is a change: run_once used to ignore the hand pause and the stop flag.
-    WHY the hand pause too: before recording programs could be listed, the
-    hand pause was the only filming protection, and a Run Once that ignored it
-    posed on top of filming. The panel checks first and says why it will not
+    WHY the hand pause too: it can be the only filming protection (when no recording programs are listed), and a Run Once that ignored it would pose on top of filming. The panel checks first and says why it will not
     start ("paused by hand -- press Resume first", or the recording reason).
 
 A POSE ALREADY RUNNING
@@ -1323,8 +1286,7 @@ A POSE ALREADY RUNNING
 
 WHAT IS NOT STOPPED PART-WAY
 
-(Corrected 2026-09-18: a crop IS now stopped part-way -- see the update
-"a crop stops too, and the node says when it is safe to record" at the end.)
+(A crop can be stopped part-way too -- see "a crop stops too, and the node says when it is safe to record" at the end.)
 
 An archive or staging copy already running finishes, and so does a local
 pipeline run on an also_process node (segmentation, reaches, outcomes and
@@ -1425,9 +1387,7 @@ check and before any copy, the node renames
 `<Single_Animal>/<stem>.mp4` to `<Single_Animal>/.inflight/<machine>/<stem>.mp4`.
 WHY a rename and not a marker file: a rename within one share folder is one
 operation on the file server. Exactly one node's rename finds the file; every
-other node's fails with "file not found". Check-then-write markers (the
-processing server's `Processing/Posed/.claims` until 2026-10-22, now an
-exclusive create) can let two nodes both believe they won. WHY a dot-folder under the same folder: a same-folder rename never
+other node's fails with "file not found". Check-then-write markers (unlike the exclusive create of `Processing/Posed/.claims`) can let two nodes both believe they won. WHY a dot-folder under the same folder: a same-folder rename never
 crosses a volume, and readers that list only the top of the folder never see a
 claimed video as waiting a second time. The claim also sets the file's modified
 time to now, because a rename keeps the old time and a video copied in last
@@ -1462,12 +1422,11 @@ week would otherwise look like a stale claim at once.
     again by itself an hour after the failure, while its failure count is below
     `watcher.max_retries` and the file is back at the top of the folder, stable
     and claimed by no node (see "A GPU node retries a single whose copy into
-    its DLC queue failed" in "Update: failed and unresolvable videos"). When
+    its DLC queue failed" in "failed and unresolvable videos -- state changes, resets, retries and re-drives"). When
     the retries are used up it stays 'failed': fix the cause (a full disk, a
     dropped share), then run `mousereach-watch-reprocess <stem>` -- with the
     file back at the top of the shared singles folder the reset puts the row
-    to 'validated' and any GPU node takes it. [Before that update this node
-    never retried such a row by itself.]
+    to 'validated' and any GPU node takes it.
 
 (d) The claimed file is removed only once the video's next copy is confirmed
 (`_retire_claimed_single`): the staged mp4 in Processing/Posed (or, if the
@@ -1483,7 +1442,7 @@ node's queue is on its own disk.
   * Every scan and every paused poll refreshes (touches) this node's claims
     whose rows are still being worked or were handed on
     (`_CLAIM_KEEPALIVE_STATES`). A claim whose row is failed, unresolvable or
-    missing is not refreshed, and (since 2026-10-21) is given back to the
+    missing is not refreshed, and is given back to the
     folder at once (`_give_back_abandoned`, WARNING). WHY: refreshing a claim
     this node has given up on would hold the only shared copy from every other
     node for as long as this node runs.
@@ -1493,9 +1452,8 @@ node's queue is on its own disk.
     (`_POSE_FAILURE_BRAKE`, WARNING). WHY: a node whose DeepLabCut is broken
     would otherwise claim and fail every single dropped on the share.
   * Every running GPU node sweeps for claims untouched for 24 h
-    (`single_claim.STALE_S`, the re-pose request rule) -- or, since 2026-10-21,
-    untouched for 3 h by a holder whose status report has also been quiet for
-    3 h (see "Update 2026-10-21: a node keeps only what it starts") -- at most
+    (`single_claim.STALE_S`, the re-pose request rule) -- or untouched for 3 h by a holder whose status report has also been quiet for
+    3 h (see "a node keeps only what it starts") -- at most
     every 300 s, never while paused, and moves each back to the folder
     (WARNING). It never
     deletes and never overwrites. If a same-named file is already back in the
@@ -1522,7 +1480,7 @@ Known gaps:
     double pose stays possible until every node runs this version.
   * `mousereach-watch-process-animal` copies singles into a DLC queue
     without claiming them. (`mousereach-crop --queue`, `mousereach-prep` and
-    the crop tab no longer do: since 2026-11-18 they put the videos in the
+    the crop tab no longer do: they put the videos in the
     shared singles folder, where a watcher claims them.)
   * Originals that the old adoption left behind in Single_Animal are not cleaned
     up. A node that has a row for one skips it. A node without a row checks the
@@ -1532,9 +1490,6 @@ Known gaps:
     for 24 h without refreshing it; reconcile shows its age meanwhile.
   * A losing node's row is recorded 'unresolvable' (with a WARNING), and the
     dashboard health line counts it with the other unresolvable rows.
-  * Rows parked before 2026-09-15 under the old text ("registered from the
-    shared singles folder, but the file is no longer there") are not re-driven
-    automatically.
 
 ---
 
@@ -1830,8 +1785,7 @@ even when a person had cut it.
 
 **What changed.** One definition, `causal_review_io.answered_segments`: a CURRENT segment is
 answered when a review record's frames match it (`index_review_by_segment`, the matching
-the results step already used) and the record is an answer (`is_answered`, since
-2026-10-26: not a `reviewed: False` placeholder, and for a pellet an outcome other than
+the results step already used) and the record is an answer (`is_answered`: not a `reviewed: False` placeholder, and for a pellet an outcome other than
 `triaged`, `uncertain` or none -- a pellet whose outcome was left unpicked is open).
 `triage_status.resolved_segments(review, segments_doc)` uses it; the gate, the return scan,
 the review tool and the queue index all pass the video's segments document. Without a
@@ -1847,11 +1801,7 @@ nobody looked at.
 
 Tests: `tests/test_answered_means_matched_by_frames.py`.
 
-**Update the same evening: the import copies on the file server.** `--sessions-file` used
-to copy each recording by reading it into the machine running the import and writing it
-back to the same share. That can fill the machine's network link and slow every other job
-on it (intake, analysis) for as long as the import runs. The import now copies with the
-system copy (`CopyFileW`), which, between folders on the same share, the file server
+**The import copies on the file server.** `--sessions-file` does not read each recording into the machine running the import and write it back to the same share, which could fill the machine's network link and slow every other job on it (intake, analysis) for as long as the import runs. It copies with the system copy (`CopyFileW`), which, between folders on the same share, the file server
 performs itself, with no data through the importing machine
 (`aspa/import_collages.copy_file`). A stopped run's half-written `.partial` file is replaced
 by the next run.
@@ -1888,7 +1838,7 @@ fingerprints are kept between passes until the file changes. Verified against th
 lookup before deploying: identical manifests and features, and the same review for every
 sampled video.
 
-Found on the way: the "beside the canonical video" place in `resolve_review_path` looks for
+Note: the "beside the canonical video" place in `resolve_review_path` looks for
 `Analyzed/<cohort>/<video>.mp4`, so it never resolves when the filing rules put a video one level
 deeper (`Analyzed/<grant>/<cohort>/`), and encoded ASPA names fail it outright -- so reviews are
 found in the triage bundle or the durable store. Kept as is (the index follows the same rule);
@@ -1920,7 +1870,7 @@ time from the listing (`analyzed_tree.iter_file_entries`, same files and rules a
 manifests are re-read only when they changed (kept for the life of the process); reviews come
 from `causal_review_io.review_path_index`. Same answers. Tests: `tests/test_retirement_from_listings.py`.
 
-**Update 2026-10-22: the version scan remembers older reviews' dates.** For a video whose
+**the version scan remembers older reviews' dates.** For a video whose
 manifest predates the `applied_review` fingerprint, the scan compares the review's in-file
 `reviewed_at` with the manifest's `created_at`, and it opened the review on every pass to read
 that one field, which took about half of a warm pass. The value is now kept until the review
@@ -1940,8 +1890,7 @@ each session's stage) and prints the counts. Read-only. WHY: once a list's recor
 imported its sessions spread across the pipeline, and nothing said how far the list had got
 without asking every machine. Tests: `tests/test_session_coverage.py`.
 
-It waits up to 10 minutes for the shared record to be readable (it waited 30 s until 2026-10-26,
-which a scheduled run could exceed and fail with "database is locked": on a slow share an ordinary
+It waits up to 10 minutes for the shared record to be readable (a shorter wait could be exceeded by a scheduled run, which would fail with "database is locked": on a slow share an ordinary
 write can hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
 ### the filing time means "filed now"
@@ -1954,19 +1903,15 @@ forced state -- moves the time into `previously_filed_at` and clears `archived_a
 write (`WatcherDB._filing_time_defaults` / `_filing_time_sql`, which every state change passes
 through). Filing again sets a new `archived_at`; `previously_filed_at` keeps the earlier one.
 Marking a filed video outdated, un-marking it, and locking or unlocking it for a publication are
-not new filings and keep the time (they used to stamp "now" when the row went back to 'archived').
+not new filings and keep the time (they do not stamp "now" when the row goes back to 'archived').
 
 So a count of "filed videos" may read `archived_at`; the watcher's decisions that need "this video
 has been filed" (a kinematics-only re-run, putting a failed re-run back to 'archived' with its
 filing time, never starting a filed video over from a new cut, never finalizing over filed
 results, whether a new pose may be asked for) read `db.last_filed_at` -- `archived_at`, else
-`previously_filed_at` -- which is what `archived_at` alone meant before. Those decisions are
-unchanged. WHY: `archived_at` was never cleared, so 271 rows on the processing server (2026-11-24)
-read as filed with nothing filed: videos the old route-to-queue had MOVED out of Analyzed into
-triage (and some since escalated), re-posed videos whose re-run was held in triage, and retired
-rows whose files had gone to manual corrections.
+`previously_filed_at`. WHY: if `archived_at` were never cleared, rows would read as filed with nothing filed: videos moved out of Analyzed into triage (and some since escalated), re-posed videos whose re-run is held in triage, and retired rows whose files went to manual corrections.
 
-Rows written before the rule were corrected once with the tool's own command:
+Rows written before the rule can be corrected with the tool's own command:
 `python -m mousereach.watcher.filing_time` (lists them) and `... --apply` (moves each one's time
 into `previously_filed_at`, writes a `filing_time` line to its processing log; no file moved, no
 review bundle touched, `updated_at` unchanged; a second run finds nothing). It uses the database's
@@ -1985,7 +1930,7 @@ for, on the current cuts (`causal_review_io.reach_outside_answers`), now routes 
 re-segmentation queue (deep review): the review gate returns DEEP_REVIEW with a reason starting
 "segmentation: a reviewer's answer names a causal reach outside its pellet's frames", and the
 return scan diverts a triage bundle holding such an answer with the same reason (the route a
-"this segment is really pellet N" statement takes, fe3df23). The review window records such an
+"this segment is really pellet N" statement takes). The review window records such an
 answer instead of refusing it. Settled by a person's cuts saved or confirmed after the answer;
 answers voided by a re-cut, or replaced by a newer answer on that pellet, do not count. Before,
 the matching dropped the answer without a word (the pellet stayed open in triage, or the results
@@ -1998,15 +1943,11 @@ A session list (read by this report, by the work order's `session_list` selector
 `mousereach-aspa-import-collages --sessions-file`) may name an animal two ways: in pipeline form
 (`{letters}{cohort:2d}{subject:2d}`, any project, kept as written) or in the ASPA lab form (one
 letter + subject number, `J11`), which is encoded (`ASPA1011`). A line that is neither is listed
-as "not a session name" and the rest of the list is still read. Until this date only the ASPA forms
-were accepted: a pipeline id of any other project reached the ASPA encoder, which raised, and the
-whole report stopped with "unrecognised ASPA animal id" (the scheduled coverage run then failed
+as "not a session name" and the rest of the list is still read. Accepting only the ASPA forms would let a pipeline id of any other project reach the ASPA encoder, which would raise, and the whole report would stop with "unrecognised ASPA animal id" (the scheduled coverage run then failed
 every day, and the work order silently treated that list as empty). Tests:
 `tests/test_aspa_import_by_sessions.py`.
 
-**Update 2026-10-29: it reads a local copy, never the record in place.** The 10-minute wait
-could run out too, when something held the record for longer, and the report failed.
-Waiting longer would only move the limit. The report now copies the record to a temporary
+**It reads a local copy, never the record in place.** The 10-minute wait could run out when something holds the record for longer, and waiting longer would only move the limit, so the report copies the record to a temporary
 local file and reads that; a file copy is not blocked by the database's locks, and a long read
 can no longer hold up the watchers' writes either. The copy is trusted only when it was taken
 between two writes: the record commits through a rollback journal, so a write in progress
@@ -2018,13 +1959,11 @@ written to every time", and that line appears wherever the report's output is lo
 The temporary copy is deleted when the report finishes. Tests: `tests/test_session_coverage.py` (a copy between writes, none
 while a write is under way, a copy a write overtook is taken again).
 
-**Fix: a pose that was handed on is no longer reported as analysed.** The shared record has two
+**A pose that was handed on is not reported as analysed.** The shared record has two
 tables, and the word `archived` means different things in them. In `videos` (a copy of a node's
 row made when that node files a video into Analyzed) it means filed. In `pipeline_videos` (the
-live record every node writes) a posing node -- a GPU PC (until 2026-11-18 also the since-removed CPU pose pool) -- writes `archived`
-when it hands the finished pose on to the posed folder; nothing has been analysed yet. The report
-used to read both as "analysed", so a posed video waiting for (or in) analysis counted as done.
-Now an `archived` from `pipeline_videos` is placed by where the pose actually is: a processing
+live record every node writes) a posing node -- a GPU PC -- writes `archived`
+when it hands the finished pose on to the posed folder; nothing has been analysed yet. Reading both as "analysed" would count a posed video waiting for (or in) analysis as done, so an `archived` from `pipeline_videos` is placed by where the pose actually is: a processing
 node's claim in `Posed/.claims/<video>.claimed` -> "taken in for analysis"; the video in `Posed`
 -> "posed, waiting for analysis"; neither, and not in review or Analyzed -> "handed on; not in
 Posed, review or Analyzed" (a stage worth a person's look). The stored word is unchanged:
@@ -2072,48 +2011,14 @@ slot's error (it used `os.system`, so the message went to a console nobody reads
 removes any partial file a failed run left. Tests: `tests/test_gpu_node_guards_orchestrator.py`,
 `tests/test_cropper_ffmpeg_errors.py`.
 
-## a re-run that finds no pose no longer fails the video
+## a re-run that finds no pose does not fail the video
 
 When the server re-runs an outdated video and finds no pose -- not on the row, not in
-staging, not in Analyzed -- it used to mark the video failed, for example when the
-bench-disagreement router had moved its bundle, pose included, into triage. A missing pose is not a scientific outcome. `ProcessingOrchestrator._no_pose_for_reprocess`
-now (1) puts the video in a review queue's state when its bundle there holds the pose; (2) when
+staging, not in Analyzed -- it does not mark the video failed, for example when the bench-disagreement router has moved its bundle, pose included, into triage: a missing pose is not a scientific outcome. `ProcessingOrchestrator._no_pose_for_reprocess` (1) puts the video in a review queue's state when its bundle there holds the pose; (2) when
 its video is in Analyzed, sets `reprocess_scope` to `full` and logs a 'skipped' reprocess step --
 the row stays `outdated`, and the next version scan publishes a re-pose request that a GPU node
 serves; (3) only when no video can be found either, marks it failed with "no pose and no video
 found". Tests: `tests/test_no_pose_reprocess.py`.
-
-## Update 2026-10-22 (historical; superseded): a queue bundle of an archived video was moved to a side folder
-
-(No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.)
-
-The return scan reads every queued video's state in one query per queue
-(`WatcherDB.states_of`). For a video this node had `archived`, a bundle holding
-nothing a person wrote WAS moved to `_Problematic` with a note when it held no
-results at all (no `<stem>_segments.json` -- a file a return could not take
-along) or when every file in it is older than the video's processing manifest in
-Analyzed (`_superseded_by_archive`, `review_return.py`; both queues, under the
-same per-video claim as every other move). Analyzed is read once per bundle and
-row change, not on every scan. Bundles the bench-disagreement router places are
-never caught: their results leave Analyzed and their routing record postdates the
-archive. Companion to the archive-step fix above (`queue_folder_holds_this_run`):
-that one stops new husks from derailing a run; this one clears the ones already
-sitting in a person's queue. Tests: `tests/test_review_return_superseded.py`.
-
-## Update 2026-10-22 (historical; superseded): a leftover triage copy of a deep-review bundle was moved to a side folder
-
-(No longer so: nothing is moved to `_Problematic` any more, which is only for cases the pipeline cannot process at all. Such a folder is now a leftover: what has a current copy elsewhere is deleted, and what does not stays where it is, with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md.) A triage folder that differs from the deep-review bundle does NOT stay whole any more either: it is emptied as a leftover the way a route into deep review empties it -- what the deep-review bundle or the review store holds byte for byte, queue records and machine results are deleted, and only what a person wrote with no copy elsewhere is kept, listed.
-
-When a video has a folder in both review queues and its segmentation failed, the return scan
-used to skip it with "exists in BOTH queues; divert skipped (duplicate needs deliberate
-cleanup)" -- every scan, for good, because nothing ever did that cleanup. The scan then compared the two folders (`_is_leftover_copy`,
-`review_return.py`): if every file in the triage folder had a byte-identical file of the same
-name in the deep-review folder, the triage folder was moved to `_Problematic` with a note, under
-a return claim like every other move, and the deep-review bundle was untouched. A pair that
-differed in anything stayed for a person. (Both outcomes are replaced by the leftover rule in
-the banner above: a person's unsuperseded files are kept and listed, everything else is deleted.) Sizes are compared before any bytes are
-read, and a pair's verdict is kept until either folder changes. Tests:
-`tests/test_review_return_stale.py`.
 
 ## the version scan keeps what it has read across restarts
 
@@ -2132,21 +2037,11 @@ safe. The by-hand `mousereach-version-check` keeps its caches in memory only. Te
 
 ## setup keeps every setting, and an unset pipeline root is not guessed
 
-Two defects that compounded. Saving from `mousereach-setup` or the in-app Setup panel
-rewrote `~/.mousereach/config.json` with three settings only (processing_root, nas_drive,
-watcher), so every other one was deleted on save -- the shared pipeline folder (`nas_root`),
-the backup's folders, anything else the file held. And with `nas_root` gone, the
-pipeline root was guessed from an old fixed layout under `<nas_drive>`: every
-shared folder then pointed at the old place. The watcher refused to start there (no
-`pipeline_versions.json`), but the review tools and intake commands make no such check. The
-Setup panel added a third fault: its "NAS data root" field showed a pipeline folder as its
-example but saved it as the drive, so the guessed root came out one level too deep.
-
-Now: `save_config` (`setup/wizard.py`) merges into the file -- the settings it is given are
+`save_config` (`setup/wizard.py`) merges into the file -- the settings it is given are
 set, the watcher section is merged, and everything else is kept. The wizard asks for the shared
 pipeline folder as its step 2 (pre-filled from the existing setting, then the machine's lab
 profile) and builds the pipeline folders there, never under a guessed folder. The Setup panel's
-field is the shared pipeline folder and saves `nas_root`. `config.py` no longer guesses: with
+field is the shared pipeline folder and saves `nas_root`. `config.py` does not guess: with
 `nas_root` unset every shared path is `None` and `NAS_ROOT_ORIGIN` is `unset`, so each tool
 says it is not configured and names `mousereach-setup`. A machine that sets `nas_root` sees
 no change. Tests: `tests/test_setup_keeps_settings.py`.
@@ -2166,13 +2061,11 @@ and the gate. Tests: `tests/test_qc_easy_flat_no_outcomes.py`.
 
 ## a quality hold the current check would not make leaves the person's queue
 
-When the quality check is corrected, the holds it made by mistake used to stay in deep review
-until a person cleared each one. The return scan now re-checks every deep-review bundle routed
+When the quality check is corrected, the holds it made by mistake do not stay in deep review until a person clears each one: the return scan re-checks every deep-review bundle routed
 `qc_needs_review` that holds no file a person wrote: the pose-tracking layer's stored flags are
 carried over (that layer reads the whole pose file; a hold it made stays, except a ruler-variation
-hold -- see the 2026-10-23 update), the file-based layers are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
-(mp4 and pose files; its other files used to be set aside under `_Problematic/_released_qc_holds_<date>/`
--- now they are cleared as a leftover, see "Queue leftovers" under "Update: routing into and out of the review queues" below)
+hold -- see "a ruler that varies within a video never holds it"), the file-based layers are recomputed. A bundle with nothing critical left goes back to the posed folder for a fresh run
+(mp4 and pose files; its other files are cleared as a leftover, see "Queue leftovers" under "routing into and out of the review queues is all-or-nothing and never deletes a person's file" below)
 and its row becomes `dlc_complete`, so intake takes it in its priority turn -- not `processing`,
 which would block intake of new work. The first use: Easy/Flat bundles held only for the
 outcomes file they never get. Bounded to 30 s of each scan; one re-check
@@ -2206,11 +2099,10 @@ folders that differ in size (copies at one size are one video, brought in once).
 means the old storage holds no pipeline video the pipeline lacks. WHY: videos only in the
 retired folder were invisible to every machine that could process them, and the old storage
 could not be retired while they were there. Tests: `tests/test_legacy_storage.py`.
-**Changed 2026-10-23:** recordings only, always into the intake. Cut videos are never brought in
+Recordings only, always into the intake. Cut videos are never brought in
 (the input to MouseReach is the recording; the pipeline's own cut records which recording each single
 came from): a cut whose recording comes in is reported and left, and one with no recording anywhere is
-named for the rebuild route (`mousereach-rebuild-recording`). The "already cut -> Analyzed/Multi-Animal"
-placement and the "partly cut" status are gone with it. Also since 2026-10-23: a recording of the same day and tray, the
+named for the rebuild route (`mousereach-rebuild-recording`). Also: a recording of the same day and tray, the
 same size to the byte, under another name on the pipeline root is "renamed since it was copied" and not
 brought in -- a person corrected an animal id on the pipeline's copy (for example a mistyped id), and
 the old copy under the old name would have recreated the animal the correction removed.
@@ -2394,7 +2286,7 @@ project came ahead of Pillar videos of the next. Tests: `tests/test_repose.py`
 
 Copies of videos finished long ago sat in a GPU node's own pose queue and processing folder for
 good: never picked (their rows are finished) and never removed. They came from the old behaviour
-where a node kept every video it cut (it keeps 2 since 55e5ad8). At startup a GPU node now moves
+where a node kept every video it cut (it keeps 2). At startup a GPU node now moves
 such copies out of `DLC_Queue` and `Processing` (`DLCOrchestrator._set_aside_finished_copies`):
 only when its row is finished (archived, outdated or crystallized) AND the video's processing
 manifest is in Analyzed where the video belongs. Every file of that video moves together to
@@ -2424,9 +2316,7 @@ is kept. Tests: `tests/test_coordination_recovery_pathless.py`.
 
 ## the review tool restores answers by frames; doubled and misplaced answers
 
-The 2026-10-21 change made the gate, the return scan, the queue views and the queue index count
-an answer by the frames it covers, but the review tool's own resume (`_load_saved_review`) still
-restored saved answers by segment NUMBER. After a re-cut, an answer about other footage sat on
+The gate, the return scan, the queue views and the queue index count an answer by the frames it covers, and so does the review tool's own resume (`_load_saved_review`); restoring saved answers by segment NUMBER would fail as follows. After a re-cut, an answer about other footage sat on
 today's segment N: the tool counted N as done and skipped it, while the release check counted N
 open, so the video could never be finished from the tool. The reviewer's fresh answer for the old
 frames was saved beside the old one, and `_collect_answers` stamped the current segment's frames
@@ -2456,11 +2346,9 @@ Already archived videos keep their stored results until they are next run. Tests
 
 ## the route command never flags a segment a person has answered
 
-`mousereach-route-to-queue` used to flag whatever segments its caller listed. A caller -- for
+`mousereach-route-to-queue` does not flag whatever segments its caller lists. A caller -- for
 example an integrator's scheduled bench-sheet scan -- cannot always know what a person answered: a segment with
-no detected reach has no reach row in the database, so nothing there says who decided it. A
-flagged segment the release check counts as answered goes straight back out with nobody looking,
-and the next scan sends it again. Now the command reads the video's review and drops every
+no detected reach has no reach row in the database, so nothing there says who decided it. Such a flagged segment, which the release check counts as answered, would go straight back out with nobody looking, and the next scan would send it again. So the command reads the video's review and drops every
 requested segment a person (or ground truth) has answered, matched by frames
 (`answered_segments_of` in `watcher/route_cli.py`, the release check's own rule). It reports them
 as "answered", and does not route the video at all when nothing is left (exit 0, tag "done").
@@ -2516,9 +2404,7 @@ missing there for good. At every start the processing node now compares its arch
 (`ProcessingOrchestrator._export_missed_to_central`; only the server, where "archived" means filed
 in Analyzed). Tests: `tests/test_missed_central_exports.py`.
 
-**Changed 2026-10-26.** That check looked for a video with no row at all, from any machine. A video
-posed on a GPU PC already has that PC's row, so an export from the server that failed was never sent
-again. It now compares the
+A check for a video with no row at all, from any machine, would miss a video posed on a GPU PC, which already has that PC's row, so an export from the server that failed would never be sent again. The check therefore compares the
 server's OWN rows (`source_machine`) with its archived videos and re-sends any that is missing or
 older than the local row. It runs at start and then every 30 minutes (cycle step "scan/shared
 record"), at most 50 videos per pass so a backlog never holds up the work loop. The export itself
@@ -2557,9 +2443,7 @@ docs/REVIEW_TOOLS.md "The record format". Tests: `tests/test_review_per_segment_
 
 ## the hand-score check runs before triage, not before filing
 
-The comparison of a video's pellets with the session's hand scores (see the 2026-10-26 update below
-for what it compares and where the scores come from) moved from the last step before filing to the
-point right after the analysis and the quality check, BEFORE the review gate
+The comparison of a video's pellets with the session's hand scores (see "the hand-score comparison: what it compares and what holds a video" below for what it compares and where the scores come from) runs right after the analysis and the quality check, BEFORE the review gate
 (`_hand_score_precheck` in `watcher/orchestrator.py`; on the processing server in `_run_pipeline`, on a
 node that also analyses in `_run_local_pipeline`). WHY: at filing, a video with a triage question
 went to the queue, was answered, came back, and only then met the hand score -- a disagreement sent
@@ -2568,7 +2452,7 @@ visit, and no video gets kinematics before it has been compared. The check is NO
 `review_gate.evaluate_gate`, which stays pure and is also used by
 `pipeline/reprocess_to_current.py`, which compares too (it calls `hand_scores.check` before the
 gate). The Run All Steps tab (`pipeline/run_all.py`) runs the watcher's own pipeline handler, so it
-compares exactly here (update 2026-11-18 below).
+compares exactly here (see "the Run All Steps tab runs the watcher's own steps" below).
 
 What each answer does now:
 
@@ -2594,8 +2478,7 @@ What each answer does now:
 - **The check cannot run**: held the same way, listed in red (`needs_person`, kind
   `hand_score_check_failed`), and tried again when the scores file changes -- and also every 10 minutes even when nothing changed
   (`HAND_SCORE_ERROR_RETRY_S`): a check that failed on a passing fault, such as the storage drive
-  dropping for a moment while the scores file was read, used to keep the video held in red until
-  the next import rewrote the scores file, up to a day later.
+  dropping for a moment while the scores file was read, would otherwise keep the video held in red until the next import rewrote the scores file, up to a day later.
 - **The pellet numbers are in doubt**: a review record says a segment is really another pellet
   (`true_segment_num` with `segmentation_wrong`, written by the review tool's old mislabel box) and
   the current cuts still number that stretch of frames otherwise. Segment N is then not known to be
@@ -2603,8 +2486,7 @@ What each answer does now:
   the watcher sends the video to MANUAL SEGMENTATION -- the re-segmentation queue -- with the reason
   "segmentation: a reviewer said segment(s) N show a different pellet ..." and stops the run
   (`_route_pellet_numbers_unknown`; the database row becomes `deep_review`). The problem is in the
-  cuts, so that is the step's review queue; it used to hold the video in Processing, where no review
-  tool could reach it. In the queue the segmentation fixer lists it, and saving the cuts releases it
+  cuts, so that is the step's review queue (holding the video in Processing would leave it where no review tool could reach it). In the queue the segmentation fixer lists it, and saving the cuts releases it
   (the reason names segmentation). The record is matched to the current cuts by its frames
   (`hand_scores.unresolved_mislabels`): once a person's re-cut puts those frames in the segment
   carrying the number they gave -- or a person saves cuts AFTER the record was written, the newest
@@ -2667,20 +2549,13 @@ into Analyzed. `hand_scores.score_from_outcomes(doc, pellet)` reads one pellet's
 very score the pipeline compared with, from the bundle itself. Readers that do not know the key
 ignore it. Tests: `tests/test_hand_score_check_before_triage.py` (the `record` tests).
 
-## checked against the hand scores before filing
+## the hand-score comparison: what it compares and what holds a video
 
-(Superseded 2026-10-28: the check now runs before the review gate, not before filing -- see the
-update of that date above. This section is kept as the record of what ran from 2026-10-26.)
-
-(Earlier versions filed a video with no hand scores without the comparison; that no longer happens:
-such a video is now held as missing its scores -- see "a video whose hand scores cannot be found is
+(A video with no hand scores is held as missing its scores -- see "a video whose hand scores cannot be found is
 held as a defect".)
 
-The last step before a video is filed (`_archive_to_nas` on the processing server,
-`_archive_locally_processed` on a node that also analyses) is now a comparison of its pellets with
-the session's hand scores (`watcher/hand_scores.py`, configured by the `hand_scores` section of
-`~/.mousereach/config.json` -- or, since 2026-10-28, of the lab settings file on the storage drive,
-see the update of that date; README "Checked against the hand scores before triage"). A pellet that
+The watcher compares a video's pellets with the session's hand scores, before the review gate (`watcher/hand_scores.py`, configured by the `hand_scores` section of
+`~/.mousereach/config.json` -- or, of the lab settings file on the storage drive, see "lab-wide settings come from one file on the storage drive"; README "Checked against the hand scores before triage"). A pellet that
 disagrees, and that no person has answered, is flagged (`flagged_for_review`, `flag_reason` "bench
 disagreement: the hand score says X; the algorithm says Y") and the video goes to triage through `route_to_queue`, as the review tool
 already shows such reasons. A session with no hand scores in a required project leaves the video in
@@ -2694,16 +2569,15 @@ disagree). A cohort with no successful import at all waits if the manifest's
 `written_at`, which a hand import of one other cohort also moves. A check that cannot run never files
 the video, and its item is marked `needs_person` (kind `hand_score_check_failed`), so a wrong setting
 shows in red instead of quietly stopping the filing. WHY: filing means done, so a video must not leave processing until it
-has no issues; before this the comparison ran later, on videos already filed, and moved them back.
+has no issues; a comparison run later, on videos already filed, would move them back.
 Tests: `tests/test_hand_score_check_before_triage.py`.
 
-The same scores are also used by the review window (since 2026-10-28) to ask a person to look
+The same scores are also used by the review window to ask a person to look
 again before saving an answer that disagrees with BOTH the algorithm and the hand score
 (`review/double_disagreement.py`; docs/REVIEW_TOOLS.md "Check your answer"). It reads the score the
 check kept in the video's outcomes file (`hand_scores.score_from_outcomes`, see "every pellet's hand
 score is kept with the video" above), not the scores file: a reviewer needs no setting, and a video
-analysed before scores were kept simply gets no box. (For a few hours on 2026-10-28 it read the
-scores file through `pellet_hand_score`, which is removed.)
+analysed before scores were kept simply gets no box.
 
 The Pipeline Dashboard shows every item of every list in `<NAS root>/attention/` whose
 `needs_person` is true in a red "Needs your attention (N)" panel at its top (hidden when there is
@@ -2736,10 +2610,9 @@ happen at all, so that is now configuration: `watcher.recording_days` (e.g. "Mon
 `watcher.recording_hours` (e.g. "08:00-18:00", may cross midnight). Outside them the guard does not
 even read the process list and an open program does not pause the watcher; inside them nothing
 changed. Both empty by default (any day, any hour = the old behaviour); an unreadable value is treated
-as empty, which pauses more, never less. (Update 2026-11-18: with watcher.pause_during_recording_hours true, added 2026-11-09, unreadable or empty days AND hours mean there is no window, and the watcher then never pauses for recording.) Set from Watcher Control ("Recording happens only on" /
+as empty, which pauses more, never less. (With watcher.pause_during_recording_hours true, unreadable or empty days AND hours mean there is no window, and the watcher then never pauses for recording.) Set from Watcher Control ("Recording happens only on" /
 "...between") or `mousereach-watch-recorders --days ... --hours ...`; a running watcher follows edits.
-This replaces the "pause only while a recording is being written" mode built earlier the same day
-(cc14be4, withdrawn in 410bfb8): the schedule is a surer signal than the files. Tests:
+The schedule is used instead of a "pause only while a recording is being written" mode: the schedule is a surer signal than the files. Tests:
 `tests/test_recording_hours.py`, `tests/test_watch_recorders_cli.py`,
 `tests/test_control_widget_recording.py`.
 
@@ -2747,7 +2620,7 @@ This replaces the "pause only while a recording is being written" mode built ear
 
 A row's `error_message` is its current error, but reaching 'archived' did not clear the previous one:
 archived rows could still show failures from runs that later succeeded (for example "Archive
-directory not found for reprocessing" from a share outage), and every status view read them as current. `update_state` and `force_state` now clear it on the way to
+directory not found for reprocessing" from a share outage), and every status view read them as current. `update_state` and `force_state` clear it on the way to
 'archived', and each watcher start clears it on rows already archived (`clear_errors_on_archived`;
 logged once with the count). Other states keep theirs ('unresolvable' uses it for its reason). The
 history stays in `processing_log`. Tests: `tests/test_archived_clears_error.py`.
@@ -2769,10 +2642,9 @@ claims once that machine has stopped writing its status report for 3 hours (file
 claims every video in the posed folder that this machine has in hand and that has no claim -- under
 the 24-hour rule most posed copies of videos in review had lost theirs, so to any machine taking in posed videos they looked like waiting work; and lets go of this
 machine's claims on videos that have left the folder or are waiting again. A machine that
-finds a video held elsewhere records that it did no work (it used to count the refusal as progress
-and pick the same video again at once) and leaves the video out of its choices for 10 minutes, so
+finds a video held elsewhere records that it did no work (counting the refusal as progress would pick the same video again at once) and leaves the video out of its choices for 10 minutes, so
 the next one in the work order is taken in. A claim folder that cannot be made means no intake, not
-intake without a claim. (The review-queue half was d4876f4.) Tests:
+intake without a claim. Tests:
 `tests/test_posed_intake_claims.py`.
 
 ## setup finds the lab's own profiles, and a profile fills in the whole role
@@ -2908,55 +2780,10 @@ once. Now:
   a new pellet had looked like the reviewer's earlier answers being lost.
 Tests: `tests/test_triage_answers_that_cannot_count.py`.
 
-## posing on a machine's CPUs (`mousereach-cpu-pose`)
-
-*Removed 2026-11-18: the CPU pose pool no longer exists (see "posing on a machine's CPUs is removed" at the end). Kept as the record of what it did.*
-
-Posing is the slow step, and only GPU nodes did it. A machine with many idle cores
-can add to that by running `mousereach-cpu-pose` beside its watcher.
-
-**What was measured.** One DeepLabCut process on the CPU is slow and uses only a few
-cores, whatever thread count it is given -- so speed comes from many small processes side
-by side, until they start slowing each other. A CPU pose is the same as a GPU pose for
-practical purposes: compared frame by frame with a GPU pose of the same video, body-part
-positions differed by a fraction of a pixel, no confident point differed by more than 1 px,
-and no point crossed the 0.5 likelihood line.
-
-**What it does, step by step** (`watcher/cpu_pose_pool.py`), with the GPU nodes' own code
-wherever it exists:
-
-1. **Picks** the next unclaimed video at the top of `Unanalyzed/Single_Animal` in the
-   work order (`work_priority.best_tier_choice`: best group first, random inside it, idle-only
-   trays last).
-2. **Never re-poses**: a video finished or held for a person is skipped, by the GPU node's own
-   rule (`DLCOrchestrator._already_done_or_held`), before and after claiming.
-3. **Claims** it by renaming it into `.inflight/<hostname>-cpu/` (`single_claim.claim_single`),
-   so no two machines pose one video. Other machines see the pool alive through its status
-   report `Processing/.node_status/<hostname>-cpu.json`, and take its claims back only after
-   it has been quiet for hours, as for any node.
-4. **Poses** a copy on the local disk (`<processing root>/CPU_Pose`) in a child process at
-   below-normal priority, up to `--workers` at once, `--threads` each.
-5. **Hands on** to `Processing/Posed` the GPU nodes' way: every file copied under a temporary
-   name, then renamed into place with the pose (.h5) last -- the processing watcher keys on
-   the .h5. The claimed copy is removed only once the handed-on video is confirmed. The pose
-   must come from the declared model, or it is not handed on.
-6. **Records** `dlc_running` and then the hand-off on the shared record (watcher_central.db),
-   as a GPU node does.
-
-**When something goes wrong.** A failed pose puts the video straight back in the shared folder
-for any machine and keeps the pool off it for an hour; its log stays in `CPU_Pose`. At start the
-pool hands on any pose a previous run finished and gives back any claim it left. Stopping:
-`cpu_pose_stop.flag` in the processing root (no new videos; running poses finish and are handed
-on; then it exits), or Ctrl+C / ending its task (running poses are stopped; their videos are
-given back at the next start).
-
-Tests: `tests/test_cpu_pose_pool.py`.
-
 ## a video leaves the re-segmentation queue only once it is re-segmented
 
 The deep-review queue (`Processing/Review/deep_review`) is where a video's cuts are fixed.
-Until now a clear marker (`{video}_deep_review_cleared.json`) released a video on its own,
-whatever was in it and whenever it was written. That let an escalated video bounce: the
+A clear marker (`{video}_deep_review_cleared.json`) does not release a video on its own, whatever is in it and whenever it was written, because that would let an escalated video bounce: the
 triage tool's "Escalate: bad segmentation" button moved it here, a clear left over from an
 earlier deep review went with it, and the return scan released it within seconds; it re-ran
 on the same cuts and was back in triage before anyone could fix them.
@@ -2974,13 +2801,11 @@ What holds now:
    Hand-set cuts from before it arrived do not count. With no readable `routed_at` the
    arrival is the latest of the routing record's modified time, the review manifest's
    `provenance.staged_at` and the bundle folder's creation time
-   (`resegmented.entered_deep_review_at`); it used to be "any time", so any hand cut ever
-   saved counted. A bundle that cannot be dated cannot leave. A ground-truth file does not count
-   either (since 2026-11-17): nothing writes its boundaries into the segments file, so a
+   (`resegmented.entered_deep_review_at`). A bundle that cannot be dated cannot leave. A ground-truth file does not count
+   either: nothing writes its boundaries into the segments file, so a
    video released on it was cut again by the segmenter exactly as before. And "cleared"
    means the clear marker and nothing else -- the return scan
-   (`review_return._deep_review_cleared`) makes the same test as the review gate; a
-   ground-truth file in the bundle used to count as a clear by its presence alone.
+   (`review_return._deep_review_cleared`) makes the same test as the review gate; a ground-truth file in the bundle does not count as a clear by its presence alone.
    In the triage queue's scan, a bundle whose segmentation reported failure is diverted to
    re-segmentation unless it has a clear marker or ground truth certifying the WHOLE video
    (the gate passes such a video clean, `review_gate.evaluate_gate`); partial ground truth
@@ -2996,7 +2821,7 @@ to triage again -- now about the new segments.
 
 Tests: `tests/test_escalation_voids_old_deep_review_clear.py`.
 
-Names: from 2026-10-27 the tools and operator docs call this queue the
+Names: the tools and operator docs call this queue the
 **re-segmentation queue** (and its review tool Re-segmentation Review);
 "deep review" is kept for ground-truthing with the ground-truth tool. The
 sections above keep the old name as they were written. Folder, database state
@@ -3098,8 +2923,7 @@ is gone) and carries its ledger entry over instead of importing it again.
 
 **Not changed.** `review/staging.py resolve_canonical_paths` still looks for a
 video in `<root>/CNTnn/`, which matches no layout the filing rules produce; the review lookups
-that depend on it ("beside the canonical video") find nothing there today,
-exactly as before (see the 2026-10-22 note above). Making that lookup work
+that depend on it ("beside the canonical video") find nothing there today,exactly as before. Making that lookup work
 would change which copy of a review wins and add a lookup per video to every
 version scan, so it is left for its own change.
 
@@ -3169,12 +2993,7 @@ lookup now accepts the file itself, and only when it is this video's review by
 name.
 
 **A failed video is retried later.** A crash in segmentation, reach or outcome
-detection marked the video 'failed' and no work bucket ever looked at that
-state again (the embedded report above still says "No watcher ever picks up a
-video in state 'failed'"; that was true until this update).
-`ProcessingOrchestrator._select_work_item` has a new
-drain bucket between archive and intake (first placed after the pipeline
-bucket; moved ahead of intake so that a due retry runs when its hour is up
+detection marks the video 'failed'. `ProcessingOrchestrator._select_work_item` has a drain bucket between archive and intake (placed ahead of intake so that a due retry runs when its hour is up
 rather than whenever intake and pipeline both happen to come back empty): a 'failed' row is put back to
 'processing' and run when `_failed_retry_due` holds -- `error_count` below
 `watcher.max_retries` (3), at least `RETRY_FAILED_AFTER_S` (one hour) since
@@ -3191,8 +3010,7 @@ Tests: `tests/test_ignore_windows_leave_reaches_out.py`,
 
 ## a GPU node's shared-record writes survive an unreachable shared database
 
-Found on a GPU node restarted while `watcher_central.db` was locked. Four gaps in
-`DLCOrchestrator`'s shared-record code, all closed in one change:
+A GPU node restarted while `watcher_central.db` is locked must not lose shared-record writes. Four guards in `DLCOrchestrator`'s shared-record code:
 
 1. **Writes were dropped while the coordinator was unavailable.**
    `_sync_to_connectome` returned before queuing when `self.coordinator` was
@@ -3222,10 +3040,9 @@ whose own re-send is `_export_missed_to_central`).
 
 Tests: `tests/test_shared_record_survives_a_lost_connection.py`.
 
-## failures that used to be silent in review and the watcher
+## failures are not silent in review and the watcher
 
-**Clearing a deep review now stops if the answers did not save.** It used to carry
-on, sending the video onward and losing what the person had entered. They now see
+**Clearing a deep review stops if the answers did not save.** Carrying on would send the video onward and lose what the person had entered. The person sees
 "Your answers did not save" and the video stays where it is.
 
 **A database column that cannot be added is now reported.** Only "already exists",
@@ -3264,8 +3081,7 @@ hand between the right slit corner and the nose. Before, the wrist velocity and
 trajectory columns ignored these frames, and the per-point columns placed them using
 the wrong frames.
 
-**What to expect in the numbers.** Paths get longer. Peak speed could be set by the
-jump to or from an anchor until the 2026-11-02 update below. Duration does not change, because it still counts detected
+**What to expect in the numbers.** Paths get longer. Peak speed leaves out the steps to and from an anchor (see "peak speed and speed at the apex leave out the anchor steps" below). Duration does not change, because it still counts detected
 frames. The extractor is version 2.3.0 and no older version counts as current, so
 every filed video has its kinematics recalculated, with old results kept in the archive.
 
@@ -3298,7 +3114,7 @@ own. Until it finishes, a file can hold rows from both versions: `extractor_vers
 the row says which.
 
 **The midpoint is settled.** "Between the slit edge and the nose" is the midpoint, held
-in `ANCHOR_FRACTION_FROM_NOSE`. It was an assumption before this update.
+in `ANCHOR_FRACTION_FROM_NOSE`.
 
 **Where the detail is.** `tracked_steps` in `kinematics/core/anchored_path.py` and
 sections 5.4, 6.1 and 6.2 of `docs/KINEMATICS_FIELDS.md`.
@@ -3349,99 +3165,6 @@ says which time base its seconds use.
 A filed video whose recalculation would change anything but its measurements is held
 for a person instead of re-decided (next section).
 
-## a kinematics-only re-run keeps the filed decisions
-
-**Superseded on 2026-11-21** ("a person's answer is always applied", at the end of this file): such a re-run is no longer held. Every person's answer is applied; what no person decides stays as filed. Kept below as the record of what the hold was and why it was removed.
-
-**The rule.** When a filed video is re-run for its kinematics only (re-run scope
-`kinematics`: a new kinematic extractor, or a person's answer saved after filing), the
-re-run may recompute MEASUREMENTS -- speeds, paths, seconds. It must come out with exactly
-the filed decisions: the same reaches (compared by their start and end frames), the same
-reaches left out of the measurements, the same outcome for every pellet and the same causal
-reach (compared by frames; reach ids are renumbered whenever a reach list changes, so they
-are never compared). The one exception is a decision made by an answer the filed results have
-not applied yet -- a review saved after filing, or ground truth saved or changed after filing,
-judged by the same rules the version scan uses to start such a re-run. That answer may change
-what it decides, because applying it is the reason for the re-run.
-
-**A filed reach that is simply gone (since 2026-11-18).** Owed ground truth explains a filed
-reach that disappears without a person's reach over the same frames only when the ground truth
-replaced that pellet's whole reach list with one it declares complete (its reaches marked
-complete, and every reach it lists for that pellet set by a person). Ground truth that covers
-only outcomes, or lists some reaches without declaring the list complete, removes no reach: if a
-filed reach is gone anyway, it went for another reason (a changed reach rule, a review copy the
-filing run did not see), and the run is held with the line
-`reaches: 1 filed gone, ... ; the owed ground truth does not list this pellet's reaches as
-complete, so it explains no filed reach that is gone without a person's reach over its frames`. A causal reach that changed because of that lost reach is
-not explained either. Before, any owed ground truth at all let every lost reach, and the causal
-reach that followed from it, be filed without a check.
-
-**What happens when the rule is broken.** Nothing is written. The kinematics step stops with
-one line, naming each pellet that would change, what it would change from and to, and who
-the new decision would come from, for example:
-`pellet 3: outcome displaced_sa -> abnormal_exception (by ground_truth)`. The video is held
-like any other kinematics problem ("not filed: no kinematics (...)"); after its retries the
-row goes back to 'archived' with that line in its error message (prefix "re-run of a filed
-video failed"), the video is listed for a person in `<NAS root>/attention/<host>_failed_reruns.json`
-and in `mousereach-watch-status`, and the version scan does not offer the same re-run again
-until the declaration, the review or the ground truth changes (see "Update: a filed video
-whose re-run fails stays filed"). The filed results in Analyzed are never touched by any of
-this, so the database keeps the filed numbers. What to do with such a video is a person's
-decision: run it again with every check (a re-run that recomputes the algorithms is not under
-this rule), or leave it as filed.
-
-**Why.** The extractor does not copy the filed decisions; it works them out again from the
-filed reaches, outcomes, reach assignment, every copy of the review and the ground truth. A
-kinematics-only re-run skips the quality triage and the hand-score comparison because nothing
-they judge is supposed to change. But when the rules that turn those files into decisions
-changed since filing, or a file the filing run did not see is found now, the same files give
-different decisions, and the re-run used to file them silently -- outcomes, causal reaches and
-reach frames changed with no check and no person, and an answer a person gave could quietly
-stop being applied. Found on 2026-11-17 by recomputing filed videos with extractor 2.5.0
-before declaring it, the re-run would have re-decided filed videos of three kinds:
-- Ground truth filed beside the video, made before it was filed, that its filing run did
-  not apply. Until 2026-11-16 the extractor looked for ground truth only in the corpus
-  index of the processing tree, not in the folder it ran in, and the filed manifests of
-  those runs carry no "applied ground truth" record, so the version scan's fall-back rule
-  (the ground truth's own save time against the manifest's) counts that ground truth as
-  applied. A re-run finds it and applies it: new reach frames, sometimes a different
-  outcome.
-- Ground truth applied at filing whose pellets' causal reach is now chosen by a newer rule
-  (the reach holding the ground truth's interaction frame).
-- Review answers that today's review matching applies differently from the filing run: an
-  answer placed on another pellet (for example one given before the video was re-cut, landing
-  on a longer re-cut pellet), or a filed answer no longer applied, so the pellet falls back
-  to the algorithm's outcome.
-A change made only by a review saved after filing is applied, as before.
-
-**Where it lives.** The rule and its words: `kinematics/core/filed_decisions.py`
-(`changes_not_owed`, `owed_human_layers`). The extractor takes the filed features file as
-`keep_filed=` and the owed kinds as `owed=` (`FeatureExtractor.extract`), and refuses through
-`KinematicsProblem`. The watcher passes them when `filed_rerun_reuses_analysis` is true
-(`ProcessingOrchestrator._make_features`, `_filed_decisions_to_keep`). Tests:
-`tests/test_kinematics_only_rerun_keeps_filed_decisions.py`.
-
-**Known limits.** A future extractor version that is MEANT to change which reaches are
-measured (as ignore windows did in 2.2) will be held by this rule on every video it changes;
-such a change has to be brought in by a re-run that recomputes the algorithms, or the rule
-widened for it on purpose. The manual bring-current routine (`pipeline/reprocess_to_current.py`)
-recomputes every algorithm and is not under this rule; neither is a review return.
-Whether an answer is owed is decided per KIND, for the whole video: once the review the
-scan finds differs from the one the filed manifest records, every change the review layer
-makes is accepted, including an older answer that newer matching places differently. Ground
-truth that is not owed still holds the run in that case. A video whose filed folder holds no
-features file has nothing filed to keep and is not under this rule. The Re-run button
-(dashboard) re-runs from segmentation with every check, so a held video can always be
-re-run that way.
-
-**Before this rule: the gate's re-cut check.** The review gate runs before the extractor in a
-kinematics-only re-run too. When the video's review holds an answer a person's re-cut voided
-(given before the cuts were saved, on a pellet whose frames moved) and nobody has answered that
-pellet on the new cuts, the gate sends the video to triage with that pellet flagged
-(`answered_before_recut`) and the extractor does not run; the filed results stay in Analyzed
-until the new run, with the pellet answered, replaces them. See "A re-cut by a person voids the
-answers given before it" (in the review-return section below, and REVIEW_TOOLS.md).
-
 ## a recalculation re-runs no algorithm and no triage, and never re-asks a person's answer
 
 **The rules.** Only the calculations that changed are recalculated, without re-running the four
@@ -3477,7 +3200,7 @@ back to a person.
 answered): the gate still sends it to triage on a kinematics-only re-run, as it always has. Two
 later changes start such a re-run in more cases, and each of them reaches this same gate: a review
 saved for a filed video that has no processing manifest, and ground truth saved or changed after
-filing (both described under their own "Update" headings below). So until the decision is made, a
+filing (both described under their own headings below). So until the decision is made, a
 filed video with a never-answered segment can be taken back to triage by either of those too, not
 only by a version change. Nothing about what the gate does was changed by them. (2) A
 saved answer the matching code sets aside because its causal reach lies outside the frames it
@@ -3495,10 +3218,7 @@ filed video whose re-run had to remake any of segmentation, reaches, outcomes or
 (including a reused output that turned out to be missing); a video never filed (no
 `archived_at`); and a video whose filing the watcher cannot read.
 
-**A retry or a restart keeps the scope (changed later; see "Update: a filed video's re-run keeps
-where it starts").** This paragraph used to say that a watcher killed in the middle of a
-kinematics-only re-run, or a re-run that failed and was retried, ran the video again through every
-stage and every check. It no longer does: the start stage is read back from the row.
+**A retry or a restart keeps the scope (see "a filed video's re-run keeps where it starts through a retry or a restart").** A watcher killed in the middle of a kinematics-only re-run, or a re-run that failed and was retried, does not run the video again through every stage and every check: the start stage is read back from the row.
 
 **Where it lives.** `filed_rerun_reuses_analysis` in `watcher/orchestrator.py` (the rule and its
 reasons), used by `ProcessingOrchestrator._run_pipeline`; `gt_resolved_segments` in
@@ -3506,11 +3226,10 @@ reasons), used by `ProcessingOrchestrator._run_pipeline`; `gt_resolved_segments`
 
 ## sending videos back for a new pose when the pose itself is not trusted
 
-**The problem.** The re-pose round trip (`watcher/repose.py`, section 5 and the 2026-09-12 notes)
+**The problem.** The re-pose round trip (`watcher/repose.py`, section 5 and the notes on the re-pose request)
 asks a graphics-card machine for a new pose only when the DECLARED MODEL changes, and every one of
 its decisions goes by the scorer name in the pose file. A pose made with the declared model by a
-machine whose poses the lab decides not to keep -- for example the CPU pose pool
-(removed 2026-11-18), whose poses were close to but not identical to a graphics card's --
+machine whose poses the lab decides not to keep -- for example a CPU-based pose pool, whose poses are close to but not identical to a graphics card's --
 carries the declared scorer. So the version scan calls such a video current and never marks it;
 and if someone marked it by hand, the publish and adopt steps would find the declared-scorer pose
 still sitting in the posed folder or the results folder, treat it as "the new pose", and re-run the
@@ -3557,9 +3276,9 @@ video's human review is applied again by the extractor (segments matched by fram
 reach by its reach number in the old reaches file -- after a re-pose that renumbers reaches, check
 that reach by its frames).
 
-**A held bundle leaves its queue in one rename (fixed 2026-11-09).** At first the command moved the pose and outputs out of a held bundle while the bundle still sat in the triage queue. The watcher's review-return scan read one such half-emptied bundle as "segmentation failed" and moved the rest of it into deep review in the middle of the run. The bundle is now renamed, as one folder, to `Repose_Queue/_parked/<video>/` before anything is moved out of it. The rename runs under the claim the scan itself takes (`Processing/Review/.return_claims/<video>.claim`, held as `<host>-repose`), so the queue only ever holds the whole bundle or nothing. If the scan holds the claim, the video is refused for now. A run stopped after the rename finishes from the parked folder when it is run again. Tests are in `tests/test_repose_videos.py`.
+**A held bundle leaves its queue in one rename.** The command does not move the pose and outputs out of a held bundle while the bundle still sits in the triage queue: the watcher's review-return scan would read such a half-emptied bundle as "segmentation failed" and move the rest of it into deep review in the middle of the run. The bundle is renamed, as one folder, to `Repose_Queue/_parked/<video>/` before anything is moved out of it. The rename runs under the claim the scan itself takes (`Processing/Review/.return_claims/<video>.claim`, held as `<host>-repose`), so the queue only ever holds the whole bundle or nothing. If the scan holds the claim, the video is refused for now. A run stopped after the rename finishes from the parked folder when it is run again. Tests are in `tests/test_repose_videos.py`.
 
-**A parked bundle is seen while it waits, and cleared after (2026-11-18).** During the round trip
+**A parked bundle is seen while it waits, and cleared after.** During the round trip
 `Repose_Queue/_parked/<video>/` holds a held video's only copy. The Pipeline Dashboard lists it as
 "Parked, waiting for a new pose" (stage `parked_for_repose`, under "In progress"; a review queue,
 the posed folder or Analyzed outranks it, so a leftover never hides the video's new place), and the
@@ -3580,7 +3299,7 @@ that stops after parking leaves the row saying 'triage'/'deep_review' while the 
 reconcile names it ("the re-pose run stopped part way"), and running `mousereach-repose-videos`
 again for the video finishes it. Tests: `tests/test_parked_repose_is_seen_and_cleared.py`.
 
-**The re-run takes the video from the posed folder when there is no filed copy (fixed 2026-11-09).** A held video has no results folder holding its mp4. The re-run copies only DLC files from the posed folder, so a held video re-posed this way ran without a video, and the triage bundle it routed had none for the reviewer to open. `_reprocess_copy_set` (`watcher/orchestrator.py`) now adds `<video>.mp4` from the posed folder, then from `Repose_Queue/_parked/<video>/`, whenever no other folder supplied one. A filed copy still wins. Tests are in `tests/test_reprocess_copy_set.py`.
+**The re-run takes the video from the posed folder when there is no filed copy.** A held video has no results folder holding its mp4. The re-run copies only DLC files from the posed folder, so a held video re-posed this way would run without a video, and the triage bundle it routed would have none for the reviewer to open. `_reprocess_copy_set` (`watcher/orchestrator.py`) adds `<video>.mp4` from the posed folder, then from `Repose_Queue/_parked/<video>/`, whenever no other folder supplied one. A filed copy still wins. Tests are in `tests/test_reprocess_copy_set.py`.
 
 **What it does not do.** It does not touch the database integration: rows already imported from a
 filed video's old results stay until the re-run is filed and imported, which replaces them. The
@@ -3603,19 +3322,17 @@ failed: kinematics not written: ...)`, followed by each problem in words. The pr
 - applying the person's answers (the truth layering) failed;
 - the reach assignment file (`<video>_reach_assignments.json`) is there but could not be read;
 - a reach's extended measures could not be computed -- the message names the reach and its frames;
-- the reaches file and the pellet outcomes file do not describe the same pellets (since
-  2026-11-18): the outcomes file has a pellet the reaches file has no segment for, a reach segment
+- the reaches file and the pellet outcomes file do not describe the same pellets: the outcomes file has a pellet the reaches file has no segment for, a reach segment
   before the last pellet has no outcome, more than one reach segment comes after the last
   pellet, a file has no segment list, or a segment number is missing or listed twice. The
   message names the pellets and ends "re-run the video from reach detection". The two files are
-  matched pellet by pellet by their segment number (`pair_segments_by_number`); they used to be
-  matched by position, so such a disagreement measured a pellet's reaches against another
+  matched pellet by pellet by their segment number (`pair_segments_by_number`); matching by position would instead measure a pellet's reaches against another
   pellet's outcome with nothing said. The reaches file's one extra last segment (after the last
   cut, not a pellet) is normal and is left out, as before. A retry gives the same answer: the
   files have to be made again (`mousereach-watch-reprocess <video>` re-runs it from the start).
 
 No `<video>_features.json` is written (an existing one is left as it was). The same happens when
-the kinematics are made by hand (`mousereach-grasp-analyze` -- update 2026-11-18: this said `mousereach-kinematics`, a command that does not exist -- or the Run All Steps tab): the command
+the kinematics are made by hand (`mousereach-grasp-analyze` or the Run All Steps tab): the command
 reports the error and writes no file.
 
 **Bring-current too.** The bring-current routine (`reprocess_video_to_current`
@@ -3665,8 +3382,7 @@ On a GPU machine with `also_process` true a failed video waits for a person in t
 
 **What counts as "no kinematics".**
 - Pillar trays: the reaches file or the pellet-outcomes file is missing (kinematics never ran), or
-  the feature extractor raised. Since the update "kinematics that are not the true result are not
-  written" below, the extractor also raises -- and writes nothing -- when a person's answers
+  the feature extractor raised. As described in "kinematics that are not the true result are not written" below, the extractor also raises -- and writes nothing -- when a person's answers
   could not be applied or a reach's measures failed.
 - Easy and Flat trays: the session file (reaches and attention) could not be written, including
   when there is no reaches file.
@@ -3756,14 +3472,12 @@ both roles); `watcher/review_gate.py` `QC_TRIAGE_FAILED`, `evaluate_gate`; tests
 
 ## Escalate and Flag Session record the move in the watcher database
 
-*Superseded in part by "a login that cannot name the watcher database refuses" below: the database
-is no longer "else `<processing_root>/watcher.db`" for a processing-server login with no
+*Exception, see "a login that cannot name the watcher database refuses" below: the database is not "else `<processing_root>/watcher.db`" for a processing-server login with no
 `watcher.db_path` -- that login cannot name it, the move still happens, and the window says the
 watcher's record was not updated.*
 
 The review tool's **Escalate: bad segmentation** and **Flag Session** buttons move a video from the
-triage queue into deep review. They used to move it with no database, so the row still said
-`triage` while the bundle was in deep review. They now open the watcher's own database
+triage queue into deep review. Moving it without the database would leave the row saying `triage` while the bundle was in deep review, so they open the watcher's own database
 (`db_location.open_watcher_db_if_present`: the configured `watcher.db_path`, else
 `<processing_root>/watcher.db`; never created) and record `deep_review` as part of the move
 (`review_gate.escalate_to_deep_review(..., db=...)`, `route_to_queue(..., db_state="deep_review")`).
@@ -3843,9 +3557,7 @@ only a copy in this node's DLC queue or in its own claim folder
 - a copy in another node's claim folder, or anywhere else: refused with the reason; a person
   looks (`mousereach-watch-unresolvable --list`).
 
-**`mousereach-watch-process-animal`.** It used to copy singles from the shared folder into the DLC
-queue without claiming them, so two nodes could pose one video. It now claims each single for this
-machine first (the same claim the watcher's own intake takes) and copies from the claimed file. A
+**`mousereach-watch-process-animal`.** It claims each single for this machine first, so two nodes cannot pose one video (the same claim the watcher's own intake takes) and copies from the claimed file. A
 single it cannot claim -- another machine took it meanwhile, or a program has it open -- is skipped
 ("could not claim it in the singles folder"). A copy that fails gives the single back to the
 shared folder. The watcher on the same machine keeps the claim alive and removes the claimed copy
@@ -3890,7 +3602,7 @@ below).
   first: `review_return._catch_up_route_from_triage` records `deep_review` when the routing record
   says `db_state: deep_review` and `source_dir` is `<triage>/<stem>`, so `_finish_failed_moves`
   (which acts only while the row says the video is held in the bundle's queue) can move the
-  left-behind file in (2026-11-19; before, such a video stayed in both queues). Escalate and the return scan's mislabel divert are not this path: they route the
+  left-behind file in. Escalate and the return scan's mislabel divert are not this path: they route the
   triage bundle itself, and its review and ground truth travel with it into deep review; once a
   person saves new cuts there, no answer in that review given before the save counts, on any
   pellet (REVIEW_TOOLS.md, "A re-cut voids the answers given before it").
@@ -3936,7 +3648,7 @@ placeholder file cannot be written, the video is marked failed instead (never pa
 
 ## files holding answers, routing records and stage outputs are replaced in one step
 
-Several watcher steps rewrite a JSON file that already exists. They used to open the file for writing, which empties it first, so a crash or a lost share connection part-way through left a cut-off file. A cut-off review is read as "no answers"; a cut-off stage output fails the next step. Each of these writes now goes to a hidden temporary file beside the real one (`.<file name>.<random>.tmp`), is flushed to disk, and is swapped in with one rename (`pipeline/fsutil.py`: `write_json_atomic`, `copy_file_atomic`). Anyone reading the file sees the old complete version or the new complete version, never a mix. If Windows refuses the rename because another program has the file open, it is tried again for about ten seconds and then the step fails loudly with the old file unchanged.
+Several watcher steps rewrite a JSON file that already exists. Opening the file for writing empties it first, so a crash or a lost share connection part-way through would leave a cut-off file. A cut-off review is read as "no answers"; a cut-off stage output fails the next step. Each of these writes goes to a hidden temporary file beside the real one (`.<file name>.<random>.tmp`), is flushed to disk, and is swapped in with one rename (`pipeline/fsutil.py`: `write_json_atomic`, `copy_file_atomic`). Anyone reading the file sees the old complete version or the new complete version, never a mix. If Windows refuses the rename because another program has the file open, it is tried again for about ten seconds and then the step fails loudly with the old file unchanged.
 
 The temporary name starts with a dot on purpose: the router and the archiver take every file whose name starts with the video's name, and a dot-name never matches, so a temporary file left by a crash is never carried along as one of the video's outputs. The one mover that takes EVERY file in a folder -- returning a cleared review bundle to Processing (`review_return._return_to_processing`) -- deletes such leftovers before it moves anything and logs a warning naming each; nothing would ever remove one from Processing. If a leftover cannot be deleted (held open, e.g. by a review window saving into the bundle), the return moves nothing, logs an error naming it and is retried later, so the video is never left half in the queue and half in Processing. (A bundle released to the posed folder is then cleared as a leftover, temporary files included: copies and machine results are deleted, and a person's file stays where it is with a note, listed under 'Folders left for a person' in the Review Queues tab -- see "Leftover queue folders" in docs/REVIEW_TOOLS.md. Nothing goes to `_Problematic`.) Elsewhere a leftover can be deleted by hand.
 
@@ -3944,8 +3656,8 @@ Where this applies on the watcher side:
 
 - **Returning a cleared review bundle.** Before the bundle is emptied, its review is MERGED into the durable copy in `review_records/reviews/` (`review_return._ensure_durable_review`, `causal_review_io.merge_review_into`); nothing is copied over by file time. For each pellet the newest statement a person made about its frames in either copy wins (an answer, or an "are you sure?" recheck); answers about frames the current cuts do not have are kept under `unmatched_answers`. A record's other fields (a "this segment is really pellet N" mislabel above all) are filled in from the other copy only when that copy's record is not older than the one chosen, and a mislabel is dropped when a newer answer about the same frames leaves it out. When the durable copy is the newer save, its own top-level fields (reviewer, time, notes) are kept. Before the durable copy is replaced it is backed up to `Analyzed/Archive/manual_corrections/<video>_causal_review.json.before_return_merge_<time>.durable`; if no backup can be made, the durable copy is left exactly as it was. A merge that changes nothing writes nothing. A failure is logged and the return goes ahead; the earlier durable copy stays complete.
 - **Routing a filed video back to a queue** (`mousereach-route-to-queue`). Flagging segments rewrites the video's `<video>_pellet_outcomes.json`, and `--recheck` rewrites its review files after copying each to `Archive/manual_corrections/<name>.before_recheck_<time>.<travelling|durable>` (`route_cli.flag_segments`, `route_cli.reopen_answered`). Both replace the file in one step. If the write fails, the command stops with an error, the file is exactly as it was, and the command can simply be run again.
-- **Stamping the quality verdict.** After the automatic quality check, its verdict (`validation_status`, `triage_reason`) is written into `<video>_segments.json`, `<video>_reaches.json` and `<video>_pellet_outcomes.json` (`orchestrator._run_quality_triage`). Each of the three is replaced in one step; a crash mid-stamp used to leave a cut-off stage output -- the video's actual results. Before stamping, any temporary file an earlier crashed stamp left beside these three is deleted. A stamp that fails is logged and the file keeps its earlier content, as before.
-- **Keeping the hand scores with the video.** The sheet's scores for the session are written into `<video>_pellet_outcomes.json` under `hand_scores` (`hand_scores.record`). This already went through a temporary file, but one named `<video>_pellet_outcomes.json.tmp` -- a name that starts with the video's, so a leftover was carried along by the router and the archiver. It now uses the shared writer: dot-named temporary file, flushed, rename retried while the file is held. A failure holds the video, as before.
+- **Stamping the quality verdict.** After the automatic quality check, its verdict (`validation_status`, `triage_reason`) is written into `<video>_segments.json`, `<video>_reaches.json` and `<video>_pellet_outcomes.json` (`orchestrator._run_quality_triage`). Each of the three is replaced in one step; a crash mid-stamp would otherwise leave a cut-off stage output -- the video's actual results. Before stamping, any temporary file an earlier crashed stamp left beside these three is deleted. A stamp that fails is logged and the file keeps its earlier content, as before.
+- **Keeping the hand scores with the video.** The sheet's scores for the session are written into `<video>_pellet_outcomes.json` under `hand_scores` (`hand_scores.record`). It uses the shared writer: a dot-named temporary file (a name starting with the video's would let a leftover be carried along by the router and the archiver), flushed, rename retried while the file is held. A failure holds the video.
 
 ## a filed video's re-run keeps where it starts through a retry or a restart
 
@@ -3994,9 +3706,7 @@ just changed:
   any other state -- triage, deep review, a quality hold, 'dlc_complete', 'unresolvable', or
   'archived' (including a filed video put back after its re-run failed for good) -- clears it, and
   so does a person's `mousereach-watch-reprocess` reset of a failed video to an earlier state.
-  WHY: a scope used to outlive its re-run on such rows, and a later, unrelated run (a quality-hold
-  release, an intake) read the leftover 'kinematics' back and skipped every algorithm, the quality
-  triage and the hand-score comparison on outputs nobody had re-checked.
+  WHY: a scope that outlived its re-run on such rows would be read back as 'kinematics' by a later, unrelated run (a quality-hold release, an intake), which would skip every algorithm, the quality triage and the hand-score comparison on outputs nobody had re-checked.
 - the row enters its re-run's states from OUTSIDE them without being given a scope. A scope is
   carried only between 'outdated', 'processing', 'failed', 'processed' and 'archiving'. A row
   that comes into one of them from a review queue, 'unresolvable' or 'archived' starts with no
@@ -4116,10 +3826,10 @@ reached its features only if some other reason happened to re-run the video.
   kinematics were made with it as it is now:
   1. the manifest has the stamp: the file's content against the stamp; a `null` stamp (no ground
      truth applied) means a file filed now is owed, whatever its dates say;
-  2. a manifest from before the stamp: owed (since 2026-11-21). Until then the file's own
+  2. a manifest from before the stamp: owed. Until then the file's own
      `last_modified_at` was compared with the manifest's `created_at` (and, failing either, the
      files' modified times), and an older file counted as applied -- which is how ground truth
-     that a run never found stayed out of filed results ("Update 2026-11-21: a person's answer is
+     that a run never found stayed out of filed results ("a person's answer is
      always applied").
 - If not, the video is marked 'outdated' for a **kinematics-only** re-run, listed with
   `ground_truth` among its reasons (also for a video with no manifest). After the re-run the stamp
@@ -4139,8 +3849,8 @@ kinematics over the ground truth's frames (`reach_source` = `ground_truth`). Rea
 not read ground truth at all, so starting the re-run there would recompute the same algorithm reaches
 and add nothing -- while turning a filed video's re-run into a full one with every check. Ground
 truth's pellet outcomes are layered the same way. Ground-truth SEGMENT boundaries are not applied by
-the kinematics step: since 2026-11-19 the segmentation step applies them to an unfiled video (see
-"Update 2026-11-19 (human answers feed every later step)"); a filed video's cuts are final.
+the kinematics step: the segmentation step applies them to an unfiled video (see
+"human answers feed every later step"); a filed video's cuts are final.
 
 **For an operator.** Nothing to do: ground truth saved beside a filed video reaches its features at
 the next version scan (about every half hour). If the re-run cannot apply it, the video is offered
@@ -4246,8 +3956,7 @@ that failed for good. For EVERY such video, filed or not, the watcher:
 1. moves the files THIS try copied down out of the processing folder into
    `<processing_root>/_finished_elsewhere/<date>/Processing/` (moved, never deleted; a second
    set the same day goes into its own `<video>_again_<time>/` sub-folder, as in step 4 above,
-   never over the first). WHY: a
-   partly copied set left there used to be picked up by a retry and run on files that had not all
+   never over the first). WHY: a partly copied set left there would be picked up by a retry and run on files that had not all
    arrived. A file that was ALREADY in the processing folder before the try is never moved. WHY:
    for a video that was never filed (a first pass that failed, then Re-run pressed) the processing
    folder holds the only copies of its video, its pose, a person's cuts and its review file, and
@@ -4393,7 +4102,7 @@ work and extra ways to fail a cleared video.
    When a person saves new cuts (the segmentation fixer writes `corrected_at` and the cuts it
    replaced, `algo_boundaries`, into the segments file), an answer given before then
    (`reviewed_at`) still counts only when its pellet's frames are exactly the same on the replaced
-   cuts and the current ones (owner ruling 2026-11-18; `causal_review_io.answer_survives_recut`).
+   cuts and the current ones (`causal_review_io.answer_survives_recut`).
    Every other earlier answer -- frames moved by even one frame, or no record of the cuts it was
    given on -- is void: not used by the review window, the release check, the review gate or
    kinematics -- and is kept in the review file as a record
@@ -4440,8 +4149,7 @@ work and extra ways to fail a cleared video.
    a person's reset of a failed video (`mousereach-watch-reprocess`, `reset_failed`) to an earlier
    state, a send for a new pose, 'unresolvable', 'outdated', or a forced state. Such a row's next
    run is a fresh one with every step and check. (`held_at_step` is also kept while the video sits
-   in a review queue, 'triage' or 'deep_review': it is that hold's record.) WHY: a leftover resume point used to make a reset
-   or re-posed video reuse the earlier round's segmentation, reach and outcome outputs, and a pose
+   in a review queue, 'triage' or 'deep_review': it is that hold's record.) WHY: a leftover resume point would make a reset or re-posed video reuse the earlier round's segmentation, reach and outcome outputs, and a pose
    redone with the same model carries the same scorer name, so the pose test of point 4 could not
    tell those outputs came from the pose that was being replaced.
 
@@ -4637,8 +4345,7 @@ whoever maintains the pipeline. After the next sheet import the video is compare
 server's watcher now compares them by itself after every change of the hand-scores file, leaves
 them filed and unchanged, and lists every disagreement, every video whose scores are still missing
 after its cohort's import, and every comparison that could not run in the attention list
-`<NAS root>/attention/<host>_filed_hand_scores.json` -- see "Update 2026-11-18: filed videos that
-were never compared with their hand scores are compared when the scores arrive".
+`<NAS root>/attention/<host>_filed_hand_scores.json` -- see "filed videos that were never compared with their hand scores are compared when the scores arrive".
 
 Tests: `tests/test_missing_hand_scores_hold.py`, `tests/test_hand_score_check_before_triage.py`.
 
@@ -4759,8 +4466,7 @@ queue never deletes or overwrites a person's file".
   `LEFT_NOTE`) is the one test every reader of the queue folders uses for "the video is held here":
   `deep_review_stems`, `in_deep_review` and `superseded_by_deep_review` (so `route_to_queue` takes
   its triage-to-deep-review branch only when a LIVE deep-review bundle exists), `route_cli.
-  _held_in_a_queue` and its held-bundle question, `DLCOrchestrator._already_done_or_held` (also the
-  rule of the CPU pose pool, removed 2026-11-18, and what `_record_finished_child` records), `_retire_claim_after_hold`,
+  _held_in_a_queue` and its held-bundle question, `DLCOrchestrator._already_done_or_held` (also what `_record_finished_child` records), `_retire_claim_after_hold`,
   `ProcessingOrchestrator._no_pose_for_reprocess`, `repose._held_in_triage_on_disk` (which still
   answers True when the share cannot be read), `review_gate._drop_triage_copy`, `census.runner.
   bundles_in` (also the consistency check's `reconcile`) and the dashboard's `folder_scan`. The
@@ -4816,7 +4522,7 @@ queue never deletes or overwrites a person's file".
   SABL or SABR' flags carry category `pose_unusable` (`pose_check.POSE_UNUSABLE`);
   `_run_quality_triage` returns `review_gate.QC_POSE_UNUSABLE` for them only when
   `_new_pose_requestable` holds, and the verdict as before otherwise. A file that cannot be opened
-  stays with `segmentation_could_not_run`. OPEN (lab decisions, not implemented): what to do with
+  stays with `segmentation_could_not_run`. OPEN (not implemented): what to do with
   a filed video whose unusable pose is the declared model's own (the round trip matches a
   declared-model pose by file name only, so it would find the same file and never write a
   request), how a video that is not filed gets a new pose, and after how many unusable poses a
@@ -4947,21 +4653,14 @@ and taken up again. Each part says what a person sees and what to do.
 
 **A state change is one step.** Every change of a video's state in the watcher database
 (`update_state`, `force_state`, `mark_failed`, `mark_unresolvable`, `reset_failed`) reads the
-row's current state and writes the new one while holding the database's write lock. Before, the
-read and the write were two separate statements, and another program writing the same database
-(a review window, route-to-queue, a command-line tool) could change the row in between; its
-change was then silently overwritten by a state that had been checked against the old one. Now
-the second program waits for the first (or, after the wait limit, gets "database is locked",
+row's current state and writes the new one while holding the database's write lock. Two separate statements would let another program writing the same database (a review window, route-to-queue, a command-line tool) change the row in between, and its change would be silently overwritten by a state that had been checked against the old one. So the second program waits for the first (or, after the wait limit, gets "database is locked",
 which the watcher retries on a network drive) and is checked against the state the first one
 wrote. A `force_state` WARNING line is written only after the change is saved. For an operator:
 nothing to do. Where it lives: `watcher/db.py` `WatcherDB._state_write`; tests in
 `tests/test_state_change_under_write_lock.py`.
 
-**A person's reset (`mousereach-watch-reprocess`).** Three defects are fixed:
-- With no `--from-step` the restart point used to be guessed from the row alone: 'discovered'
-  for a row with no recorded pose and no validation time -- not a legal state after 'failed',
-  so the reset raised -- or 'validated', which on a GPU node means "waiting in the shared singles
-  folder", where the file was not. It is now read from the files this machine holds, exactly as
+**A person's reset (`mousereach-watch-reprocess`).** Three rules:
+- With no `--from-step` the restart point is not guessed from the row alone (that would give 'discovered' for a row with no recorded pose and no validation time -- not a legal state after 'failed', so the reset would raise -- or 'validated', which on a GPU node means "waiting in the shared singles folder", where the file may not be). It is read from the files this machine holds, exactly as
   the automatic retries read them (`WatcherDB.infer_reset_state`): video and pose in the
   Processing folder -> `processing`; video in the DLC queue -> `dlc_complete` with a pose from
   the declared model beside it, else `dlc_queued`; a single whose copy into the DLC queue failed
@@ -4969,11 +4668,8 @@ nothing to do. Where it lives: `watcher/db.py` `WatcherDB._state_write`; tests i
   top of the shared singles folder -> `validated` (that failure gave it back there, and its
   message tells a person to run this command). No files here: nothing changes and the
   `--from-step` choices are printed.
-- A reset kept the failure count, so the very next failure was already past
-  `watcher.max_retries` and the automatic retries never applied again. A reset now sets the
-  count to 0; the old count and error are written to the processing log (step `reset`).
-- For a video that was not 'failed' the command asked "Reset anyway?" and printed "Reset" --
-  but nothing was changed. It now changes only a 'failed' row (the UPDATE itself requires
+- A reset sets the failure count to 0, because keeping it would put the very next failure past `watcher.max_retries` and the automatic retries would never apply again; the old count and error are written to the processing log (step `reset`).
+- It changes only a 'failed' row (the UPDATE itself requires
   'failed'), says "<video> not changed: it is '<state>', not failed." with what to do instead,
   and exits with code 1. `--all-failed` prints how many were really reset ("Reset K of N").
   The word after `--from-step` is no longer mistaken for the video id.
@@ -4983,22 +4679,14 @@ Where it lives: `watcher/db.py` `reset_failed`, `infer_reset_state`; `watcher/cl
 **`mousereach-watch-process-animal` never leaves a claim behind.** It queues a single only when
 the video has no row on this machine or its row is `validated`, `failed` or `unresolvable` --
 the states that can go to `dlc_queued`. Every other state is skipped ("SKIP <video> (already
-<state>)") BEFORE anything is claimed. It used to skip a fixed list that missed `triage`,
-`deep_review`, `outdated`, `archiving` and `quarantined`: for those it claimed the shared file,
-then the move to `dlc_queued` raised, and the command stopped mid-list (or left its copy in the
-DLC queue) with the video in this machine's claim folder. A video a node already holds in its
+<state>)") BEFORE anything is claimed. A fixed list of skipped states that missed `triage`, `deep_review`, `outdated`, `archiving` and `quarantined` would claim the shared file for those, then the move to `dlc_queued` would raise, and the command would stop mid-list (or leave its copy in the DLC queue) with the video in this machine's claim folder. A video a node already holds in its
 claim folder is skipped too ("a copy is being posed by <node>; this one is a second copy").
 Whatever fails after the claim -- the copy or the state change -- gives the claim back to the
-shared folder and removes the DLC-queue copy this run made. For an operator: a claim left by the
-old behaviour on a held video sits in `Single_Animal/.inflight/<this machine>/`; move that file
+shared folder and removes the DLC-queue copy this run made. For an operator: a claim left on a held video sits in `Single_Animal/.inflight/<this machine>/`; move that file
 back to the top of `Single_Animal` by hand. Where it lives: `watcher/cli.py`
 `main_process_animal`; tests in `tests/test_process_animal_states.py`.
 
-**`mousereach-watch-unresolvable --retry` takes back only this node's own copy.** It used to
-search every folder, the posed folder and the filed folder included, and force `dlc_queued` on
-whatever it found, on any machine. On the processing server no work step selects `dlc_queued`,
-so such a row was stranded; on a GPU node a posed or filed copy is refused by the pose step and
-parked again. Now:
+**`mousereach-watch-unresolvable --retry` takes back only this node's own copy.** It does not search every folder (the posed folder and the filed folder included) and force `dlc_queued` on whatever it finds, on any machine: on the processing server no work step selects `dlc_queued`, so such a row would be stranded; on a GPU node a posed or filed copy is refused by the pose step and parked again. Instead:
 - on a processing server it changes nothing and says that its watcher takes a video back by
   itself (the posed-folder scan) once the video and its pose are in Processing/Posed;
 - on a GPU node only `DLC_Queue/<video>.mp4` is queued (`dlc_queued`); a copy at the top of the
@@ -5016,9 +4704,7 @@ each one (where are its video and pose?) before anything is changed. Where it li
   pose over one file at a time, so the server's intake can look while the set is still incomplete.
   The row is parked `unresolvable` with the reason "posed files not all in the posed folder when
   intake looked (...)" (`db.INTAKE_MISS_REASON`) and the server lets go of its posed claim at once.
-  The posed-folder scan (`state.discover_dlc_staged`) used to skip every video it already knew, so
-  such a row came back only through the re-pose adoption -- as a re-run of a filed video, in the
-  lowest-priority bucket. Now that scan sets exactly such a row back to `dlc_complete` (ready for
+  The posed-folder scan (`state.discover_dlc_staged`) does not leave such a row to come back only through the re-pose adoption (as a re-run of a filed video, in the lowest-priority bucket): it sets exactly such a row back to `dlc_complete` (ready for
   intake) as soon as the video and its pose are both in the posed folder; the re-pose adoption
   leaves it alone. Any other 'unresolvable' reason is not taken in by this scan.
 - *GPU node, startup recovery: another node had the video before its pose finished.* The shared
@@ -5110,50 +4796,10 @@ the node that failed it, and the CPU-pool fix below covers its own hand-off only
 Where it lives: `DLCOrchestrator._queue_copy_elsewhere`, `_drop_superseded_queue_copy`, `_process_single_dlc`,
 `_recover_local_dlc_queue`. Tests in `tests/test_queue_copy_needs_the_claim.py`.
 
-**The CPU pose pool retries a failed hand-on while it runs.** (The pool was removed 2026-11-18.) When the pool (`mousereach-cpu-pose`)
-finished a pose but could not hand it on to Processing/Posed (a dropped share, say), the pose waited
-in its work folder "until the next start" and its claim was no longer refreshed -- only running
-poses were. A day later the shared copy went back to the singles folder for any node, which posed
-the video again, and the pool then handed on its own pose too at its next start. Now the pool keeps
-the claim of such a pose alive with the running ones and tries the hand-on again: at once, then
-after 1, 2, 4 ... minutes, never more than 30 minutes apart (each try copies a whole video over the
-share). While the shared singles folder cannot be read at all (the share is down), nothing is
-decided: the pose and its claim wait. Only when the folder can be read and this machine's claimed
-copy is not in it (another machine broke the claim, or a person moved the file) is the pose not
-handed on. Its local copies in `CPU_Pose` are machine leftovers, and what happens to them depends
-on whether the video's current copy can be confirmed somewhere else -- the video file, the same size
-as the local one, at the top of the shared singles folder, in another machine's claim folder, or in
-Processing/Posed WITH its pose file (`<video>DLC...h5`) beside it; or the video already filed or held
-in a review queue. A video alone in Processing/Posed, with no pose beside it, does NOT count: it is a
-hand-on that stopped half way, which the server never takes in (the graphics-card nodes apply the
-same rule):
-- confirmed: the local copies are DELETED, and the log says "its claim is gone and its current copy
-  is at ...; its pose is not handed on and its local copies were deleted";
-- not confirmed anywhere: they stay exactly where they are (the local video may be the only copy),
-  the log warns once "its claim is gone and no current copy of the video was found elsewhere ...;
-  find where the video went", and the pool looks again every cycle -- as soon as a current copy
-  turns up, the leftovers are deleted.
-Nothing is ever moved to a side folder. When the pool starts, finished poses a previous run left
-with no claim of this machine are checked the same way -- but only when this machine's claim folder
-could actually be read: during a share outage the pool does not take "I could not read my claims"
-for "I have no claims", and leaves such copies for the next start. A video in `CPU_Pose` whose pose
-never finished (no `.h5` beside it) is never handed on, by a retry or at a start: a bare video in
-Processing/Posed would sit there untaken while its claimed shared copy was deleted. Its claim is
-simply no longer kept alive, so after the usual quiet period it goes back to the singles folder for
-any node to pose. Its log for a failed try says "could not hand
-on (...); ... its claim is kept, and the hand-on is tried again, waiting longer after each failure".
-For an operator: nothing to do, unless the "no current copy ... found elsewhere" warning appears --
-then find where the video went (a person moved it, or another machine lost it); the copy in
-`CPU_Pose` is kept until a current copy exists elsewhere. Where it lives: `watcher/cpu_pose_pool.py`
-`CpuPosePool._retry_hand_ons`, `_current_copy_elsewhere`, `recover`, `run`. Tests in
-`tests/test_cpu_pool_hand_on_retry.py`.
-
 **The processing server asks the shared drive before taking in a posed video it has no row for.**
 A video's posed copy stays in Processing/Posed while the video is analysed, held in a review queue
 or failed; it is removed only once the video is filed. A server whose database has no row for such a
-video (a rebuilt or replaced database, a row never written) used to register the posed copy as new
-work, analyse the video again and route it into the queue folder that already held it. The
-posed-folder scan (`state.discover_dlc_staged`) now asks the same question a GPU node asks before
+video (a rebuilt or replaced database, a row never written) would register the posed copy as new work, analyse the video again and route it into the queue folder that already held it. The posed-folder scan (`state.discover_dlc_staged`) therefore asks the same question a GPU node asks before
 every pose (`locate.held_or_filed_on_share`):
 - the video's bundle is in the triage or deep-review queue (or being routed into one, `.incoming`):
   the row is recorded in that queue's state and nothing is taken in. The queue folder must hold
@@ -5164,9 +4810,7 @@ every pose (`locate.held_or_filed_on_share`):
   hold rule everywhere it is used -- before, a queue folder counted as a hold as soon as it existed.
   A folder kept for a person (one holding the left-over note) is not a hold either, as in every
   other reader of the review queues (`review_routing.is_queue_bundle`).
-  The same rule now applies to a GPU node's check before a pose
-  (`DLCOrchestrator._already_done_or_held`) and (until its removal on 2026-11-18) to the CPU pose pool: an empty queue folder no
-  longer stops a pose. Only files directly in the queue folder count: real bundles are flat files
+  The same rule applies to a GPU node's check before a pose (`DLCOrchestrator._already_done_or_held`): an empty queue folder does not stop a pose. Only files directly in the queue folder count: real bundles are flat files
   (the review routing writes them that way), so a folder holding only sub-folders or dot-files is
   not a bundle;
 - the video is filed and the posed pose is the one it was filed with (same DLC scorer as the filed
@@ -5175,8 +4819,7 @@ every pose (`locate.held_or_filed_on_share`):
   before.
 The processing log shows step `intake`, status `skipped`, with the reason. For an operator: nothing
 to do.
-The intake of a video that already HAS a row asks the review queues too (2026-11-18,
-`ProcessingOrchestrator._held_in_review_queue_instead`, called first in `_intake_from_staging`).
+The intake of a video that already HAS a row asks the review queues too (`ProcessingOrchestrator._held_in_review_queue_instead`, called first in `_intake_from_staging`).
 A row reaches `dlc_complete` (waiting for intake) by a person's `mousereach-watch-reprocess
 --from-step dlc_complete`, by the posed-folder scan bringing back an intake that had found its
 files incomplete, or by a lifted quality hold. If the video's bundle is in the triage or
@@ -5208,9 +4851,7 @@ Each part below says what you see and what to do.
 
 **An error before the crop starts.** If something fails while a node is still checking a collage
 (its shared claim, or whether its children already exist) the collage has not started cropping, so
-it cannot be recorded `failed` -- the database only lets a collage that was cropping fail. That
-refused write used to escape into the watcher's main loop, and the same collage was picked again on
-the very next pass. Now (`DLCOrchestrator._fail_collage_after_dispatch_error`) the collage is left
+it cannot be recorded `failed` -- the database only lets a collage that was cropping fail. That refused write does not escape into the watcher's main loop, where the same collage would be picked again on the very next pass: (`DLCOrchestrator._fail_collage_after_dispatch_error`) the collage is left
 as it was (`stable`), the error is logged at ERROR with the collage's name, and the collage is not
 picked again for 30 minutes (`_CLAIM_RECHECK_S`), so a passing error is retried and a lasting one
 does not spin the loop. A collage that was already cropping is recorded `failed` with the error,
@@ -5220,8 +4861,7 @@ Tests: `tests/test_collage_crop_failures_are_visible.py`.
 
 **A collage that has used up its retries.** A collage whose crop failed is tried again while its
 file is still in the intake folder (Unanalyzed\Multi-Animal), up to `watcher.max_retries` (3) times.
-After that it used to be "left parked" with a DEBUG line that nobody reads, and the sessions on it
-were never cut. Now:
+After that it is parked, and a parked collage is not left silent (a DEBUG line that nobody reads would leave its sessions uncut for good):
 - the watcher log says it once per watcher run at WARNING, with the last error (`state.py`
   `discover_new_collages`, which records every such collage in `parked_collages` on each scan);
 - every scan, the GPU node lists it in `<NAS root>/attention/<host>_collages.json`
@@ -5242,19 +4882,15 @@ its last error) and press OK -- or run `mousereach-watch-reprocess --collage <fi
 Only that collage gets its retries back (its retry count goes to 0; the old count and the error
 are kept in the processing log, step `retry`); the watcher's next scan tries it again while its
 file is in the intake folder, with no restart, and no other collage or video on the machine is
-touched (2026-11-18, `WatcherDB.retry_parked_collage`; before, the only remedy was raising
-`max_retries` for the whole machine and restarting, which gave every failed video there another
-try too). Tests: `tests/test_retry_one_parked_collage.py`. When the collage crops, it drops off the
+touched (`WatcherDB.retry_parked_collage`; raising `max_retries` for the whole machine and restarting would give every failed video there another try too). Tests: `tests/test_retry_one_parked_collage.py`. When the collage crops, it drops off the
 list at the next scan; it also drops off if its file is taken out of the intake folder. The list
 file is rewritten only when it changes, and a list that cannot be written is a WARNING in the log,
 never a stop of the scan.
 
 **A crop claim that waits for its holder for ever.** A GPU node takes over another node's crop
 claim once it has stayed unfinished ("cropping") for more than 24 hours -- except when videos cut
-from that collage are already on record, because a second crop would pose them twice (see "Stale
-claims" in the 2026-09-15 update above). Such a collage then waits for the node that holds the
-claim, and if that node never runs again it is never finished; the only trace used to be a log
-WARNING on each node that asked. Now every GPU node that meets such a claim lists it in
+from that collage are already on record, because a second crop would pose them twice (see "Stale claims" above). Such a collage then waits for the node that holds the
+claim, and if that node never runs again it is never finished; the only trace would be a log WARNING on each node that asked, so every GPU node that meets such a claim lists it in
 `<NAS root>/attention/<host>_collage_claims.json` (`DLCOrchestrator._list_stuck_collage_claims`;
 kind `collage_claim_stuck`, with `holder` and `claimed_at`, no cohort), and the dashboard's red
 panel shows it -- once, even when several nodes list it (`attention.without_repeats`). It leaves the
@@ -5269,11 +4905,9 @@ collage it could not crop. If that machine will never run again, a person has to
 left to crop: no button releases a claim yet.
 
 **A "cropped" mark lost at a restart.** When a node finishes cropping a collage it marks its shared
-claim "cropped"; if that write fails it is resent until it lands (rule 6 of the 2026-09-15 update).
-The list of marks still to send was kept only in memory, so a watcher stopped or crashed before the
-mark landed forgot it, and the shared claim stayed "cropping" under that node's name -- after a day
-another node could take it over and crop the collage again, or, with its videos on record, it waited
-for ever. Now (`DLCOrchestrator._seed_unsynced_collage_claims`) the node rebuilds that list from the
+claim "cropped"; if that write fails it is resent until it lands (rule 6 above).
+The list of marks still to send is only in memory, so a watcher stopped or crashed before the mark landed would forget it, and the shared claim would stay "cropping" under that node's name -- after a day
+another node could take it over and crop the collage again, or, with its videos on record, it would wait for ever. The node therefore rebuilds (`DLCOrchestrator._seed_unsynced_collage_claims`) that list from the
 records themselves: every shared claim that is this node's and still "cropping" while the collage is
 "cropped" (or later) here. It does this at startup, after every reconnect to the shared database,
 and before the first resend; the resend (`_retry_unsynced_collage_claims`) now runs on every scan,
@@ -5300,12 +4934,7 @@ out, the collage is listed in the red panel as described above.
 ## a claim marker is never left empty
 
 Claim markers (`Processing/Posed/.claims/`, `Review/.return_claims/`, made by
-`watcher/claim_marker.py`) used to be created empty and then filled in with the name of the
-machine holding the claim. A machine that stopped between those two steps -- a crash, a kill, a
-network drive that dropped -- left an EMPTY marker. An empty marker reads as "claimed by an
-unknown machine", so even the machine that made it was refused the claim and could not release
-it, and nobody could touch that video until the marker was three hours old and the sweep broke
-it. Now the marker's text is written first, to a temporary file beside it
+`watcher/claim_marker.py`) are written whole, never created empty and filled in afterwards. (An empty marker, left by a machine that stopped between those two steps -- a crash, a kill, a network drive that dropped -- reads as "claimed by an unknown machine", so even the machine that made it is refused the claim and cannot release it, and nobody can touch that video until the marker is three hours old and the sweep breaks it.) The marker's text is written first, to a temporary file beside it
 (`<marker>.<machine>.<process>.<random>.tmp`), and the finished file is put in place under the
 marker's name in one step that refuses to replace a marker already there (a rename on Windows, a
 hard link elsewhere). So a marker is either there and names its holder, or is not there at all,
@@ -5319,7 +4948,7 @@ reads it as a claim) and may be deleted. Where it lives: `claim_marker._create`.
 
 ## one watcher per machine, its configured role only, and a left-behind stop flag refuses a start
 
-Three ways a machine used to end up running the wrong watcher, or silently none:
+Three ways a machine could end up running the wrong watcher, or silently none:
 
 - **A second watcher from the Watcher Control panel.** The command-line watcher took a
   machine-wide lock (a Windows named mutex) so that a second one exits; the panel's Start and Run
@@ -5337,54 +4966,21 @@ Three ways a machine used to end up running the wrong watcher, or silently none:
   own. Now a "Run as" that differs from `mode` in the machine's settings is refused with a message
   saying how to change the role on purpose (change mode in the settings, Save, start again).
   Save also moves "Run as" to the saved mode, so that start is not refused a second time.
-- **A stop flag left behind.** `watcher_stop.flag` (`cpu_pose_stop.flag` was the CPU pose pool's; nothing reads it since 2026-11-18)
+- **A stop flag left behind.** `watcher_stop.flag` (nothing reads a `cpu_pose_stop.flag`)
   makes a running watcher finish its current item and exit. A flag forgotten after a stop or an
   update made every later start exit on its first turn with one INFO line and exit code 0 -- a
   scheduled task reported success while the machine did nothing. Now a start that finds the flag
   refuses: a WARNING (and, on the command line, a line on the error output) naming the file and how
-  long ago it was left, exit code 3 for `mousereach-watch` (and, until 2026-11-18, `mousereach-cpu-pose`), a message box
+  long ago it was left, exit code 3 for `mousereach-watch`, a message box
   in the panel, and, while no watcher runs, a line in the Dashboard's health report. The flag is
   NEVER deleted by a start: the update procedure relies on it keeping a stopped machine stopped
-  until the person updating removes it. (Until 2026-11-18) The CPU pool first gives back or hands on what a previous
-  run left (as at every start), then refuses. A flag created while a watcher runs still stops it
+  until the person updating removes it. A flag created while a watcher runs still stops it
   normally, with exit code 0. The Dashboard's Restart button, which a person presses on purpose,
   still clears the flag before it starts a watcher, as before.
 For an operator: if a watcher will not start, read the message; USER_GUIDE.md "The watcher will not
 start" says what to do for each. Where it lives: `watcher/singleton.py`,
 `cli.main_watch`, `WatcherControlWidget._take_start_guards`, `CpuPosePool.run`,
 `health.health_report`. Tests in `tests/test_start_guards.py`.
-
-## the CPU pose pool shows the poses it could not hand on, tries them once more at a stop, and gives a video back after a day of failures
-
-*Removed 2026-11-18: the CPU pose pool no longer exists (see "posing on a machine's CPUs is removed" at the end). Kept as the record of what it did.*
-
-Three gaps were left after the CPU pose pool learned to retry a failed hand-on while it runs:
-
-- **Nothing showed such a pose.** Its video stays claimed by the pool, but the pool's status report
-  (`Processing/.node_status/<machine>-cpu.json`, read by `mousereach-watch-status`) listed only
-  running poses. It now also lists them as `waiting_hand_on`. A list that does not empty means
-  the hand-on keeps failing; the pool log says why.
-- **A stop abandoned them.** When the pool stopped (stop flag, running poses finished), finished
-  poses still waiting for their next try were left as they were, their claims no longer kept alive,
-  until the next start. Now the pool tries each of them once more before it exits, whatever its
-  wait. Any still not handed on are named in one warning ("stopping with N finished pose(s) not
-  handed on ..."); the next start hands them on, as before.
-- **A failure of the machine's own held the video for ever.** Some failures never clear by
-  themselves -- a damaged local file, a posed folder this machine may not write -- and the video
-  stayed claimed, unposed for everyone, for as long as the pool ran. Now, once the hand-on has
-  failed for 24 hours AND at least 10 times (`HAND_ON_GIVE_UP_S`, `HAND_ON_GIVE_UP_ATTEMPTS`), the
-  pool gives up: the claimed video goes back to the top of the shared singles folder for any node
-  to pose, this pool leaves it alone for an hour, and the local copies are deleted once the video
-  is confirmed back in the shared folder (otherwise they stay where they are). The pool log says
-  "its hand-on failed N times over H h; the video is given back ...". WHY both conditions: no
-  tries are made while the shared drive cannot be read, so a day-long outage is not a day of
-  failures, and one failed try after the drive comes back does not give up. If the claimed video
-  cannot be given back (a file of that name is already in the singles folder), nothing changes and
-  the hand-on keeps being tried.
-For an operator: nothing to do unless the give-up warning appears or `waiting_hand_on` stays
-filled -- then read the pool log for the hand-on errors and fix what this machine cannot write.
-Where it lives: `watcher/cpu_pose_pool.py` `CpuPosePool._status`, `_retry_hand_ons`,
-`_give_up_hand_on`, `_last_hand_on_try`, `run`. Tests in `tests/test_cpu_pool_hand_on_retry.py`.
 
 ## the status command and the dashboard health line name the stuck videos
 
@@ -5433,15 +5029,14 @@ settings name no database. Tests: `tests/test_tools_never_create_a_decoy_watcher
 ## a login that cannot name the watcher database refuses; nothing falls back to the default file
 
 Every Windows login on a machine has its own `~/.mousereach/config.json`, but all of them share
-the processing folder. The resolver used to hand any login whose settings could not be read, or
-whose settings had no `watcher.db_path`, the file `<processing_root>/watcher.db`. On a processing
-server whose watcher writes a configured `db_path`, that file is an old decoy -- so a second login
-(a reviewer's, set up from a profile without `db_path`) ran `mousereach-crystallize`,
+the processing folder. The resolver does not hand any login whose settings cannot be read, or whose settings have no `watcher.db_path`, the file `<processing_root>/watcher.db`. On a processing
+server whose watcher writes a configured `db_path`, that file is a decoy -- so a second login
+(a reviewer's, set up from a profile without `db_path`) would run `mousereach-crystallize`,
 `mousereach-uncrystallize`, `mousereach-watch-process-animal`, `mousereach-repose-videos` or the
 dashboard's Reprocess outdated against the decoy without a word: a publication lock or an
 "outdated" mark the watcher never saw.
 
-Now `db_location.resolve_watcher_db_path` follows these rules, in order:
+`db_location.resolve_watcher_db_path` follows these rules, in order:
 
 1. the settings file cannot be read, or this login has no settings file at all -> refused
    (`WatcherDbUnnamed`), naming the file and the problem. A login with no settings file gets its
@@ -5449,7 +5044,7 @@ Now `db_location.resolve_watcher_db_path` follows these rules, in order:
    about which database the watcher uses, so the default file under that folder would be a
    guess;
 2. `watcher.db_path` is set -> that file;
-2b. (since 2026-11-20) `db_path` is not set, but the lab profile for THIS machine -- the profile in
+2b. `db_path` is not set, but the lab profile for THIS machine -- the profile in
    lab_profiles.json whose `match.hostname` is this computer's name -- names
    `defaults.watcher.db_path` -> that file, with a log warning naming the profile and file. The
    profiles file is looked for where `mousereach-setup` looks, then as `lab_profiles.json` in the
@@ -5470,10 +5065,8 @@ Now `db_location.resolve_watcher_db_path` follows these rules, in order:
    settings never named a mode, which needs a decision first).
 
 Everything uses this one resolver: every watcher command, the watcher itself (`mousereach-watch`
-and the Watcher Control panel's Start / Run Once, which used to carry their own copy of the
-fallback), the dashboard's database buttons, the review tools' Escalate / Flag Session, the
-archive command, `mousereach-migrate-archive`'s row update (which used to try the default file
-FIRST) and the manifest backfill. Commands print `ERROR: ...` and exit non-zero; the panels show
+and the Watcher Control panel's Start / Run Once, which carry no copy of the fallback), the dashboard's database buttons, the review tools' Escalate / Flag Session, the
+archive command, `mousereach-migrate-archive`'s row update (which does not try the default file first) and the manifest backfill. Commands print `ERROR: ...` and exit non-zero; the panels show
 the reason (their status line reads `db: NOT NAMED -- <reason>`).
 
 Two callers treated "no watcher database" as "a machine that does not run the watcher" and went
@@ -5491,8 +5084,7 @@ Tests: `tests/test_watcher_db_must_be_named.py`, `tests/test_route_cli_db.py`.
 
 ## publication locks are set and lifted on the processing server only
 
-*Superseded in part by the next update ("a publication lock is a record beside the filed results
-that every machine honors"): the lock is no longer known to one machine only.*
+*Exception, see "a publication lock is a record beside the filed results that every machine honors": the lock is known to every machine, not one only.*
 
 A publication lock (`mousereach-crystallize`, state `crystallized`) is written only to the
 watcher database of the machine that runs the command, and only that machine's version scan
@@ -5562,12 +5154,9 @@ queue; and nothing yet removes a parked folder once the re-posed video has been 
 ## the backup leaves out claim folders and half-written files
 
 The backup (`mousereach-backup`, and the Watcher Control panel's "Back up now") is add-only:
-whatever it copies once stays on the backup for good. It used to copy the claim markers of
-returns from review (`.return_claims`), each machine's liveness report (`.node_status`), files
-still being written (`*.part`, `*.partial`) and SQLite rollback journals (`*.db-journal`).
-Restored, a claim marker blocks every other machine from that video, a status report makes a
-dead machine look alive, and a journal makes SQLite undo writes that finished long ago. Now
-(`watcher/backup.py`, `_sync_dir`) robocopy leaves out the folders `.claims`, `.return_claims`
+whatever it copies once stays on the backup for good. It leaves out the claim markers of returns from review (`.return_claims`), each machine's liveness report (`.node_status`), files
+still being written (`*.part`, `*.partial`) and SQLite rollback journals (`*.db-journal`): restored, a claim marker blocks every other machine from that video, a status report makes a
+dead machine look alive, and a journal makes SQLite undo writes that finished long ago. In `watcher/backup.py` `_sync_dir`, robocopy leaves out the folders `.claims`, `.return_claims`
 and `.node_status` and the files `*.tmp`, `*.part`, `*.partial`, `*.db-journal` and `*.db-shm`.
 The hand-over folders `.inflight` and `.incoming` and SQLite `*-wal` files are still copied:
 they hold real data. Nothing already on the backup is removed (the backup is add-only by design), so
@@ -5579,8 +5168,7 @@ The panel's "Back up now" built its own backup from the two folder boxes and ign
 `backup.sync_dirs` and the time limit, so it copied the full default scope; it also said
 "Backup complete." when a folder failed. It now builds the backup through the same function as
 the command (`backup.watcher_from_config`) and says "Backup INCOMPLETE" when a folder did not
-copy completely. "Save backup settings" used to replace the whole `backup` section of the
-config, dropping `sync_dirs` and the timings; it now changes only the switch and the two folders.
+copy completely. "Save backup settings" changes only the switch and the two folders, not the rest of the `backup` section (`sync_dirs`, the timings).
 Test: `tests/test_backup_leaves_out_state.py`.
 
 **What it copies.** The folders listed in `backup.sync_dirs` in
@@ -5715,9 +5303,7 @@ by hand once nothing is copying.
 **Which files belong to a video: one rule, used by every step that moves files.** A video's
 files are `<video>.mp4`, `<video>_<something>.json` and `<video>DLC_<model>.h5`. Filing,
 intake, staging, the re-run copy-down, the clean-ups after filing, the bring-current helper
-and the old segmentation triage mover used to take "every file whose name starts with the
-video's name". Tray numbers can have more than one digit, so `..._P1` would also have taken
-`..._P10`'s files and moved or deleted them with its own. All of the steps just listed now ask one function
+and the old segmentation triage mover do not take "every file whose name starts with the video's name": tray numbers can have more than one digit, so `..._P1` would also take `..._P10`'s files and move or delete them with its own. All of the steps just listed ask one function
 (`pipeline.fsutil.files_of_video`): the character right after the video's name must be `.`,
 `_` or `D`, and an unfinished copy (`.part`, `.tmp`, `.partial`) is never one of the files.
 The review queues' routing (`review_routing._bundle_files`) now uses the same function, so an
@@ -5753,9 +5339,7 @@ after a re-run -- nothing in that folder changes until every new file is already
 
 After a failed attempt the watcher tries again after 1 minute, then 5, 15 and 60 minutes.
 WHY: the features file is what the nightly database import takes from the filed folder and
-what the watcher reads as "this video is filed". Filing used to move the earlier files into
-the Archive first and then move the new ones in one by one, so one file that would not move
-left the cohort folder with some new files and some missing -- neither the old results nor the
+what the watcher reads as "this video is filed". Moving the earlier files into the Archive first and then the new ones in one by one would let one file that would not move leave the cohort folder with some new files and some missing -- neither the old results nor the
 new -- until a retry up to an hour later. During the renames of step 3 there is no features
 file in the folder, so a reader that takes a video by its features file (as the nightly
 database import does) finds none at that moment, rather than one beside a mix.
@@ -5772,13 +5356,9 @@ output is written. Before, it was written in place, so a crash, a full disk or a
 could not be written stopped part-way left a cut-off features file (or emptied the previous
 one). Now the earlier file stays exactly as it was, and the video is held with the reason.
 
-**Filing by hand (`mousereach-archive`) files only what the watcher has passed.** The command
-used to file a video on the verdict written into its three stage files alone. The quality
+**Filing by hand (`mousereach-archive`) files only what the watcher has passed.** The command does not file a video on the verdict written into its three stage files alone. The quality
 triage writes that verdict before the hand-score comparison, the review gate and kinematics
-run, so a video the watcher was holding for its hand scores, or one with no kinematics, read
-as approved and could be filed -- and filed means done for good. It also could run beside the
-watcher's own filing of the same video, and when the row was not 'processed' it moved the
-files and recorded nothing. Now the command refuses, moving nothing, while the watcher is
+run, so a video the watcher was holding for its hand scores, or one with no kinematics, would read as approved and could be filed -- and filed means done for good; it could also run beside the watcher's own filing of the same video, or move the files and record nothing when the row was not 'processed'. So the command refuses, moving nothing, while the watcher is
 running on the machine (or that cannot be checked), when this machine's watcher database has
 the video in any state but 'processed', and when the features file is missing or older than
 the stage outputs beside it. A filing it cannot record in a database that knows the video
@@ -5806,12 +5386,10 @@ its files alone. Tests: `tests/test_archive_refuses_when_watcher_cannot_be_seen.
 `tests/test_archive_command_files_only_passed.py`.
 
 **The watcher's own filing step checks that the kinematics are this run's.** The step that
-files a 'processed' video used to check only that a `<video>_features.json` was in the
-Processing folder. A re-run copies the filed generation down, the old features file
-included, so a re-run whose kinematics then failed could still show one. Now the features
-file must also be at least as new as the video's segments, reaches and outcomes files and as
+files a 'processed' video does not check only that a `<video>_features.json` is in the Processing folder. A re-run copies the filed generation down, the old features file
+included, so a re-run whose kinematics then failed could still show one, so the features file must also be at least as new as the video's segments, reaches and outcomes files and as
 the start of the run; otherwise the video is marked failed with "not filed: no kinematics"
-and the reason, and nothing moves. And a failed video can no longer be reset straight to
+and the reason, and nothing moves. And a failed video cannot be reset straight to
 'processed' (`mousereach-watch-reprocess --from-step processed` is gone): 'processed' means
 "passed every check, file it", so a failed video re-runs from 'processing' or earlier and
 earns it again. The same now holds for a row coming back from 'unresolvable' (this machine
@@ -5828,9 +5406,7 @@ are beside them (the checks above), but the gate is not asked again.
 
 **Intake takes in all of a video's files or none.** When the processing server takes a posed
 video into its Processing folder, it copies the video, its pose and any other file of the
-video. It used to carry on when at least one file copied. A run without its `.mp4` then ran
-the outcome step with its video checks silently off, a review bundle it routed had no video for
-the reviewer, and after filing the clean-up deleted the posed copy. Now, if any file fails to
+video. It does not carry on when at least one file copied: a run without its `.mp4` would run the outcome step with its video checks silently off, a review bundle it routed would have no video for the reviewer, and after filing the clean-up would delete the posed copy. If any file fails to
 copy -- one of them, or every one of them as on a full disk -- the copies just made are removed (the posed originals are untouched), the row is set to
 'unresolvable' with the reason "posed files not all in the posed folder when intake looked
 (failed to copy <file> ...; attempt N of M ...)", and the posed claim is let go. A failed copy
@@ -5889,8 +5465,7 @@ old versions.
 
 **The version scan names the filed videos it cannot check.** A filed video with no
 `<video>_processing_manifest.json` has no recorded versions, so the version scan can never
-find it out of date: a newer algorithm never reaches it. The scan used to add such a video to
-a count and nothing more. Now:
+find it out of date: a newer algorithm never reaches it. The scan does more than count such a video:
 
 - the scan's log line says how many there are and names them (the first 50, then "and N
   more"), and `mousereach-version-check` lists them under "Filed videos with no processing
@@ -5949,7 +5524,7 @@ with 2.6.0: rows stamped 2.5.0 would then keep their missing columns for good.
 kinematics-only re-run of a filed video (previous section) adds them and keeps the
 filed reaches, outcomes and causal reaches exactly as before.
 
-**Also in 2.6.0: one frame convention (2026-11-18).** This was folded into 2.6.0
+**Also in 2.6.0: one frame convention.** This was folded into 2.6.0
 before 2.6.0 was declared or deployed, so no 2.6.0 output exists without it, and the
 version stays 2.6.0. A window of frames is its first and last frame, both included.
 Every reader now uses that convention (`causal_review_io.reach_file_segment_span`).
@@ -5966,19 +5541,16 @@ review windows that draw a pellet's track from a features file read its frames t
 `causal_review_io.features_segment_span`, so files from before and after 2.6.0 both
 show the whole pellet and nothing more.
 
-A reach's `duration_frames` is now counted from its frames (`end - start + 1`). It
-used to be copied, which left reaches a person moved or added in the reach review
-window, and every ground-truth or reviewer-typed reach, one frame short. The reach
-review window also now keeps the algorithm's start and end each on their own when a
+A reach's `duration_frames` is counted from its frames (`end - start + 1`), not copied: copying would leave reaches a person moved or added in the reach review
+window, and every ground-truth or reviewer-typed reach, one frame short. The reach review window also keeps the algorithm's start and end each on their own when a
 person moves them. Its ground-truth export writes them (`original_start_frame` /
-`original_end_frame`); before, both were always empty. Reach start and end frames
+`original_end_frame`). Reach start and end frames
 themselves are unchanged, so a kinematics-only re-run keeps every filed decision.
 Details: `docs/KINEMATICS_FIELDS.md` section 3, "One frame convention".
 
 ## one rule for "has something to triage" and "waits for its segmentation"
 
-The review window, the review gate and the watcher's return scan used to carry
-their own copies of two rules, and the copies disagreed. Each rule now lives once, in
+The review window, the review gate and the watcher's return scan do not carry their own copies of two rules (copies can disagree). Each rule lives once, in
 `src/mousereach/review/triage_status.py`, and every one of them calls it:
 
 - **Has something to triage** (`triaged_in_range`, `bundle_triage`): a segment the outcome
@@ -5992,8 +5564,7 @@ their own copies of two rules, and the copies disagreed. Each rule now lives onc
 
 What an operator sees:
 
-- A flagged video with no reach-assignment file is offered in the triage window (it used to be
-  hidden from every reviewer while the watcher kept it in the queue).
+- A flagged video with no reach-assignment file is offered in the triage window.
 - A triage bundle with an unreadable segments file is not offered in the window; the return scan
   moves it to deep review. A video whose failed segmentation a person cleared, and which still has
   unanswered pellets, IS offered in triage (before, neither side picked it up).
@@ -6012,8 +5583,7 @@ A video's review can exist in several copies: the one in a review bundle, the on
 video (in the processing folder, or the filed folder), and the durable copy in
 `review_records/reviews/`. The review window and the results step always read **every** copy,
 taking for each pellet the newest answer or "are you sure?" recheck a person gave about its frames
-(`causal_review_io.effective_review`). The pipeline side used to pick ONE copy by file time, so the
-two sides could disagree about which pellets are answered. Now:
+(`causal_review_io.effective_review`). The pipeline side does not pick ONE copy by file time (the two sides could disagree about which pellets are answered):
 
 - The review gate and the return scan (`triage_status`), the hand-score check, and
   `mousereach-route-to-queue` read every copy merged. A pellet answered in any copy is not asked
@@ -6091,14 +5661,7 @@ this work); the watcher is paused by hand or a recording program is open (record
 wins); a stop was requested (`watcher_stop.flag` is waiting); or the machine is not set up
 (use the Setup tab).
 
-**What changed and why.** The tab used to run its own older copy of the steps
-(`pipeline/core.py`, now removed). That copy ran the old outcome detector BEFORE reach
-detection with no reach file (its outcomes files are stamped `4.0.0_step2`), had no reach
-assignment, hand-score check, gate or review queue, wrote no watcher record, swallowed
-errors into a counter, and worked in the same Processing folder as the watcher. Its results
-were never filed. Its **Reprocess All** button deleted every segments, reaches and outcomes
-file in Processing -- a person's hand-set cuts included -- after one confirmation. The tab
-now inherits everything that decides what happens to a video from the Watcher Control panel,
+**What the tab runs, and why.** The tab runs the watcher's own steps rather than a copy of its own: a separate copy would skip reach assignment, the hand-score check, the gate and the review queue, write no watcher record, swallow errors into a counter, and work in the same Processing folder as the watcher; a bulk Reprocess All would delete every segments, reaches and outcomes file in Processing -- a person's hand-set cuts included. The tab inherits everything that decides what happens to a video from the Watcher Control panel,
 so there is one implementation with two ways to start it.
 
 **Choosing which videos go first, from the tab.** The box **Do one animal's videos first**
@@ -6126,21 +5689,15 @@ ways to run something by hand that keep every check:
   (Watcher Control tab) or run `mousereach-version-check --mark`; that re-run keeps every
   person's cuts and answers;
 - one chosen video through every step: the **Run All Steps** tab, which runs the watcher's own
-  steps for that video (update 2026-11-18 below).
+  steps for that video (see "the Run All Steps tab runs the watcher's own steps" below).
 
-The question for the owner: should the Run Pipeline tab offer choosing specific videos
-again, and if so, what should happen to a chosen video that is filed, in a review queue or
-crystallized?
-
-**Changed since (2026-11-18):** the "Run All Steps" tab no longer runs its own copy of the steps;
-see "the Run All Steps tab runs the watcher's own steps" below.
+The "Run All Steps" tab runs the watcher's own steps; see "the Run All Steps tab runs the watcher's own steps" below.
 
 ## no bulk path replaces a person's cuts with the algorithm's
 
 A person's cuts are a `<video>_segments.json` marked `boundary_source: "human"` (written by the
 segmentation fixer). Cuts are frame numbers, valid whatever pose or algorithm version comes next,
-and the segmenter keeps such a file when it finds one beside the pose. Three bulk paths could
-still lose them; now none can:
+and the segmenter keeps such a file when it finds one beside the pose. Three bulk paths could lose them; each is guarded:
 
 - **The versioned supersede move** (used by `mousereach-repose-videos`, by bring-current and by
   filing a re-run over a filed video) archives a person's segments file only when the file
@@ -6169,9 +5726,7 @@ still lose them; now none can:
   existed. WHY: protecting it would refuse every filing of the video for good, since no run can
   ever produce a person's file for such a tray. The review tools treat those trays as uncut
   (the segmentation fixer's queue releases them rather than asking for cuts), so no person's
-  cuts are expected there. **Open question for the lab owner:** can a
-  person ever set cuts on an Easy or Flat tray? If yes, those cuts need a rule of their own;
-  until then they are replaced on filing.
+  cuts are expected there. Cuts a person sets on an Easy or Flat tray are replaced on filing.
 - **`mousereach-repose-videos`** refuses a held video whose bundle holds a person's cuts, as it
   refuses one with a saved review (a person is working on it).
 - **Bring-current** (`pipeline/reprocess_to_current.py`) copies a person's cuts and the
@@ -6179,14 +5734,13 @@ still lose them; now none can:
   so the segmenter keeps the cuts and the gate does not ask again for a clear a person gave.
 - **The review-bundle stager** (`review/staging.py`) keeps a segments file marked
   `boundary_source: "human"` as it is (in the bundle, or copied from beside the filed video for a
-  new bundle) and does not run the segmenter; it used to recognise only the old "manual" markers.
+  new bundle) and does not run the segmenter.
 
 ## bring-current keeps the watcher's rules
 
 Bring-current (`pipeline/reprocess_to_current.py`, run from Python by hand; no console command)
 brings one filed video up to the current algorithms in a temporary work folder and, with
-`finalize=True`, files the result or holds the video for review. Whether the routine is kept at
-all is a question for the lab owner; until then it keeps the same rules as the watcher:
+`finalize=True`, files the result or holds the video for review. It keeps the same rules as the watcher:
 
 - **Run it on the processing server.** `finalize=True` reads this machine's watcher database.
   It refuses, changing nothing, when the database cannot be read, when the video is crystallized
@@ -6196,7 +5750,7 @@ all is a question for the lab owner; until then it keeps the same rules as the w
 - **The hand-score comparison runs before the gate**, with the watcher's own check. A disagreeing
   pellet is flagged, so the gate holds the video in triage; a session whose hand scores cannot be
   found is not finalized ("no hand scores found for this session ... held, nothing finalized") --
-  it is never filed uncompared. Since 2026-11-18 that hold is visible (see the update "bring-current
+  it is never filed uncompared. That hold is visible (see the update "bring-current
   files all or nothing" below): it is printed, and with `finalize=True` the video is listed on the
   Pipeline Dashboard's red panel, as every bring-current stop is. Nothing is moved and the filed results stay as they were. When a reviewer's
   note says the cuts number the pellets wrongly, the video is held for manual segmentation.
@@ -6230,11 +5784,11 @@ alone any video this machine's watcher database calls crystallized.
 
 Not covered (known leftovers): the review commands and the other backfill commands were not
 checked line by line. (`mousereach-assign-reaches` and the triage and advance commands are
-covered since 2026-11-18; see the update of that date below.)
+covered; see "the other hand step commands refuse the filed tree too" below.)
 
 ## one pellet frame and one re-cut rule for the gate, the window and the results step
 
-WHAT WAS WRONG. 0bd388d (2026-11-18) kept an answer given before a person's re-cut when its
+WHAT WAS WRONG. An answer given before a person's re-cut was kept when its
 frames exactly matched a current pellet. The review gate and the review window build a video's
 pellets from the segments file, where a pellet ends the frame before the next cut; the results
 step (`truth_resolver.resolve_truth_layers`, called by the feature extractor) built them from the
@@ -6253,7 +5807,7 @@ WHAT HOLDS NOW.
   reaches attached by number; it falls back to the reaches file's list only when there is no
   segments file (then there are no person's cuts and no re-cut). A segments file a person saved
   whose cuts cannot be read stops the kinematics (no features file) instead of guessing.
-- **One re-cut rule, as the owner ruled it (R2).** `causal_review_io.answer_survives_recut`
+- **One re-cut rule.** `causal_review_io.answer_survives_recut`
   decides it for every reader (through `index_review_by_segment`; `hand_scores` calls it directly):
   once a person has saved the current cuts, no answer given before then stands, on any pellet,
   including one whose frames did not move. Answers persist only through re-runs on the same cuts.
@@ -6269,9 +5823,7 @@ WHAT HOLDS NOW.
   bring-current and the kinematic backfill treat it like any KinematicsProblem: no features file,
   and the reason printed.
 - **Answering again ends the question.** A person who answers a voided pellet again on the new
-  cuts often gives the same answer as before. The save used to keep the earlier record's time for
-  an unchanged answer (`stamp_segment_reviewers`), so the new answer still read as given before the
-  re-cut, stayed void and was asked again on every pass. The window now passes the cuts' time to
+  cuts often gives the same answer as before. The save does not keep the earlier record's time for an unchanged answer (`stamp_segment_reviewers`): the new answer would still read as given before the re-cut, stay void and be asked again on every pass. The window passes the cuts' time to
   `save_causal_review(cuts_set_at=...)`, and an answer given in the save is never stamped with a
   time before it; an old answer a save only carries along as a record keeps its own time and stays
   void.
@@ -6284,14 +5836,9 @@ WHAT HOLDS NOW.
   own cuts match (`index_gt_outcomes_by_segment`, `unified_gt`); the review-answer re-cut rule is
   not applied to it.
 
-WHAT IT MEANS FOR STORED ANSWERS. Every answer given before a person's re-cut is now asked again
-the next time its video passes the gate (a review return or a re-run), including those on pellets
-whose cuts did not move. A filed video is affected only when it is run again. The count of such
-answers is in the lab's work record. (Narrowed the same day; see the next update.)
-
 ## an earlier answer on a pellet whose frames did not change is kept
 
-THE RULING. The owner narrowed R2: "If resegmenting doesn't alter, then it's fine to keep."
+THE RULE. An answer on a pellet whose frames did not change in a re-cut is kept.
 
 WHAT HOLDS NOW. `causal_review_io.answer_survives_recut` (still the one place; every reader --
 review window, release check, review gate, results step -- reaches it through
@@ -6322,12 +5869,8 @@ LIMIT. The fixer records only the cuts it loaded. After two re-cuts, an answer g
 first one is checked against the first re-cut's cuts; its frames are a pellet of those only if
 that pellet did not move in the first re-cut either, so it is kept only when unchanged throughout.
 
-Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach detector itself;
-fails on 5546de0: gate CLEAN where it must be TRIAGE, results step drops a moved pellet's answer
-without refusing), `tests/test_recut_voids_earlier_answers.py`,
-`tests/test_recut_voided_pellets_are_asked_again.py` (renamed
-`tests/test_recut_voided_answers_are_dropped.py` on 2026-11-21, when "void and asked again"
-became "void and dropped": see "Update 2026-11-21: an answer a re-cut voided is dropped, not
+Tests: `tests/test_recut_one_span_rule.py` (reaches file written by the reach detector itself), `tests/test_recut_voids_earlier_answers.py`,
+`tests/test_recut_voided_pellets_are_asked_again.py` (void and dropped: see "an answer a re-cut voided is dropped, not
 asked again").
 
 ## a recording PC sends the recordings people have named
@@ -6343,8 +5886,8 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
 - **Every turn of the watcher's loop** (not while it is paused, at most once a minute), before the
   scan: `BaseOrchestrator._maybe_send_recordings` runs one pass of `RecordingSender`. One pass may
   copy for at most `recording_outbox_pass_minutes` (30); the rest waits for the next pass.
-  (Superseded 2026-11-19: the watcher's pass is a slice of `recording_outbox_cycle_seconds`, 120;
-  `pass_minutes` is the hand-started pass only. See "Update 2026-11-19: the recording outbox
+  (The watcher's pass is a slice of `recording_outbox_cycle_seconds`, 120;
+  `pass_minutes` is the hand-started pass only. See "the recording outbox
   sends in slices".)
 - **Only outside recording time** (`recording_days`, `recording_hours`, read fresh each pass). With
   neither set, nothing is ever sent (`send_window_reason`). Recording time and a stop request
@@ -6361,8 +5904,7 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
   `pause_while_running` is running; a file under `recording_outbox_min_mb` (1), shorter than
   `recording_outbox_min_seconds` (10) or whose duration cannot be read (`probe_duration`: ffprobe,
   else ffmpeg from the PATH or imageio-ffmpeg). The last three are held.
-- **Already there?** (How the lookup is done changed the same day: see "Update 2026-11-18: the
-  recording PC never walks the shared drive" below. What counts as a resting place did not.)
+- **Already there?** (How the lookup is done: see "the recording PC never walks the shared drive" below.)
   Before copying, the name is looked up in every place a collage rests on the
   shared drive (`resting_places`: the intake, `Unanalyzed/Unsupported_Tray_Type` and
   `Processing/Quarantine` all the way down, every `Multi-Animal` folder up to four levels under
@@ -6375,8 +5917,7 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
   from the share and hashed; size and hash must match; renamed to the final name without ever
   replacing a file (`_rename_no_overwrite`); the final file's size checked; the source checked
   unchanged once more; THEN the local original is deleted. No `_sent` folder and no waiting period:
-  once the verified copy is on the shared drive, the recording does not stay on the recording PC
-  (decided 2026-11-18).
+  once the verified copy is on the shared drive, the recording does not stay on the recording PC.
 - **Failures.** A failed verification removes the bad `.partial`, keeps the source and tries again
   next pass; from `recording_outbox_warn_after_failures` (3) failures in a row it is also held (red).
 - **Crash safety.** A `.partial` left by a killed copy is removed once its size is unchanged between
@@ -6398,7 +5939,7 @@ WHAT IS BUILT (`watcher/recording_outbox.py`; operator page `docs/SENDING_RECORD
   nothing, any hour); `--once` runs one pass with the same rules, for a PC whose watcher is not
   running.
 
-Tests: `tests/test_recording_outbox.py` (fails on 0c36d0d: the module does not exist).
+Tests: `tests/test_recording_outbox.py`.
 
 ## a failed recording is a recording issue, set aside before any cut
 
@@ -6474,12 +6015,9 @@ Operator guide: docs/RECORDING_ISSUES.md.
 
 A GPU machine cuts each child of a collage, puts it in its own claim folder on the shared drive
 (`Unanalyzed/Single_Animal/.inflight/<machine>/`) and copies it into its local DLC queue. With no
-DLC queue configured on that machine, nothing can be posed there. The child's row used to be parked
-`unresolvable` ("no local DLC queue is configured on this node") with a reason nothing ever took
-again, while the collage was recorded `cropped`: if no other machine took the video, its session
-was never posed -- even after a person had configured the queue.
+DLC queue configured on that machine, nothing can be posed there. The child's row is not parked `unresolvable` ("no local DLC queue is configured on this node") with a reason nothing ever takes again: with the collage recorded `cropped`, its session would never be posed, even after a person configured the queue.
 
-Now (`DLCOrchestrator._adopt_single_for_dlc`, `single_claim.NO_DLC_QUEUE_REASON`,
+Instead (`DLCOrchestrator._adopt_single_for_dlc`, `single_claim.NO_DLC_QUEUE_REASON`,
 `state.WatcherStateManager._queue_now_configured`):
 - the machine's claim on the video goes back to the top of the shared singles folder at once
   (never overwriting a file already there), so any machine with a DLC queue takes it the ordinary
@@ -6597,8 +6135,7 @@ copy of the video, wherever the file picked in Browse sits. Nothing is pushed in
   done. A filed video is run again with "Re-run video" on the dashboard or the version re-run.
 - A video held in a review queue (a live triage or deep-review bundle -- checked by the video's
   name, so a stray copy elsewhere is refused too -- or a state `triage` / `deep_review`): it goes
-  on by itself once reviewed. The tab used to rewrite the bundle's algorithm outputs under the
-  reviewer.
+  on by itself once reviewed. The tab does not rewrite the bundle's algorithm outputs under the reviewer.
 - A crystallized video (locked for a publication).
 - A video the watcher on this machine has no record of and that is not waiting in the posed folder.
 - A video with no pose yet, a quarantined one, or one this machine has no file for.
@@ -6607,10 +6144,9 @@ copy of the video, wherever the file picked in Browse sits. Nothing is pushed in
   (`watcher_stop.flag`) or the watcher is paused.
 
 **Why.** Running by hand must do what the watcher does: one implementation, two ways to start it.
-The tab used to run its own older chain in the chosen video's own folder: no hand-score
+A separate older chain run in the chosen video's own folder would have: no hand-score
 comparison, a quality check that let a video through when it could not run, a push of the
-kinematics into a database, and no check of where the video was. Picking a filed video's mp4
-rewrote the filed segments, reaches, outcomes and assignment files (and the features file) in
+kinematics into a database, and no check of where the video was. Picking a filed video's mp4 would rewrite the filed segments, reaches, outcomes and assignment files (and the features file) in
 place, with no earlier generation kept and no watcher record.
 
 **Hand-score holds are kept.** The run first reads this machine's list of videos held for their
@@ -6620,12 +6156,9 @@ again in full, and the other held videos stay on the machine's list.
 ## the review-bundle stager goes through the watcher's router
 
 `review/staging.py` (`stage_video`; `python -m mousereach.review.staging --stems ...`) builds a
-causal-review bundle by running the four algorithms on a filed video's files. It used to write
-`<queue>/<video>` itself: the watcher database never learned the video was held (its record
-stayed 'archived', or 'crystallized' for a locked video), a crystallized video got a bundle, and
-`--overwrite` regenerated a live bundle in place, under the reviewer.
+causal-review bundle by running the four algorithms on a filed video's files. It does not write `<queue>/<video>` itself: the watcher database would never learn the video was held (its record would stay 'archived', or 'crystallized' for a locked video), a crystallized video would get a bundle, and `--overwrite` would regenerate a live bundle in place, under the reviewer.
 
-Now, when the destination is the configured triage or deep-review queue (the default):
+When the destination is the configured triage or deep-review queue (the default):
 
 - **Refused before anything is written** (the reason is raised and printed as FAILED for that
   video): a live bundle of the video already in that queue, whether or not `--overwrite` is
@@ -6644,12 +6177,11 @@ Now, when the destination is the configured triage or deep-review queue (the def
 
 **Handing cut videos to the pose step.** The crop tab's checkbox (now "Hand the cut videos to the
 pose step", on by default), `mousereach-crop --queue` and `mousereach-prep` (step 2, unless
-`--no-queue`) used to copy EVERY mp4 of the output folder straight into this machine's DLC queue,
-with no claim. The watcher then picked the copies up as untracked queue files while the same videos
+`--no-queue`) do not copy EVERY mp4 of the output folder straight into this machine's DLC queue with no claim: the watcher would pick the copies up as untracked queue files while the same videos
 still waited, unclaimed, in the shared singles folder -- so another machine could claim and pose
-them as well (two poses of one video), and a video already posed, filed or held was queued again.
+them as well (two poses of one video), and a video already posed, filed or held would be queued again.
 
-Now each video THIS run cut (nothing else in the folder) is put in the shared singles folder
+Each video THIS run cut (nothing else in the folder) is put in the shared singles folder
 (`Unanalyzed/Single_Animal`), unclaimed; a video already there is left where it is. A
 graphics-card PC's watcher claims each one (the rename into `.inflight/<machine>/`) and poses it --
 one machine per video. Nothing is copied straight into a DLC queue. A video whose name is already
@@ -6665,8 +6197,7 @@ with no claim; use the Run Pipeline tab's pass, which claims each video and pose
 machine's own queue. (Those two pose tools still pose whatever is in a folder with no claim and no
 watcher record -- a known leftover.)
 
-**`mousereach-prep --archive`** used to move every collage of the folder after cropping, whatever
-its children's state. It now applies the watcher's own retirement rule
+**`mousereach-prep --archive`** does not move every collage of the folder after cropping whatever its children's state: it applies the watcher's own retirement rule
 (`collage_provenance.retire_completed_collages`, which the processing machine runs every few
 hours): a collage moves to `Analyzed/Multi-Animal` only when every single-animal video cut from it
 is filed with the current versions and has no review pending; the command lists how many were
@@ -6684,11 +6215,8 @@ part-way puts back what it had moved before reporting the error.
 `mousereach-assign-reaches`, `mousereach-triage`, `mousereach-advance`,
 `mousereach-triage-reaches`, `mousereach-advance-reaches`, `mousereach-triage-outcomes` and
 `mousereach-advance-outcomes` now refuse a `-i` folder inside the configured Analyzed tree, before
-reading or writing anything, exactly as `mousereach-segment` and the other step commands do
-(update 2026-11-17 above): "ERROR: <folder> is inside the filed tree ... Nothing was written." and
-exit code 1. `mousereach-assign-reaches` used to rewrite a filed video's
-`<video>_reach_assignments.json` in place; the triage and advance commands rewrote or moved its
-files.
+reading or writing anything, exactly as `mousereach-segment` and the other step commands do: "ERROR: <folder> is inside the filed tree ... Nothing was written." and
+exit code 1. Without this check, `mousereach-assign-reaches` would rewrite a filed video's `<video>_reach_assignments.json` in place, and the triage and advance commands would rewrite or move its files.
 
 What the step commands still do NOT do (a known leftover, not a change): run on a folder outside
 the filed tree, each runs only its own step, with none of the watcher's checks, review queues or
@@ -6721,7 +6249,7 @@ WHAT IS BUILT (`watcher/review_gate.py`, `evaluate_gate` -> `mislabel_on_current
 - Easy and Flat trays are never held for it (they are not segmented). A ground-truth file that
   certifies the whole video still passes it CLEAN (checked first, as before).
 - A review that cannot be read is logged at WARNING and does not hold the video here.
-- Bring-current (`reprocess_video_to_current`, run from Python; update 2026-11-18: there is no `mousereach-bring-current` command) and the "2 - Run Pipeline" tab use the same gate, so they hold such a
+- Bring-current (`reprocess_video_to_current`, run from Python; there is no `mousereach-bring-current` command) and the "2 - Run Pipeline" tab use the same gate, so they hold such a
   video too.
 
 What an operator sees: the video is in the Re-segmentation queue with that reason. Open it in the
@@ -6733,8 +6261,8 @@ gate returned `clean` for such a video).
 
 ## a re-cut by the segmenter voids earlier answers like a person's
 
-WHY: owner ruling R2 (as narrowed): a re-cut voids every answer given before it, except one on a
-pellet whose frames did not change. A person's re-cut in the segment fixer followed it, because
+WHY: a re-cut voids every answer given before it, except one on a
+pellet whose frames did not change. A person's re-cut in the segment fixer follows it, because
 the fixer stamps its save (`corrected_at`, `algo_boundaries`). A triage return whose algorithm
 cuts are out of date resumes at segmentation (`resume_point.current_start`) and the SEGMENTER
 cuts again; its file recorded no time, so no reader saw a re-cut and earlier answers were fitted
@@ -6769,7 +6297,7 @@ segmenter re-cut left every earlier answer applied by overlap and the gate passe
 ## no review writer recreates a bundle that left its queue
 
 WHY: while a person has a bundle open, the return scan (or another window's release) can move it
-out of the queue; there is no reviewer claim on a bundle (an open owner question). The
+out of the queue; there is no reviewer claim on a bundle. The
 Review Queues release button already wrote its clear marker create-only and only into an existing
 folder. The review window's Clear button and its clear-on-complete save, the segmentation fixer's
 release after a save, and the review save itself wrote through `causal_review_io._write_json`,
@@ -6790,32 +6318,6 @@ WHAT IS BUILT:
 
 Tests: `tests/test_review_writers_never_recreate_a_moved_bundle.py` (on the commit before this one
 the Clear button recreated the folder and overwrote another person's marker).
-
-## a triage bundle its own ground truth holds is listed for a person
-
-(SUPERSEDED 2026-11-19: such a bundle is now released -- see "Update 2026-11-19 (triage release reads ground truth inside the bundle)".)
-
-WHY: the release predicates give the gate and the return scan's divert test an in-bundle reading
-of ground truth for whole-video certification, but the release check (`triage_status`) still
-reads only the ground-truth index (an open owner decision: releasing these bundles would
-re-run and file each of them). A triage bundle whose segmentation failed and whose ground truth
-INSIDE the bundle certifies the whole video was therefore not diverted to re-segmentation (it
-counts as cleared), not released (its triaged pellets stay open) and not offered by the review
-window (it has ground truth) -- stuck, with nothing logged.
-
-WHAT IS BUILT (visibility only; nothing is released): in `review_return.scan_review_queues`, a
-triage bundle in that state is listed for a person (`_note_gt_not_counted` ->
-`review_routing.note_for_a_person`, kind `triage_ground_truth_not_counted`, one WARNING line in
-the watcher log when it is first listed) and taken off the list (`drop_for_a_person`) once a scan
-finds it no longer in that state; the list is read once per scan (`listed_for_a_person`) and
-written only when it changes. A bundle the scan leaves gone is dropped by `refresh_for_a_person`
-as before. It shows in the Pipeline Dashboard's red panel and in the Review Queues tab's
-"Folders left for a person"; the Resolve window shows it with "No button"
-(`attention_actions.actions_for`). The value of the scan's `cleared` and the release check's
-index-only reading are unchanged.
-
-Tests: `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` (on the commit before
-this one the scan listed nothing for such a bundle).
 
 ## a reopened ground truth puts its cuts back by frame
 
@@ -6865,98 +6367,13 @@ What a machine that ran the pool may still carry, and why each is harmless:
   was posing, and their logs. Nothing reads or cleans it any more; once each video's current copy
   is confirmed elsewhere (posed, filed or back in the singles folder), a person may remove it.
 - **`cpu_pose_stop.flag` in the processing root.** Nothing reads it; delete it.
-- **Videos already posed by the pool.** Untouched by this change. If the lab decides not to keep
-  those poses, `mousereach-repose-videos` sends named videos back for a new pose (update
-  2026-11-09).
+- **Videos already posed by the pool.** Untouched. To discard those poses, `mousereach-repose-videos` sends named videos back for a new pose.
 
 For an operator: remove the scheduled task that started the pool, if the machine has one. Where it
 lived: `watcher/cpu_pose_pool.py` (deleted). Tests: `tests/test_cpu_pose_pool_removed.py` and
 `test_a_removed_cpu_pools_leftover_claim_comes_back` in `tests/test_singles_intake_claim.py`.
 
-## label mismatches are held outside the queues; triage bundles are compared again with the hand scores; the lab can suspend the comparison for named sessions
-
-**The label-mismatch part of this update is RETIRED (2026-11-20; see "Update
-2026-11-20: the label-mismatch hold is retired" at the end).** The bundle
-re-comparison and the suspension below still hold.
-
-Owner rulings, 2026-11-18: a label mismatch "isn't for triage to do. That's not
-something any triage process could repair, so it's not something to put into
-triage over." -- and the sheets "just are what they are, and if they're wrong
-... that speaks to human error rate, which is kind of something we want to
-capture by leaving it in." A triage question must be shown in the review window
-and answerable there; a recording carrying another tray's name, or a sheet with
-two trays' rows the other way round, is neither.
-
-**What a label mismatch is.** When the hand-score check
-(`_hand_score_precheck`, `watcher/hand_scores.py`) reads a video's sheet row, it
-also compares the algorithm's calls with every OTHER row of the same animal and
-day (`hand_scores.label_mismatch`). Another row "matches clearly better" when all
-three hold: at least 10 pellets compared with it (`LABEL_MIN_PELLETS`); the
-algorithm agrees with it on at least 90% of them (`LABEL_MIN_AGREEMENT`); and it
-beats the video's own row by at least 4 pellets, counted only where the two rows
-differ (`LABEL_MIN_MARGIN`). WHY counted only where the rows differ: a mouse that
-retrieves nearly everything has near-identical rows on every tray, so agreement
-with another row alone proves nothing. WHY 4: on correctly labeled videos the
-algorithm disagrees with its own row on no pellet in most videos and on at most
-two in nearly all, so a margin of 1-2 is ordinary error; at 3 the other tray's own
-video rarely matched this video's row back -- mostly not swaps; from 4 up most
-did, which is what a swap leaves. All pellets the algorithm called are
-compared, answered or not, and BEFORE the "every pellet answered" shortcut: a
-person confirming the calls of a recording that carries another tray's name has
-not made it that tray. Not called while a reviewer's statement that the cuts
-number a pellet wrongly stands (the numbering itself is then in doubt). When the
-other tray's own video is analyzed (same folder, a queue, or its filed folder),
-it is compared with THIS video's row and the result is added to the reason ("the
-P4 video matches P3's scores (19/19)") -- evidence, never a condition.
-
-**What happens to it.** It is HELD where it is -- row 'processing', files in the
-processing folder -- in the same hold as a video waiting for its hand scores (the
-same attention list `<NAS>/attention/<host>_hand_scores.json`, the same restore
-after a restart), as kind `label_mismatch`, needs_person, with the plain reason,
-the own row, the matched row(s) with their counts, the reverse check and the
-pellets a person already answered (those answers stay in the review file and
-apply after release). Never a review queue, never `_Problematic` (that is for
-recordings that cannot be processed). Every "bench disagreement" flag is taken
-back (`hand_scores.clear_bench_flags`) -- they compared the wrong tray's row.
-The outcomes file keeps `"hand_scores": {"verdict": "label_mismatch",
-"label_mismatch": {...}}`. `mousereach-watch-status` lists such videos under their
-own heading; the dashboard's red panel and the database tool's Where Is My Data
-tab and FIX THESE files show them; the census counts them
-(`held_for_label_mismatch`).
-
-**How it is released: a person decides, the sheet is never edited.**
-`mousereach-label-mismatch --list` shows the held videos. Then one of:
-
-- `mousereach-label-mismatch --sheet-error <video> --by <name>`: the sheet is a
-  human error and stays as it is. On its next pass the watcher checks the video
-  again, gets verdict `sheet_error`, flags no bench disagreement, and the video
-  goes on through every other check to kinematics and filing. Its outcomes file
-  keeps `"verdict": "sheet_error"`, the two rows and the decision.
-- `mousereach-label-mismatch --name-wrong <video> --as <right name> --by <name>`:
-  the recording's name is wrong. Recorded; the video stays held (its reason now
-  says so) until the recording is renamed the documented way (an evident-typo
-  correction, the original and a record kept in `Archive/manual_corrections`).
-  This command only RECORDS the decision; it renames nothing: the rename touches
-  the recording and every video cut from it, and is done by whoever maintains
-  the pipeline. When the maintainer puts the renamed results in place of the
-  held ones in the processing folder (the algorithm's calls in the outcomes file
-  change), the video checks itself again; when the recording is re-cut under the
-  right name instead, the maintainer retires the held video's row. Files moved
-  away with neither done leave the video listed in red as "the hand-score check
-  could not run".
-- `mousereach-label-mismatch --labels-right <video> --by <name>`: neither is
-  wrong -- another tray's row happened to fit (the rule's false alarm). The video
-  is compared with its own row as usual, and a real disagreement goes to triage.
-
-There is no button for these yet: the decision is made with the command on the
-processing server.
-
-Every decision is appended, never removed, to
-`<NAS>/review_records/label_decisions.jsonl`: who, when, which video, which two
-sheet rows and how well each agreed -- so the bench's tray error rate can be
-counted from that file alone (`mousereach-label-mismatch --decisions` prints it).
-A change of the scores file also re-checks the hold, as for every hand-score
-hold; nothing in the pipeline asks anyone to edit a sheet.
+## triage bundles are compared again with the hand scores; the lab can suspend the comparison for named sessions
 
 **Triage bundles are compared again with the hand scores
 (`review_return.bench_recheck`).** Before: a bundle kept the scores it was
@@ -7008,8 +6425,7 @@ tests/test_bench_suspension_and_label_decisions.py.
 The watcher's archive step has refused to file a `<video>_features.json` that still holds a pellet
 with no decided outcome ("triaged", "uncertain" or none), or a reach whose extended measures
 failed (`_extended_features_error`). The `mousereach-archive` command (on a machine whose watcher
-database has no row for the video) and bring-current's finalize did not ask, and could file such
-a file. Both now refuse it, moving nothing: the command says "pellet(s) N in <video>_features.json
+database has no row for the video) and bring-current's finalize would not ask, and could file such a file, so both refuse it, moving nothing: the command says "pellet(s) N in <video>_features.json
 have no decided outcome ..." or names the reaches carrying `_extended_features_error`, and exits 1;
 bring-current's summary `error` begins "not finalized:" with the same words. The two checks live
 in one place, `archive/core.py` (`undecided_pellets_in_features` and `reaches_with_failed_measures`,
@@ -7040,11 +6456,7 @@ video:
 The pose copy is not filed (the current pose lives in its own tree), and the Processing index is
 not touched (the video was never in Processing).
 
-It used to archive the old generation first and then move the new files itself in name order, so
-the features file went first, and a file that failed to move was simply left out of the list of
-moved files with no error: the filed folder could hold new kinematics without the reaches or
-segments they were computed from (the old ones already archived), reported as success. Now a
-filing that fails is the summary's `error` ("not filed: ..."); the filing has put the previous
+Bring-current does not archive the old generation first and then move the new files itself in name order (the features file would go first, and a file that failed to move would be left out of the list of moved files with no error: the filed folder could hold new kinematics without the reaches or segments they were computed from, the old ones already archived, reported as success). A filing that fails is the summary's `error` ("not filed: ..."); the filing has put the previous
 generation back (when even that fails, the error says so, and a verified copy of the previous
 generation is in the Archive). Nothing retries it: fix whatever stopped it and run bring-current
 again for the video.
@@ -7060,9 +6472,7 @@ then lists every file of this run that is now in the filed folder.
 **Every stop is visible.** Whenever bring-current stops a video without filing it or holding it in
 a review queue -- for any reason: the pose or a person's file could not be copied into the work
 folder, a step or the quality check could not run, the hand-score
-comparison could not run, a session whose hand scores cannot be found (owner ruling: hand scores
-always exist, so this is a defect to fix), a label mismatch (the results match another tray's
-hand scores; see the label-mismatch update above), any of the checks in step 1, the pose copy could not
+comparison could not run, a session whose hand scores cannot be found (hand scores are expected to exist, so this is a defect to fix), any of the checks in step 1, the pose copy could not
 be set aside, the filing failed, the review queue could not take a held video ("not held for
 review ..."), or a call failed outright ("bring-current stopped: ..."; the error is then raised on to
 whoever called bring-current, as before) -- it is:
@@ -7097,9 +6507,8 @@ when bring-current holds it in a review queue, where a person sees it.
 
 Bring-current copies the pose's frame-rate record (`<pose>_meta.pickle`, written by DeepLabCut)
 into its work folder with the pose, so the kinematics can turn frames into seconds even when no
-video file is found. A failed copy used to be ignored: the kinematics then refused for "no frame
-rate", and a person went looking for a missing record. It is still not a refusal on its own (the
-video file, when found, gives the frame rate too), but the summary now records it under
+video file is found. A failed copy is not ignored (the kinematics would refuse for "no frame rate" and a person would go looking for a missing record). It is not a refusal on its own (the
+video file, when found, gives the frame rate too), but the summary records it under
 `pose_record`, and when the kinematics could not be made the reason names it: "cannot finalize:
 no kinematics were made for this run (the pose's frame-rate record ... could not be copied into
 the work folder)".
@@ -7139,9 +6548,7 @@ moved to `Processing\Quarantine` with a `.quarantine.json` note, by the collage 
 single intake and the posed-folder intake (`watcher/state.py`, `validator.quarantine_file`),
 and is never processed until a person releases it under a readable name.
 
-`mousereach-watch-quarantine --purge` used to delete every file in that folder for good after
-one y/N question -- a misnamed multi-animal recording included, the only copy of that tray's
-recording -- and left each file's 'quarantined' row behind. It now follows one rule
+`mousereach-watch-quarantine --purge` does not delete every file in that folder for good after one y/N question (a misnamed multi-animal recording is the only copy of that tray's recording, and each file's 'quarantined' row would be left behind). It follows one rule
 (`watcher/quarantine_purge.py`):
 
 * A multi-animal recording (collage) is the irreplaceable source and is NEVER deleted. A file
@@ -7181,8 +6588,7 @@ it for every machine. Rule: a graphics-card or recording PC never walks the shar
 
 * **The processing server writes one file.** `ProcessingOrchestrator._scan_phase`, step
   `scan/collage index`, only when `watcher.mode` is `processing_server`, at most every 10 minutes,
-  on its own thread (`collage_index.Rebuilder`, `REBUILD_EVERY_S`; one build at a time; measured
-  on the live share 2026-11-18: 16 s for 6002 names): `resting_places` (moved here unchanged) is walked
+  on its own thread (`collage_index.Rebuilder`, `REBUILD_EVERY_S`; one build at a time): `resting_places` (moved here unchanged) is walked
   and every file directly in each resting place is written to
   `<nas_root>/Processing/.collage_index.json` -- `{format, built_at, built_at_epoch, built_by,
   seconds_to_build, entries: {lower-case name: [{path: relative to nas_root with forward slashes,
@@ -7215,9 +6621,7 @@ it for every machine. Rule: a graphics-card or recording PC never walks the shar
   counts it, red from `recording_outbox_warn_after_failures` passes. WHY: those are the degraded-
   share conditions; sending then could copy an already-filed collage back into the intake.
   `summary_line` adds "the server's collage index is missing/unreadable" when it is.
-  Checked on the live share 2026-11-18: the index answers exactly as the old walk did for one
-  recording PC's 217 named recordings (173 found, the same 44 not found).
-* **Why not the coordination database alone:** `pipeline_collages` has a row only once a machine has
+  * **Why not the coordination database alone:** `pipeline_collages` has a row only once a machine has
   claimed a collage for cutting, and holds no path and no hash; where a filed collage went is kept
   only in the filing machine's local database. It can say "known", not "here, with this content".
 * **Unchanged:** a local original is deleted only after the copy on the share is verified by
@@ -7228,9 +6632,7 @@ Tests: `tests/test_recording_outbox.py`. `test_a_pass_never_lists_a_folder_on_th
 and `test_a_preview_never_lists_a_folder_on_the_shared_drive` patch `os.walk`, `os.scandir`,
 `os.listdir`, `glob.glob`/`iglob` and `Path.iterdir`/`glob`/`rglob` and count every call on the fake
 share; the index, the pointer-not-proof rules, the wait and held rules, the missing-index send and
-the server-only build and the send-only-on-an-answer rule each have their own test. Run
-against ac01d37's `recording_outbox.py` (before the constructor took `claim_lookup`), the two
-no-listing tests failed on the walk itself, and so did the index, gone-path and wait tests.
+the server-only build and the send-only-on-an-answer rule each have their own test. The two no-listing tests fail if the sender walks the share.
 
 ## a shared-drive outage is a pause; the watcher waits and resumes on its own
 
@@ -7240,15 +6642,13 @@ own. Nobody needs to stop, restart or remap anything. `mousereach-watch-status` 
 at all, and the node's log says it once when the drive goes, once an hour while it stays away, and
 once when it is back. A stop flag (`watcher_stop.flag`) still works during the outage.
 
-What used to happen when the shared drive went away for a while: every graphics-card node's watcher
-sat for hours inside shared-drive calls with no time limit (the scan, the work-order file, the
-version declaration, staging, the shared record) and never came round to read its stop flag; one
-node read the version declaration as "not there" and logged "No DLC shuffle specified ... DLC is
+Without these rules, when the shared drive goes away for a while, every graphics-card node's watcher would sit for hours inside shared-drive calls with no time limit (the scan, the work-order file, the
+version declaration, staging, the shared record) and never come round to read its stop flag; one node would read the version declaration as "not there" and log "No DLC shuffle specified ... DLC is
 stopped on this node", treating a passing outage as a setting to fix; and the processing machine's
-watcher, restarted during the outage, crashed at startup (`WinError 64` out of the first look at the
-drive) and stayed down after the drive came back.
+watcher, restarted during the outage, would crash at startup (`WinError 64` out of the first look at the
+drive) and stay down after the drive came back.
 
-What holds now (`src/mousereach/shared_drive.py`, used by the watcher):
+What holds (`src/mousereach/shared_drive.py`, used by the watcher):
 
 * **One question at the top of every cycle.** "Is the pipeline folder a folder?" -- one `os.stat`,
   asked in a worker thread with a 20 s limit (`ShareMonitor`, `probe`), so the question itself
@@ -7328,17 +6728,12 @@ When a named recording is found on the shared drive with the same size and SHA-2
 both copies were found to have (before, it held only the place and the size, so the record of a
 delete could not show what it was based on). `sent` lines already carried it.
 
-Tests: `test_already_on_share_delete_logs_the_compared_sha256` (fails on aaeaca4: no `sha256` key).
+Tests: `test_already_on_share_delete_logs_the_compared_sha256`.
 
 ## the recording outbox sends in slices, so it never starves posing
 
-WHY. Found 2026-11-18 on a recording PC with about 700 recordings to clear: the send step runs at
-the start of EVERY watcher cycle (`_maybe_send_recordings`, before the scan and the work item), and
-each pass ran up to its 30-minute cap (`recording_outbox_pass_minutes`). The cycle then did one work
-item, so the PC's graphics card posed about one video per 30-45 minutes instead of about four an
-hour (no pose at all for over an hour that evening). Worse, the deadline was checked only right
-before a copy, AFTER the per-file recording check: once it passed, ffmpeg still ran on every
-remaining file, which added about 14 minutes (one pass took 2640 s).
+WHY. The send step runs at
+the start of EVERY watcher cycle (`_maybe_send_recordings`, before the scan and the work item), and a pass that ran up to its 30-minute cap (`recording_outbox_pass_minutes`) would leave the cycle one work item, so the PC's graphics card would pose about one video per 30-45 minutes instead of about four an hour. A deadline checked only right before a copy, AFTER the per-file recording check, would also let ffmpeg run on every remaining file once it passed.
 
 WHAT IS BUILT (`watcher/recording_outbox.py`, `RecordingSender.run_pass(preview, budget_seconds)`).
 - **A slice per cycle.** The watcher calls `run_pass(budget_seconds=settings.cycle_seconds)`; new
@@ -7366,10 +6761,9 @@ WHAT IS BUILT (`watcher/recording_outbox.py`, `RecordingSender.run_pass(preview,
   slice and the rest never reached.
 - **Unchanged:** a local delete only after size + SHA-256 of the copy read back from (or already on)
   the share match; never an overwrite; nothing sent inside `recording_days`/`recording_hours`; the
-  index-and-named-paths lookup with no listing of the share; no outbox work in a turn where the
-  shared drive does not answer (aaeaca4).
+  index-and-named-paths lookup with no listing of the share; no outbox work in a turn where theshared drive does not answer.
 
-Tests (`tests/test_recording_outbox.py`; all fail on 263e17b's sender):
+Tests (`tests/test_recording_outbox.py`):
 `test_a_watcher_slice_stops_at_its_budget_with_a_large_backlog` (12 files, 50 s of recording
 check each, 120 s: 3 begun and sent, the clock does not run past one file's overrun),
 `test_no_recording_check_and_no_hashing_after_the_deadline`,
@@ -7381,9 +6775,9 @@ sends before a work item), `test_cycle_budget_config_key_and_default`; plus
 
 ---
 
-## Update 2026-11-19 (filed is final)
+## filed is final
 
-**The rule (lab decision 2026-11-19).** Once a video is filed, what the four algorithms decided
+**The rule.** Once a video is filed, what the four algorithms decided
 for it -- its cuts, its reaches, its pellet outcomes and which reach caused each one -- is its
 final answer for good. A newer segmenter, reach detector, outcome detector, reach assignment or
 pose model applies only to videos that are not filed yet. Only the kinematics (pure measurement on
@@ -7409,14 +6803,11 @@ What this changes, place by place:
   (`narrowed_to_kinematics` in the summary). A row a PERSON marked (dashboard Re-run,
   `mousereach-repose-videos`, which always carry a `mark_reason`) is never changed.
 - **A filed video's kinematics-only re-run** (orchestrator `_filed_kinematics_only_run`,
-  `_filed_kinematics_refusal`): no quality triage, no hand-score comparison and NO review gate (the
-  gate used to run and could hold a filed video for a segment nobody had answered). It recomputes
+  `_filed_kinematics_refusal`): no quality triage, no hand-score comparison and NO review gate (a gate that ran could hold a filed video for a segment nobody had answered). It recomputes
   no algorithm: if a filed output it measures (cuts, reaches, Pillar outcomes) is missing, or the
   pose is unusable, the re-run is not done -- the row goes back to 'archived' with the reason in its
   error message and on the machine's failed re-runs attention list
-  (`_restore_filed_after_failed_rerun`), and the filed results stand. Before: the missing output was
-  recomputed (re-running an algorithm on a filed video), and an unusable old-model pose was sent for
-  a new pose. If the extractor refuses (the filed decisions would change, a person's re-cut voided
+  (`_restore_filed_after_failed_rerun`), and the filed results stand. If the extractor refuses (the filed decisions would change, a person's re-cut voided
   an answer, an answer could not be applied), the same: given up, filed results stand -- never held,
   never routed to triage, never retried into the same refusal.
 - **The re-pose round trip** (`watcher/repose.py`, `adopt_staged_reposes`): a declared-model pose
@@ -7446,25 +6837,21 @@ filed folder as "already satisfied" -- left there, it would re-run on the very p
 distrusts. Keeping the filed results in place for it needs a way to mark a pose as distrusted;
 until then this command is the one person-prescribed path that takes the filed copy away.
 
-Tests: `tests/test_filed_is_final.py` (20 of its 21 fail on master a534f3c); tests describing the
-old behaviour were changed to the rule: test_filed_rerun_skips_checks, test_version_scan_start_stage,
+Tests: `tests/test_filed_is_final.py`; tests were changed to the rule: test_filed_rerun_skips_checks, test_version_scan_start_stage,
 test_easy_flat_session_only, test_repose, test_reprocessor_archive_skip, test_version_scan_cache_on_disk,
 test_watcher_integration (TestDLCStaleScope), test_recut_voided_pellets_are_asked_again,
 test_route_cli_db, test_route_recheck_answered, test_unpicked_outcome_is_not_an_answer,
 test_unfinished_routes_are_finished, test_kinematics_only_rerun_keeps_filed_decisions,
 test_bring_current_keeps_the_watchers_rules.
 
-## Update 2026-11-19 (session flags are only recorded)
+## session flags are only recorded
 
-**Lab decision 2026-11-19 (D5-10; closes D4-8 and D7-14):** "flags are there so we could in theory
-find them. I don't know that we need to necessarily have a predestined role for them." A session
+**Session flags are only recorded.** A session
 flag holds nothing and changes nothing; it is only recorded where it can be found later.
 
 - **The review window's Flag Session** (`review/causal_review_widget._flag_session`, button "Flag
   Session (note)") records who, when and why (the notes box) in the review root's
-  `flagged_sessions.json`, saves the review, and stops there. Until now it also moved the video on
-  screen to the re-segmentation queue (and only that video, though its name promised the whole
-  session). New records no longer carry `requires_human_review` -- nothing requires anything.
+  `flagged_sessions.json`, saves the review, and stops there. It does not move the video on screen to the re-segmentation queue. Records do not carry `requires_human_review` -- nothing requires anything.
 - **The features file carries it.** Every features file the kinematics step writes (Pillar and
   Easy/Flat, `orchestrator.with_session_flag`) has a `session_flag` key: the flag record of its
   mouse+day session (`session_key`: `<date>_<animal>`), or null. Read fresh from
@@ -7477,18 +6864,15 @@ flag holds nothing and changes nothing; it is only recorded where it can be foun
 - **For a database integrator:** export `session_flag.flagged_by`, `.flagged_at` and `.reason` as a
   marker column per row; nothing should be left out or treated differently because of it.
 
-Tests: `tests/test_session_flag_is_only_a_note.py` (4 of 5 fail on master a534f3c; the fifth is the
-"flag already carried, nothing owed" control). Tests of the old move were changed to "moves nothing":
+Tests: `tests/test_session_flag_is_only_a_note.py` (includes a "flag already carried, nothing owed" control). Tests of the old move were changed to "moves nothing":
 test_browse_after_bundle, test_escalate_records_deep_review, test_move_buttons_stop_when_save_fails,
 test_queue_moves_take_the_bundle_claim, test_queue_move_reports_unrecorded_state,
 test_route_onto_itself_moves_nothing; test_flag_session_voids_old_deep_review_clear.py is removed
 (the button no longer touches the clear marker).
 
-## Update 2026-11-19 (a finding no person can fix starts the video over from a new cut)
+## a finding no person can fix starts the video over from a new cut
 
-**Lab decisions 2026-11-19 (D2-10, D2-7, D2-11, with both corrections).** Two kinds of critical
-quality finding are not questions anyone can answer in a review window, so they no longer hold a
-video for a person:
+**A finding no person can fix starts the video over from a new cut.** Two kinds of critical quality finding are not questions anyone can answer in a review window, so they do not hold a video for a person:
 
 1. **the pose cannot be used** -- it will not load, or points every tray needs (SABL/SABR among
    them) are missing (`pipeline/pose_check.py` before segmentation, or the quality triage's
@@ -7535,18 +6919,14 @@ and an old-model one goes through the re-pose round trip as before.
 `mousereach-watch-status`; a stopped one as `failed` with the red-panel line saying which of the
 three it was and what to do.
 
-**Not built yet:** videos already held in a review queue for one of these two findings before this
-change are not started over by themselves -- they reach the watcher again only when a person clears
-them. The dry run of 2026-11-19 (work record) lists them.
+Videos already held in a review queue for one of these two findings are not started over by themselves -- they reach the watcher again only when a person clears them.
 
-Tests: `tests/test_restart_from_recrop.py` (the module does not exist on master a534f3c);
+Tests: `tests/test_restart_from_recrop.py` (a new module);
 `tests/test_unusable_pose_is_never_sent_to_review.py` (the two not-filed cases now start over).
 
-## Update 2026-11-19 (triage release reads ground truth inside the bundle)
+## triage release reads ground truth inside the bundle
 
-WHY: owner decision MRR-03d (2026-11-19): "an answer a human gives is always true so long as it was
-given about the correct pellet/segment" -- "respect what humans said; their time is valuable and their
-answers are not wrong". The release check (`triage_status.triage_status`) read ground truth only
+WHY: an answer a person gives about the correct pellet or segment is taken as true. The release check (`triage_status.triage_status`) read ground truth only
 through the corpus index, which covers the machine's processing folder, not the shared review
 queues. A triage bundle carrying the ground-truth tool's `<video>_unified_ground_truth.json` that
 answered every flagged pellet therefore counted as open, while the review window hid it because it
@@ -7574,17 +6954,15 @@ WHAT IS BUILT:
 
 DATA: on deploy the first return scans release every triage bundle whose in-bundle ground truth
 answers all its flagged pellets (subject to the scan's usual per-scan limit and its hand-score
-re-check). Measured read-only before the change: see the work record of 2026-11-19.
+re-check).
 
 Tests: `tests/test_triage_release_reads_ground_truth_in_bundle.py` (5 of 6 fail on the commit
 before); `tests/test_triage_bundle_held_by_its_own_ground_truth_is_listed.py` rewritten (the
 bundle is released, an old listing is taken off).
 
-## Update 2026-11-19 (re-cut: every boundary explicitly accepted or moved)
+## re-cut: every boundary explicitly accepted or moved
 
-WHY: owner decision MRR-08d (2026-11-19): "Force a human to at least look at every single boundary
-... can't save and can't send the video out of resegmentation until they have explicitly accepted
-that a boundary is already correctly placed or have corrected it." A fixer save stamped every cut as
+WHY: a person must at least look at every single boundary: the fixer cannot save and cannot send the video out of re-segmentation until each boundary has been explicitly accepted as already correctly placed or corrected. A fixer save stamped every cut as
 a person's (`boundary_source: "human"`) whether or not it was walked, and its walk record
 (`guided_walk`) was keyed by the boundary's position, which shifts on a move, removal or addition --
 nothing read it, and a later answer could overwrite an earlier one.
@@ -7607,22 +6985,19 @@ WHAT IS BUILT:
   unreviewed boundaries (it is also the by-hand standalone screen), but such a save no longer
   releases a video from the re-segmentation queue.
 
-DATA: past fixer saves with boundaries left unwalked were measured read-only on 2026-11-19 (work
-record). Those still in the re-segmentation queue stay there and are listed again in the fixer for
-their remaining boundaries; the others are sent back to the queue by a person's command
+DATA: past fixer saves with boundaries left unwalked: those still in the re-segmentation queue stay there and are listed again in the fixer for
+their remaining boundaries; the others can be sent back to the queue by a person's command
 (`mousereach-route-to-queue --queue deep_review --reason "segmentation: boundaries not all
-explicitly accepted/corrected" <video>`), which the coordinator runs after deploy.
+explicitly accepted/corrected" <video>`).
 
 Tests: `tests/test_recut_every_boundary_is_a_persons_call.py` (new); fixtures in six existing test
 files now write `boundary_calls` for a complete hand save; `test_boundary_review_saves_a_persons_cuts`
 gains the unreviewed-boundary case.
 
-## Update 2026-11-19 (review windows claim the video they show)
+## review windows claim the video they show
 
-WHY: MRR-02d -- two review windows could be handed the same video (each picks by priority and a
-random draw, with nothing saying another window had it open): work done twice, and on a pellet both
-answered the later save won. The lab owner approved (2026-11-19) a claims folder
-`REVIEW_ROOT/.review_claims` with one marker per open review window.
+WHY: two review windows could otherwise be handed the same video (each picks by priority and a
+random draw, with nothing saying another window had it open): work done twice, and on a pellet both answered the later save would win. A claims folder `REVIEW_ROOT/.review_claims` holds one marker per open review window.
 
 WHAT IS BUILT: `review/review_claims.py` -- `claim`, `release`, `touch`, `holder`, `release_all`
 (at exit). Marker `<REVIEW_ROOT>/.review_claims/<video>.review`, created by
@@ -7637,13 +7012,12 @@ return scan does not read it.
 
 Tests: `tests/test_review_window_claims_its_video.py`.
 
-## Update 2026-11-19 (triage answers record every reach and the causal reach's checked frames)
+## triage answers record every reach and the causal reach's checked frames
 
-WHY: owner rules 2026-11-19 -- "the triage tool must EXPLICITLY record every other reach of the
+WHY: the triage tool must EXPLICITLY record every other reach of the
 segment as a miss when a causal reach is named; 'untouched' / 'no reach interacted' => every reach of
-the segment recorded as miss"; "a causal answer includes the person checking that causal reach's
-start/end (always, even if not asked) -> human-declared reach bounds. Untouched segments: no reach
-bounds judged." And: what a person said is the result every later step uses.
+the segment recorded as miss; a causal answer includes the person checking that causal reach's
+start/end (always, even if not asked) -> human-declared reach bounds. Untouched segments: no reach bounds judged. And: what a person said is the result every later step uses.
 
 WHAT IS BUILT (review side only; making the results step, kinematics and exports read these fields is
 separate work):
@@ -7657,7 +7031,7 @@ separate work):
 - Review window: the reach picker always shows "Causal reach: its first and last frames (correct
   them only if they are wrong)" (filled from the picked/typed/pinned reach); `_collect_answers_unchecked`
   passes the segment's reaches and the checked frames; `_restore_answers` puts saved frames back.
-  Since 2026-11-20 (be69199) there is no Checked tick: naming the reach confirms its frames (the
+  There is no Checked tick: naming the reach confirms its frames (the
   box stays in the code, hidden, and no longer gates the answer).
 
 Old answers are unchanged: they keep no `reach_calls` / `causal_reach_bounds`, and are still accepted
@@ -7666,9 +7040,9 @@ as stored; a person changing one must check the frames.
 Tests: `tests/test_triage_answer_records_every_reach.py` (8 of 8 fail on the commit before); fixtures
 in four existing test files add the checked frames to complete causal answers.
 
-## Update 2026-11-19 (human answers feed every later step)
+## human answers feed every later step
 
-Owner decision: what a person said is the correct result, and every step after it -- reach detection,
+What a person said is the correct result, and every step after it -- reach detection,
 outcomes, reach assignment, kinematics and the database -- uses it; nothing downstream works out again
 what a person decided. A filed video is final: none of this changes a filed video's results.
 
@@ -7680,24 +7054,22 @@ video's cuts through the segmentation fixer's own save (`review/hand_cuts.apply_
 and `ground_truth_determined_at`. The replaced segments file and every output of the old cuts are archived
 to `_archived/segmentation_before_human_fix_<time>/` and removed, so reach detection, outcomes, reach
 assignment and kinematics run again on the person's cuts; answers given on pellets whose frames moved are
-dropped (the re-cut rule; since 2026-11-21 no longer asked again). Not applied: a file with any undetermined cut (the tool seeds its list with
+dropped (the re-cut rule; no longer asked again). Not applied: a file with any undetermined cut (the tool seeds its list with
 the algorithm's cuts); cuts identical to the segments file's; a fixer save newer than the ground truth's
 newest determination; a folder in the filed tree; a video locked for a publication; Easy/Flat trays. Also
 applied when the segmenter fails on the video. A video returning from a review queue starts at
 segmentation when its ground truth has cuts its segments file does not hold
 (`watcher/resume_point.current_start`).
 
-**The contact frame is never attached to a reach it is not in (owner decision D5-3).** "Contact frame
-doesn't matter. It's an artifact": nothing may depend on it for a reach a person picked. The features
+**The contact frame is never attached to a reach it is not in.** The contact frame is an artifact: nothing may depend on it for a reach a person picked. The features
 step puts the pellet's `interaction_frame` on the causal reach only when the frame lies inside that
 reach; otherwise the reach's `interaction_frame` and `distance_to_interaction` are null and its
-`*_at_contact_*` measures are empty. Before, the algorithm's contact frame stayed on the pellet when a
-person picked a different reach, and was exported with that reach although it lay outside it. A reach
+`*_at_contact_*` measures are empty. The algorithm's contact frame would otherwise stay on the pellet when a person picked a different reach, and be exported with that reach although it lies outside it. A reach
 the algorithm picked always holds its frame (reach assignment picks the reach containing it), so
 nothing changes there. No extractor version change: filed videos keep their files until a kinematics
 re-run happens for another reason.
 
-**Triage answers are the results (owner rules 2026-11-19).** The review records the triage window
+**Triage answers are the results.** The review records the triage window
 saves are read by the truth layering (`review/truth_resolver.py`) and the features step:
 
 * `human.causal_reach` = {reach_id, start, end} names the causal reach (unchanged).
@@ -7720,14 +7092,11 @@ stay the algorithms' calls: they are what the evaluation of each algorithm compa
 with. The person's answer is applied where the result is made (the features file), which is what the
 exports and the database read.
 
-## Update 2026-11-19 (a reach before the first cut belongs to no pellet)
+## a reach before the first cut belongs to no pellet
 
-Owner decision D2-3: a reach that starts before the first cut belongs to NO pellet. Before, the reach
-step attached it to the nearest segment (always segment 1) and flagged that segment
-`reach_start_outside_all_segments` -- a flag nothing read -- so the reach was counted, measured,
-assigned and exported as one of pellet 1's.
+A reach that starts before the first cut belongs to NO pellet: attaching it to the nearest segment (always segment 1) would count, measure, assign and export it as one of pellet 1's.
 
-Now (`reach/core/before_first_cut.py`, the one rule: a reach whose START frame is before the first
+In `reach/core/before_first_cut.py` (the one rule: a reach whose START frame is before the first
 segment's first frame):
 
 * Reach detection (`reach/core/span_to_reaches.build_video_reaches`) writes such a reach into the
@@ -7749,16 +7118,14 @@ segment's first frame):
 * A kinematics-only re-run of a filed video does not count the reach leaving segment 1 as a change of
   a filed decision (`kinematics/core/filed_decisions.decisions_of_features`).
 * One exception, because what a person said is correct: a reach a PERSON credited as pellet 1's causal
-  reach stays pellet 1's (`before_first_cut.person_credited`). Read-only check of the filed tree on
-  2026-11-19: a few filed videos have a reviewer's causal pick that starts one to a few frames before
-  the first cut. In the kinematics step the person's pick, matched by its frames, is added back to
+  reach stays pellet 1's (`before_first_cut.person_credited`). A reviewer's causal pick can start one to a few frames before the first cut. In the kinematics step the person's pick, matched by its frames, is added back to
   pellet 1 as the person's reach, so the answer is kept there as well.
 
 No version number changes: no algorithm's call changes (outcomes get the same input; the assignment's
 only difference is that such a reach is `unassigned` instead of a `miss`/`triaged` of pellet 1).
 
 
-## Update 2026-11-19 (single-machine role)
+## single-machine role
 
 WHAT WAS WRONG. A lab with one PC could not run the whole pipeline. A machine ran exactly one of the two watcher programs (watcher.mode "dlc_pc": cut and pose, then hand the pose on; "processing_server": take posed videos in, analyse, gate, take reviewed videos back, file). A "dlc_pc" with also_process on analyses and files what it posed, but through its own older copy of the analysis, which has no review return: every video the gate sent to triage or deep review stayed there for good, whatever a person answered. And a fresh install became a pose-only "dlc_pc" without being asked: the role came only from a lab profile.
 
@@ -7773,12 +7140,12 @@ WHAT HOLDS NOW.
 - Setup asks. `mousereach-setup` begins with "Is this the ONLY machine that will run MouseReach in your lab?" (default yes on a new machine with no role from its settings or a lab profile; default no on a machine with a multi-machine role). Yes writes mode standalone, also_process off, the watcher on and a named watcher.db_path, and builds the pipeline folder's layout and pipeline_versions.json (which the watcher refuses to start without) without a separate command. No asks "g" (graphics-card PC) or "p" (processing machine); a processing machine without a db_path gets <processing folder>/watcher.db. The pipeline folder and the processing root must be different folders (both hold a folder named Processing); setup refuses the same folder for both. The Setup tab has the same choice ("What this machine does") and a field for the DeepLabCut model, and writes the same settings (wizard.role_settings, wizard.make_pipeline_folder).
 - The lab-profile template (src/mousereach/setup/lab_profiles.json.example) has a "Single machine" profile.
 - sqlalchemy is a core dependency (pyproject.toml). It was only in the [sync] extra, and a watcher installed with a plain `pip install -e .` could not reach its coordination database and cut no recording.
-- Requirement unchanged: the single machine needs an NVIDIA graphics card for posing (CPU posing was removed on 2026-11-18).
+- Requirement unchanged: the single machine needs an NVIDIA graphics card for posing (CPU posing is not supported).
 
 
-## Update 2026-11-19 (run chosen videos by hand; Run All Steps retired)
+## run chosen videos by hand; Run All Steps retired
 
-WHAT CHANGED. The owner's requirement of 2026-11-19 (MRR-15a): a person must be able to run everything by hand, easily, from the window and the command line, with the same steps as the watcher.
+A person must be able to run everything by hand, easily, from the window and the command line, with the same steps as the watcher.
 
 - The Run Pipeline tab has two buttons. "Run the pipeline now" runs everything waiting (one pass of this machine's watcher, as before; the same as `mousereach-watch --once`). "Run chosen videos..." asks for video files and runs each one now through the watcher's own handlers for that video (watcher/run_one.py: run_chosen_videos, the code the Run All Steps tab ran for one video); `mousereach-run-videos <file> ...` is the same from a terminal. Each chosen video ends filed, held in a review queue (with why), not run (with why), or failed (with the error); the tab lists one line per video.
 - What is not run, and why: a filed video (filed results are final; a person reopens one only with an explicit command such as the dashboard's "Re-run video"), a video held in a review queue (it goes on by itself once its review is finished), a crystallized video, a video the watcher does not know, and anything while a watcher already runs on this machine.
@@ -7787,58 +7154,43 @@ WHAT CHANGED. The owner's requirement of 2026-11-19 (MRR-15a): a person must be 
 - After a release, the person is told how the video gets back: every release message (Clear in the review tool, "Release finished" on the Review Queues tab, `mousereach-review-release --clear`) now ends "It goes back into the pipeline at the next pass: by itself within about 2 minutes when the automatic watcher runs; otherwise press 'Run the pipeline now' ... (or run mousereach-watch --once)" (review/after_release.py). WHY: they said only "the watcher picks it up", which on a machine where nobody runs the watcher was never true.
 
 
-## Update 2026-11-19 (one-PC walkthrough)
+## one-PC walkthrough
 
-docs/STANDALONE_LAB.md, linked from the top of README, walks a lab with one PC from install to spreadsheet without reading code: install; mousereach-setup answering "only machine" (single-machine role, pipeline folder and pipeline_versions.json built, watcher database named); the naming rule with good and bad examples and where a misnamed file goes (Processing/Quarantine); where to drop videos; Run (button or `mousereach-watch --once`; chosen videos with "Run chosen videos..." or `mousereach-run-videos`); the review loop (review, then Run again, because without the automatic watcher nothing takes a reviewed video back until a pass runs); Export results (tab or `mousereach-results`); what the main columns mean; and what each common failure means. It states the hardware a single machine needs: an NVIDIA graphics card (posing on the processor was removed 2026-11-18), ffmpeg, and a trained DeepLabCut model with MouseReach's body parts (none is shipped).
+docs/STANDALONE_LAB.md, linked from the top of README, walks a lab with one PC from install to spreadsheet without reading code: install; mousereach-setup answering "only machine" (single-machine role, pipeline folder and pipeline_versions.json built, watcher database named); the naming rule with good and bad examples and where a misnamed file goes (Processing/Quarantine); where to drop videos; Run (button or `mousereach-watch --once`; chosen videos with "Run chosen videos..." or `mousereach-run-videos`); the review loop (review, then Run again, because without the automatic watcher nothing takes a reviewed video back until a pass runs); Export results (tab or `mousereach-results`); what the main columns mean; and what each common failure means. It states the hardware a single machine needs: an NVIDIA graphics card (posing on the processor is not supported), ffmpeg, and a trained DeepLabCut model with MouseReach's body parts (none is shipped).
 
 
-## the label-mismatch hold is retired
+## a video is filed under the name a person gave it
 
-Owner rule, 2026-11-20: "Just trust what is written down." A video is always
-processed and filed under the name a person gave it.
+A video is always processed and filed under the name a person gave it; the pipeline does not look
+for another tray that fits its results better. `hand_scores.check()` compares a video with its OWN
+tray's hand-score row only and never returns `label_mismatch`. So:
 
-**What changed.** `hand_scores.check()` compares a video with its OWN tray's
-hand-score row only. It no longer looks for another tray of the same animal and
-day that fits the results better, and never returns `label_mismatch`. So:
+- The watcher holds no video as a label mismatch. A video that agrees with its own row goes on to
+  filing; a pellet that disagrees is flagged and goes to triage as an ordinary bench disagreement.
+- A triage bundle is not moved out of the queue as a label mismatch (`review_return._bench_act`),
+  and `mousereach-bring-current` does not refuse a video as a label mismatch.
+- A hold written to an attention list by an older version is restored after a restart as a plain
+  hold, checked again once, and then goes on as named.
+- `mousereach-label-mismatch`: `--list` and `--decisions` still read what was recorded;
+  `--sheet-error`, `--name-wrong` and `--labels-right` are refused (exit 1, nothing recorded). The
+  decisions file `<NAS>/review_records/label_decisions.jsonl` is kept.
+- A `sheet_error` decision already on record stands: that video is filed with its disagreement
+  recorded (`"hand_scores": {"verdict": "sheet_error", "decision": {...}}`), never sent to triage
+  over it. Recorded `name_wrong` and `labels_right` decisions do not change anything.
+- The status screens (`mousereach-watch-status`, the census's `held_for_label_mismatch`) and a
+  database tool reading the attention lists find no label-mismatch item; no report lists suspected
+  tray swaps.
 
-- The watcher holds no video as a label mismatch (`_hold_label_mismatch` and its
-  helpers are removed from `watcher/orchestrator.py`). A video that would have
-  been held goes on like any other: if it agrees with its own row it goes on to
-  filing; a pellet that disagrees is flagged and goes to triage as an ordinary
-  bench disagreement.
-- A triage bundle is no longer moved out of the queue as a label mismatch
-  (`review_return._bench_act`).
-- `mousereach-bring-current` no longer refuses a video as a label mismatch.
-- A hold written to an attention list before the retirement is restored after a
-  restart as a plain hold, checked again once, and then goes on as named.
-- `mousereach-label-mismatch`: `--list` and `--decisions` still read what was
-  recorded; `--sheet-error`, `--name-wrong` and `--labels-right` are refused
-  (exit 1, nothing recorded). The decisions file
-  `<NAS>/review_records/label_decisions.jsonl` is kept for good.
-- A `sheet_error` decision already on record still stands: that video is filed
-  with its disagreement recorded (`"hand_scores": {"verdict": "sheet_error",
-  "decision": {...}}`), never sent to triage over it. Recorded `name_wrong` and
-  `labels_right` decisions no longer change anything.
-- The status screens (`mousereach-watch-status`, the census's
-  `held_for_label_mismatch`) and a database tool reading the attention lists
-  simply find no label-mismatch item any more; no report lists suspected tray
-  swaps.
+**Why.** The name a person gave is what the pipeline uses, so the question whether the name or the
+sheet is wrong is not asked.
 
-**Why.** The hold asked a person, for every such video, whether the name or the
-sheet was wrong. The owner ruled that the name a person gave is what the
-pipeline uses, so the question is not asked.
-
-**Operator note.** Videos held when the change was installed were released with
-`mousereach-label-mismatch --sheet-error <video> --by <name>` (filed as named,
-the disagreement recorded), before the decision commands were retired.
-
-Tests: `tests/test_label_mismatch_hold.py` (rewritten: no hold, a recorded
-sheet error still files, the CLI refuses decisions).
+Tests: `tests/test_label_mismatch_hold.py` (no hold, a recorded sheet error still files, the CLI
+refuses decisions).
 
 
 ## a person's answer is always applied
 
-**The rule (owner, 2026-11-21).** An answer a person gives -- ground truth, a
+**The rule.** An answer a person gives -- ground truth, a
 deep-review (re-segmentation) answer, a triage answer -- is ALWAYS applied,
 automatically, with no hold, no queue and no question. When answers about the
 same pellet disagree, the highest wins: ground truth > deep review > triage. A
@@ -7875,10 +7227,7 @@ ALGORITHM re-runs only -- never from a person's answer.
    (`feature_extraction completed: ...; differs from the filed results: pellet 3:
    outcome displaced_sa -> untouched (a person's answer: ground_truth); pellet 7:
    outcome kept as filed (retrieved; worked out now: triaged, no person's answer
-   decides it)`). Until 2026-11-21 such a run was HELD whenever a difference was
-   not explained by an answer the scan counted as "owed", and the row went back
-   to 'archived' on a failed re-runs list for a person; the answer was never
-   applied. (`kinematics/core/filed_decisions.settle_against_filed`.)
+   decides it)`). (`kinematics/core/filed_decisions.settle_against_filed`.)
 
 3. **The version scan finds every filed video that lacks an answer.** As before,
    it re-runs a filed video's kinematics when a review or ground truth was saved
@@ -7910,34 +7259,20 @@ review that says a segment is really another pellet (a mislabel) still sends the
 video to the re-segmentation queue, because that answer asks for new cuts, which
 only a person can set.
 
-**Why (the 66 filed videos, 2026-11-20).** The 2.6.0 kinematics
-recalculation found 66 filed videos whose features lacked answers people had
-given. Two paths let them be filed that way:
+**Why.** Two paths could let a video be filed with features that lack answers people had given:
 - *Ground truth beside the filed results that the run never found.* The
   extractor looked for ground truth in the folder it ran in and in an index of
-  the processing tree, never beside the filed video. These videos were re-run in
-  early November; their ground truth sat in Analyzed, so the run applied none,
-  and the manifest predated the ground-truth record, so the scan's time rule
-  called the older file applied (25 of the 66). Closed: the extractor also looks
-  in the video's filed folder, and a missing record counts as not applied.
+  the processing tree, never beside the filed video. A re-run whose ground truth sat in Analyzed applied none, and when the manifest predated the ground-truth record the scan's time rule called the older file applied. The extractor therefore also looks in the video's filed folder, and a missing record counts as not applied.
 - *Answers the filed results carry on the wrong pellet, or not at all, while the
-  manifest says the review was applied.* An older rule matched review answers by
-  pellet NUMBER; after re-cuts or renumbering, an answer landed on the
-  neighbouring pellet (a causal reach from the next pellet's frames, an outcome
-  copied from a record about other frames). The stamp says only that a run SAW
-  the review, so nothing ever looked again (the other 41). Closed: the content
-  check reads the features file itself, before filing and in the scan.
+  manifest says the review was applied.* Matching review answers by pellet NUMBER puts, after re-cuts or renumbering, an answer on the neighbouring pellet (a causal reach from the next pellet's frames, an outcome
+  copied from a record about other frames). The stamp says only that a run SAW the review, so nothing would look again; the content check reads the features file itself, before filing and in the scan.
 Tests that reproduce both: `tests/test_human_answers_always_applied.py`
 (`test_a_run_finds_ground_truth_filed_beside_the_video`,
-`test_the_version_scan_reruns_a_filed_video_whose_features_lack_an_answer`; both
-fail on the code before this change), and in
+`test_the_version_scan_reruns_a_filed_video_whose_features_lack_an_answer`), and in
 `tests/test_version_scan_start_stage.py`
 `test_ground_truth_older_than_a_manifest_without_a_stamp_is_owed`.
 
-**What a person may notice.** Filed videos with an answer their results lacked
-are re-run for kinematics over the following hours (a one-off wave; the content
-check paces it). Their numbers in the database change at the next nightly
-import, only where a person's answer says so. Recordings whose videos have
+**What a person may notice.** Filed videos with an answer their results lack are re-run for kinematics (the content check paces it). Their numbers in the database change at the next import, only where a person's answer says so. Recordings whose videos have
 ground truth but no ground-truth record in the manifest are not counted complete
 (and so not retired from the intake) until that re-run has stamped it.
 
@@ -7951,60 +7286,17 @@ looked for beside the filed video), `watcher/orchestrator.py`
 `tests/test_human_answers_always_applied.py`,
 `tests/test_kinematics_only_rerun_keeps_filed_decisions.py`,
 `tests/test_version_scan_start_stage.py`.
-## a person's answer is always applied to a filed video
-
-**Superseded the same day** by "a person's answer is always applied" (above): a change only an algorithm would make no longer stops the re-run either -- the filed decision is simply kept -- so no kinematics-only re-run of a filed video is ever given up over a difference. Kept as the record of the intermediate step.
-
-**What changed.** When the watcher recalculates the kinematics of a FILED video
-(a kinematics-only re-run, e.g. after a new kinematics extractor version), it
-now applies every answer a person gave -- the triage or deep-review answers and
-the ground truth -- even when the filed results were made without them. Only a
-change that no person's answer explains still stops the re-run:
-
-- a change a person's answer makes (an outcome, a causal reach, a reach's
-  frames, a reach added or left out by ground truth) is written, and the
-  re-filed results carry it;
-- a change only an algorithm makes (outcome detection, reach assignment), or a
-  filed answer that can no longer be found, is NOT written: the re-run is given
-  up, the filed results stay exactly as they were, and the video is listed with
-  the reason (as before).
-
-Precedence between answers is unchanged: ground truth, then the deep-review
-answer, then the triage answer, then the algorithm. A ground-truth outcome
-marked "uncertain" is not an answer.
-
-**Why.** Owner rule, 2026-11-21: "a human's answer is ALWAYS applied, including
-to filed videos. 'Filed is final' only protects filed results from algorithm
-re-runs." Before this, a person's answer counted only when it was NEWER than
-the filed run (a review saved, or ground truth changed, after filing). Ground
-truth that the filed run had recorded as applied, but whose reach frames the
-filing run had not used (the rule that layers ground-truth reaches was improved
-later), therefore held the recalculation for good, and the person's answer never
-reached the filed results.
-
-**Where.** `watcher/orchestrator.py` `_filed_decisions_to_keep` (both kinds of
-answer are always passed to the extractor as owed); the check itself is
-`kinematics/core/filed_decisions.py` (`changes_not_owed`), unchanged.
-
-Tests: `tests/test_kinematics_only_rerun_keeps_filed_decisions.py`
-(`test_a_filed_kinematics_only_rerun_always_applies_a_persons_answer`,
-`test_the_watcher_applies_ground_truth_the_filed_manifest_already_records`;
-the watcher hold test now uses an algorithm change).
-
 ## an answer a re-cut voided is dropped, not asked again
 
-RULE (owner ruling 2026-11-21). After a person saves a re-segmentation, reach detection, outcomes
+RULE. After a person saves a re-segmentation, reach detection, outcomes
 and reach assignment run again on the person's cuts and their answers replace the earlier
 algorithm answers (unchanged). A person's earlier answer on a pellet whose frames did not move
-still carries over (unchanged; `causal_review_io.answer_survives_recut`). What changed: when a
-person's earlier answer is VOIDED because its pellet's frames changed in the re-cut (or nothing
-shows which cuts it was given on), it is no longer asked again automatically. It is simply
+still carries over (unchanged; `causal_review_io.answer_survives_recut`). When a person's earlier answer is VOIDED because its pellet's frames changed in the re-cut (or nothing shows which cuts it was given on), it is not asked again automatically. It is simply
 dropped: kept in the review file as a record, applied nowhere, and the pellet takes the re-run
 algorithms' call. The pellet goes to triage only if those algorithms flag it, by the same gate
 rule as any new video. The same holds for a segmenter re-cut.
 
-WHY. Under "void and asked again" (feb7c62, 2026-11-18) every moved pellet sent its video to
-triage with the pellet flagged `answered_before_recut`, whether or not the algorithms had any
+WHY. Were a voided answer asked again, every moved pellet would send its video to triage with the pellet flagged `answered_before_recut`, whether or not the algorithms had any
 doubt about it. The person who re-cut has already said that pellet is different footage; the old
 answer is about a question that no longer exists.
 
@@ -8048,15 +7340,15 @@ person made the cuts (`boundary_source: "human"`) or confirmed them (a `cuts_con
 - the old segmentation triage classifiers (`segmentation/core/triage.classify_segments` and
   `classify_segments_graduated`): a person's cuts are "good" / "auto_approved".
 
-WHY (owner, 2026-11-23). A recording with an irregular tray cadence has segments of uneven length
-that are nevertheless correct. Its hand-drawn cuts kept being questioned by checks written to catch
+WHY. A recording with an irregular tray cadence has segments of uneven length
+that are nevertheless correct. Its hand-drawn cuts would be questioned by checks written to catch
 the SEGMENTER's mistakes (a missed or extra tray advance). A person's word on the cuts is final;
 asking again wastes the reviewer's time and can never change the answer.
 
 NOT changed: the re-cut records (`cuts_set_at`, `replaced_cuts`) still read only
 `boundary_source: "human"`, because they read fields only the segment fixer writes. Nothing writes
 `cuts_confirmed` automatically: it is added to a segments file by hand (written to a temporary
-file and swapped in), when the owner confirms a video's cuts. Readers that do not know the key
+file and swapped in), when a person confirms a video's cuts. Readers that do not know the key
 ignore it.
 
 How to confirm a video's cuts: add the `cuts_confirmed` record to every copy of its segments file
