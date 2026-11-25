@@ -63,7 +63,7 @@ It is not true that everything then triages. Stages differ:
 - Stages 1, 3, 5, 6b, 8 and 98 never read the reach list at all. They behave identically.
 - Stage 4's search window normally starts after the last reach ends; with no reaches it starts at frame 0 of the segment (`stage_4_pellet_returns_to_pillar.py:93-96`), so it becomes *more* likely to commit `untouched`.
 - Stages 2 and 6 use reaches only to exclude during-reach frames from their averages; with none, every frame counts, making them slightly stricter.
-- Stage 7 — the single largest committer in the archive — defers immediately with `no_reaches_in_segment` (`stage_7_pellet_settled_off_pillar_late.py:437-442`). Stages 9-29 similarly lose their evidence.
+- Stage 7 (a broad rule that commits many segments) defers immediately with `no_reaches_in_segment` (`stage_7_pellet_settled_off_pillar_late.py:437-442`). Stages 9-29 similarly lose their evidence.
 
 So the effect is a systematic shift toward `untouched` and toward triage, not uniform triage.
 
@@ -71,7 +71,7 @@ So the effect is a systematic shift toward `untouched` and toward triage, not un
 
 `core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list. It is now the only reader: `mousereach-detect-outcomes` calls `process_batch`, which calls `process_single`, which calls it. It also reads the reaches file's top-level `reaches_before_first_cut` list (reaches that start before the first cut, which belong to no pellet and are no longer written inside segment 1): the cascade gets exactly the reach list it got before, and places reaches by its own windows, which start at the first cut, so no call changes.
 
-**`outcomes/cli.py` has no private copy of `_extract_reaches`.** Current reach files have no top-level `reaches` key at all -- a scan of archived `_reaches.json` files under `Analyzed` found the key absent from every one, with reaches nested per segment instead. A copy that read only the flat top-level `reaches` key would return `[]` on every real reach file, and `mousereach-detect-outcomes` would produce materially different (and worse) outcomes than the pipeline on the same inputs. Re-running an archived video through the CLI reproduces every per-segment field of the archived file exactly.
+**`outcomes/cli.py` has no private copy of `_extract_reaches`.** Current reach files have no top-level `reaches` key at all; the reaches are nested per segment. A copy that read only the flat top-level `reaches` key would return `[]` on every real reach file, and `mousereach-detect-outcomes` would produce materially different (and worse) outcomes than the pipeline on the same inputs.
 
 ---
 
@@ -238,16 +238,6 @@ Stage 5 is the only untouched stage that can triage: if the pellet started off-p
 
 The touched half has a clear shape: 7–17 are the broad rules, 21–25 are careful re-examinations of what those missed, and 26–29 are late per-reach rules built on the physical constraints that the pellet cannot return to the pillar, cannot be retrieved out of the tray, and cannot move without a reach moving it.
 
-### What actually fires
-
-Over the archived files carrying `detector_version: 6.1.0` in `Analyzed`, the stage field breaks down, most frequent first, roughly as:
-
-- **The bulk:** `stage_7_settled_off_pillar_late`, then `stage_1_position_never_changed`. Together these two make most of all decisions.
-- **A clear second tier:** `stage_8`, `stage_99_residual_triage`, `stage_9`, `stage_21`, `stage_26`, `stage_28`, `stage_27`, `stage_16`.
-- **A small share each:** `stage_3`, `stage_29`, `stage_25`, `stage_22`, `stage_4`, `stage_6b`, `stage_13`, `stage_5`, `stage_12`.
-- **Almost never:** `stage_11`, `stage_10`, `stage_17`, `stage_2`, `stage_6`, `stage_98`.
-
-Labels, most frequent first: `displaced_sa`, `untouched`, `retrieved`, `triaged`. Six stages (2, 6, 10, 11, 17, 98) each account for well under a tenth of a percent, and the eight disabled stages account for none. This is an observation of the archive, not a property of the code, but it is the fastest way to see which parts of this subsystem matter.
 
 ---
 
@@ -277,12 +267,12 @@ Two helper modules are reachable only from dead code: `pellet_calibration.py` is
 A segment comes out as `"outcome": "triaged"` with `"flagged_for_review": true` and a `flag_reason` string. Five modules can emit a triage (`grep 'decision="triage"'` in `v6_cascade/` returns `cv_artifact_gate.py:187`, `stage_27...py:249` and `:260`, `stage_5...py:508`, `stage_98...py:400`, `stage_99...py:35`). In the archive, from most to least frequent:
 
 1. **`stage_99_residual_triage`** — nothing committed. Reason `fell_through_all_committing_stages`. By far the largest source.
-2. **The pixel guard on displaced commits** — `cv_artifact_landing_no_pellet_arrival`. A stage was willing to say "displaced", but the video shows nothing arrived at the landing spot. Attributed to whichever stage tried to commit (most often stage 7, then stages 16, 27 and 21).
+2. **The pixel guard on displaced commits** — `cv_artifact_landing_no_pellet_arrival`. A stage was willing to say "displaced", but the video shows nothing arrived at the landing spot. Attributed to whichever stage tried to commit.
 3. **`stage_27`, causal reach too near a segment edge** — `causal_reach_too_near_segment_start` (the more common) / `..._end`.
 4. **`stage_98_lost_in_shadow_triage`** — the deliberate "this is unscorable and here is why" case. Rare.
-5. **`stage_5`**, when a pellet that started in the tray appears to vanish. Never seen in the archive.
+5. **`stage_5`**, when a pellet that started in the tray appears to vanish.
 
-Together these account for every triaged segment in the archive.
+Together these account for every triaged segment.
 
 `detector.py:256-268` also has a fallback for a segment where every stage returned `continue`, producing `stage: "residual (auto-triage)"` and reason `fell_through_all_stages`. Since stage 99 always triages, this cannot happen, and it does not appear in any archived file.
 
@@ -337,7 +327,7 @@ Top level -- five keys: `video_id`, `detector`, `detector_version`, `cv_video`, 
 | `cv_video` | `"found"` or `"missing"`: whether the video file was beside the pose, i.e. whether the two pixel-reading checks (the CV-artifact guard and Stage 98) could run. Files written before this field existed do not carry it. The watcher never runs a Pillar tray's cascade without the video (it fetches a copy, or records the video as unresolvable); a hand run of `mousereach-detect-outcomes` without the video still runs, writes `"missing"` and logs a warning |
 | `segments` | the list |
 
-Per segment, committed case — exactly six keys (every archived committed segment has this key set):
+Per segment, committed case — exactly six keys (every committed segment has this key set):
 
 | Key | Value |
 |---|---|
@@ -365,7 +355,7 @@ Per segment, triaged case — the same six keys plus `flag_reason`, with `outcom
 - `validation_status` — documented at `cli.py:26-58` as the field that drives the whole review workflow (`auto_approved` / `needs_review` / `validated`). v6 never writes it. The legacy detector does, at detection time (`core/pellet_outcome.py:1771-1772`), so files from the napari batch-pipeline path carry it. `pipeline/manifest.py:229` reads it and, per `manifest.py:167-177`, records `"unknown"` for every v6 video.
 - `pellet_visible_start` / `pellet_visible_end` / `distance_from_pillar_start` / `distance_from_pillar_end` — legacy-only.
 
-**Present only in the legacy detector's output.** Every archived file with `detector_version: 2.4.4` carries `confidence`, `causal_reach_id`, `causal_reach_frame`, `summary`, `n_segments`, `distance_from_pillar_*`, `pellet_visible_*`, `human_verified` and `original_outcome`. They carry **no `stage` key at all** (on no segment), and `"outcome_known_frame": null` on every single segment — the legacy detector documents that field as set by an annotator and never fills it. So a consumer reading a mixed corpus sees the *older* files carrying more fields than the newer ones, and one important field carrying less.
+**Present only in the legacy detector's output.** Every file with `detector_version: 2.4.4` carries `confidence`, `causal_reach_id`, `causal_reach_frame`, `summary`, `n_segments`, `distance_from_pillar_*`, `pellet_visible_*`, `human_verified` and `original_outcome`. They carry **no `stage` key at all** (on no segment), and `"outcome_known_frame": null` on every single segment — the legacy detector documents that field as set by an annotator and never fills it. So a consumer reading mixed files sees the *older* files carrying more fields than the newer ones, and one important field carrying less.
 
 ### What later steps add
 

@@ -4,8 +4,6 @@ Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mouser
 
 The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
-Observations in this document were measured on the live working folder `<nas_root>\Processing` (every reach file stamped `8.1.0` there) unless another source is named.
-
 ---
 
 ## What this subsystem does, in one paragraph
@@ -178,10 +176,10 @@ Reach *boundaries* are immune: the model never sees segments, so moving a bounda
 
 Two consequences of how the two files are built:
 
-- **The reach file has 21 segments; the outcome file has 20.** The outcome stage builds its own segment list as `[(boundaries[j], boundaries[j+1] - 1) for j in range(len(boundaries) - 1)]` (`outcomes/core/batch.py:197-198`) — one fewer. The pairing leaves out a reach segment numbered after every outcome segment, exactly as the positional zip did, so **reach segment 21, everything after the last boundary, never reaches kinematics.** Measured: every outcome file has 20 segments, every features file has 20 segments, and the reaches that sit in segment 21 are dropped. Segments 1–20 do line up frame-for-frame, so the pairing is correct for them.
+- **The reach file has 21 segments; the outcome file has 20.** The outcome stage builds its own segment list as `[(boundaries[j], boundaries[j+1] - 1) for j in range(len(boundaries) - 1)]` (`outcomes/core/batch.py:197-198`) — one fewer. The pairing leaves out a reach segment numbered after every outcome segment, exactly as the positional zip did, so **reach segment 21, everything after the last boundary, never reaches kinematics.** The outcome and features files have 20 segments, and the reaches that sit in segment 21 are dropped. Segments 1–20 do line up frame-for-frame, so the pairing is correct for them.
 - **The outcome stage ignores the reach file's own numbering.** `_extract_reaches` (`outcomes/core/batch.py:107-142`) flattens the nested structure back to a bare list of `(start_frame, end_frame)` pairs, discarding `reach_id`, `reach_num` and `segment_num`.
 
-**Zero-length and one-frame segments.** If the segmenter emits a duplicate or near-duplicate boundary, the resulting segment has no frames to measure geometry over, and `ruler_pixels` comes out as `NaN`. `json.dump` then writes the bare token `NaN`, which the JSON specification does not allow; Python's own `json.load` accepts it, so the pipeline's readers cope, but a strict parser will not. Measured: a small number of shipped files contain a bare `NaN`, always in `ruler_pixels`. Most are the trailing segment 21, length 0 or 1, with no reaches. A few are segment 1 with length 0, flagged, holding orphan reaches — those reaches are inside the range kinematics reads, and their millimetre conversions are all NaN.
+**Zero-length and one-frame segments.** If the segmenter emits a duplicate or near-duplicate boundary, the resulting segment has no frames to measure geometry over, and `ruler_pixels` comes out as `NaN`. `json.dump` then writes the bare token `NaN`, which the JSON specification does not allow; Python's own `json.load` accepts it, so the pipeline's readers cope, but a strict parser will not. A bare `NaN` can appear in a file, always in `ruler_pixels`: typically in the trailing segment 21 (length 0 or 1, no reaches), or in a segment 1 of length 0, flagged, holding orphan reaches — those reaches are inside the range kinematics reads, and their millimetre conversions are all NaN.
 
 ---
 
@@ -263,7 +261,7 @@ Filled with real values:
 | `exclude_reason` | `null` from the detector. |
 | `exclude_from_analysis` | `false` from the detector; only the review window sets it. |
 
-**Consequence downstream, stated plainly.** The kinematics extractor copies `max_extent_pixels` and `max_extent_ruler` straight through and derives `max_extent_mm` from the ruler value (`kinematics/core/feature_extractor.py:366-367`, `:392-393`). Because all three inputs are `null`, **reach extent is null on every reach produced by the current detector.** Measured over every `_features.json` in the working folder: every reach traceable to an `8.1.0` reach file has no extent, and the reaches traceable to the older `5.3.0` detector have one. (The reaches the detector found that are missing from kinematics are exactly the segment-21 reaches the positional zip drops.) So extent is not universally null in the database or in older files — it is null on everything current, and non-null only on legacy rows. Anything that reads reach extent, including the ODC-SCI exporter and `reach_export.py`, is reading a field that stopped being computed when v8 landed.
+**Consequence downstream, stated plainly.** The kinematics extractor copies `max_extent_pixels` and `max_extent_ruler` straight through and derives `max_extent_mm` from the ruler value (`kinematics/core/feature_extractor.py:366-367`, `:392-393`). Because all three inputs are `null`, **reach extent is null on every reach produced by the current detector.** A reach from an `8.1.0` reach file has no extent, and a reach from the older `5.3.0` detector has one. So extent is not universally null in the database or in older files — it is null on everything current, and non-null only on legacy rows. Anything that reads reach extent, including the ODC-SCI exporter and `reach_export.py`, is reading a field that stopped being computed when v8 landed.
 
 ---
 

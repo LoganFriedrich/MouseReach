@@ -180,15 +180,9 @@ You can nevertheless tell from the output file whether it ran. On a non-empty se
 
 `v2/assign.py:429-430`'s check for a triaged segment is unreachable, because a segment with `outcome == "triaged"` or `flagged_for_review` always already has a decision recorded at `:305-307`, so control never reaches the `else` branch for it.
 
-## What the corpus actually contains
+## Labels and triage reasons
 
-Measured over every `*_reach_assignments.json` file under the pipeline root when this document was verified. Most files are at the current version 2.1.0; the rest are older 2.0.0 files.
-
-Labels, all files, most frequent first: `miss`, `triaged`, `causal_displaced_sa`, `causal_retrieved`, `unassigned`. Causal reaches are a small minority of all reaches, consistent with the share in `docs/FIELD_AUDIT.md`.
-
-Triage reasons, 2.1.0 files only, most frequent first: `both_uncertain`, `reach_uncertain`, `outcome_uncertain`.
-
-Per segment, restricted to the current-version files and to segments that have at least one reach in them: **the large majority of touched segments got a committed causal reach, and a small remainder did not** — the two signals disagreed, or one of them produced nothing.
+Labels a reach can carry: `miss`, `triaged`, `causal_displaced_sa`, `causal_retrieved`, `unassigned`. Triage reasons of a 2.1.0 file: `both_uncertain`, `reach_uncertain`, `outcome_uncertain`. A touched segment normally gets a committed causal reach; when it does not, the two signals disagreed or one of them produced nothing.
 
 ## Exactly what lands in `{video}_reach_assignments.json`
 
@@ -285,24 +279,6 @@ There is essentially none. Every threshold in both signals and in the triage-red
 
 ---
 
-## Contested claims
-
-This document was written from the source, then checked by a second reader
-whose job was to disprove it. The statements below are ones they disputed and
-that were not resolved. Neither side is authoritative: spot-checking found the
-checker wrong at least once. **Do not rely on anything listed here without
-opening the code yourself.** Everything not listed survived two passes.
-
-- **Configuration table: "`cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. **Never supplied by any caller.**" — and the body claim "**The optional computer-vision confirmation is never used in production.** ... so `cv_verified` is always `False` (`**
-  - disputed because: A caller does supply them. The napari causal review tool passes both arguments into `reduce_triaged_segment`, and it is user-facing production software with a documented flag to switch it on. When that flag is set, `cv_verified` is True, so the `off -> off` branch at triage_reduction.py:224 trusts the state unconditionally, and the CV branch at triage_reduction.py:130-136 executes. What IS true is
-- **Output field table: "`reach_id` | int | Copied from the reaches file. Unique within a video, 1-based, **and it skips numbers**."**
-  - disputed because: It does not skip numbers. Reach ids are a contiguous run starting at 1 in every assignment file in the corpus, without exception. The rest of the row is correct (copied from the reaches file, unique, 1-based, falls back to list position at v2/assign.py:390 — and that fallback never fires in the corpus, since no file has a 0-based minimum). The "skips numbers" clause should be cut, or replaced with
-- **"grepping `committed_class=` across `outcomes/v6_cascade/` yields only `untouched`, `retrieved` and `displaced_sa` (**the three variable-class stages** resolve to `displaced_sa` or `retrieved` at `stage_21_...py:414,478` and `stage_24_transition_triangulation.py:253,255`)"**
-  - disputed because: There are two variable-class stages, not three. The four cited line numbers are all correct and the overall conclusion (the v6 cascade cannot emit `abnormal_exception` or `displaced_outside`) is correct — only the count is wrong. Two further nits in the same sentence: the third `committed_class=committed_class` site is a calibration harness, not a cascade stage, and the grep also yields a `None` (
-- **"**`outcome_known_frame` is merged and then never read by v2** — grep it in `v2/assign.py` and there are no hits."**
-  - disputed because: The bolded claim is right — nothing in the executable code reads it — but the verification instruction handed to the reader is wrong. A grep returns one hit. A reader who follows the instruction, gets a hit, and cannot immediately tell it is a docstring will lose confidence in the whole document. It should say the only mention is in the function's docstring at line 230, and that no code line reads
-
----
 
 ## is_causal is consumed now
 
