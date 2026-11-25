@@ -4,7 +4,7 @@ This document defines every column emitted by `mousereach-reach-export` /
 `reach_kinematics.csv`. It is the canonical reference for what each value means
 and how it is computed.
 
-(Update 2026-11-18.) Columns present in the features file but NOT in this CSV:
+Columns present in the features file but NOT in this CSV:
 `velocity_at_apex_px_per_frame`, `velocity_at_apex_mm_per_sec`,
 `peak_velocity_px_per_frame`, `mean_velocity_px_per_frame`,
 `trajectory_straightness`, `trajectory_smoothness`, `causal_reach_source` and
@@ -313,17 +313,17 @@ consumers migrate.
 
 ## Versioning
 
-(Update 2026-11-18.) There is no separate schema-version number in the code.
+There is no separate schema-version number in the code.
 Versioning follows `extractor_version`, written on every features file and row
 (today 2.6.0, `FeatureExtractor.VERSION`). When columns are added, removed, or
 have their calculation changed, the extractor version is bumped; record the
 change here.
 
 Changelog:
-- Extractor 2.3.0 (2026-10-31): paw paths anchored at the nose (`anchor_*` columns).
-- Extractor 2.4.0 (2026-11-02): peak speed and speed at the apex leave out the
+- Extractor 2.3.0: paw paths anchored at the nose (`anchor_*` columns).
+- Extractor 2.4.0: peak speed and speed at the apex leave out the
   first and last anchor steps.
-- Extractor 2.5.0 (2026-11-17): seconds use the video's own frame rate; speeds
+- Extractor 2.5.0: seconds use the video's own frame rate; speeds
   read through repeated frames.
-- Extractor 2.6.0 (2026-11-17): adds the nine `legacy_swipe_*` columns (Section 11).
+- Extractor 2.6.0: adds the nine `legacy_swipe_*` columns (Section 11).
   No other value changes from 2.5.0.

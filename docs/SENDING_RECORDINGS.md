@@ -1,10 +1,5 @@
 # Sending recordings from a recording PC to the pipeline
 
-Verified against: 0c36d0d (2026-11-18), with the change that added this page; the lookup on
-the shared drive (step 1 below, and "How the recording PC finds a recording on the shared
-drive") against the change that made the recording PC stop searching the shared drive
-(2026-11-18).
-
 This page is for the people who record and the person who looks after the
 recording PCs. You do not need to read any code to use it.
 
@@ -225,7 +220,7 @@ yourself.
 | A file whose name the intake could not read is in the Quarantine folder | In `mousereach`, open the **Quarantine** tab, type the right name in the "Corrected name (editable)" column of its row, choose **Collage intake (8-camera videos)** under "Release to:", and press **Release selected**. A name the intake would not accept is refused with the reason, and nothing moves. |
 | The name is a valid session name but wrong (wrong animal, wrong tray, wrong date) | Tell whoever looks after the pipeline: the name the recording has and the name it should have. |
 
-**Label mismatch: retired 2026-11-20.** The pipeline no longer holds a video
+**No label-mismatch hold.** The pipeline does not hold a video
 whose results fit another tray's hand scores better than its own: a video is
 always processed and filed under the name a person gave it, and compared with
 its OWN tray's hand scores only. `mousereach-label-mismatch --decisions` still
