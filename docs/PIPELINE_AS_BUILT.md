@@ -2364,8 +2364,7 @@ computable from the video id. `archived_pose_candidates` looks there first and w
 only when no pose from the declared model is found there, which is the old behaviour. Tests:
 `tests/test_reprocess_pose_lookup.py`.
 
-Correction, measured on a live re-run: the archive walk was only part of it. Most of the time
-went to `_reprocess_copy_set`, which decides which files to copy down. It asked
+The archive walk was only part of the cost. Most of the time went to `_reprocess_copy_set`, which decides which files to copy down. It asked
 `Path.is_file()` of every entry in the cohort folder, one network stat each, before
 looking at the name. It now checks the name first and uses the directory listing's own
 file flag (no extra round trip on Windows). Test: `tests/test_reprocess_copy_set.py`.
@@ -3097,8 +3096,7 @@ why it does or does not use the anchors.
 **What changed.** Peak speed and speed at the apex, for the wrist and for each paw
 point, now come only from steps between two detected frames. The first and last steps
 of a path join a calculated point to a detected one and are charged to a single frame,
-so they say how far apart those places are, not how fast the hand moved. Measured over
-them, the peak was the anchor jump on about half of all reaches. The path, its length,
+so they say how far apart those places are, not how fast the hand moved, and they dominated the peak on many reaches. The path, its length,
 its straightness, mean speed and velocity correlation still run nose to nose.
 
 **What to expect in the numbers.** The wrist's peak speed and speed at the apex return to

@@ -131,7 +131,7 @@ A reach on the wrong side of a boundary is therefore labelled with the wrong pel
 
 **Copied from the reach, but computed upstream from its position inside its segment:**
 
-`reach_num`, `is_first_reach`, `is_last_reach`, `n_reaches_in_segment`. Checked against a sample of features files: `reach_num` is always the reach's 1-based index inside its segment, `is_first_reach` is true exactly for index 0, and `n_reaches_in_segment` always equals the length of that segment's reach list. Move one boundary and all four change for the reaches on both sides of it.
+`reach_num`, `is_first_reach`, `is_last_reach`, `n_reaches_in_segment`. `reach_num` is always the reach's 1-based index inside its segment, `is_first_reach` is true exactly for index 0, and `n_reaches_in_segment` always equals the length of that segment's reach list. Move one boundary and all four change for the reaches on both sides of it.
 
 **Derived downstream inside SQLite:** `segment_contact_group` is a generated column computed from `segment_outcome`, so it carries the same error onward.
 

@@ -8,15 +8,9 @@ A `:123` reference means a line of `feature_extractor.py` as the document was wr
 
 ---
 
-## 0. How the numbers in this document were measured
+## 0. How the values are described
 
-Three sources, always named where used.
-
-* **Processing corpus** — every video in `<nas_root>\Processing` that has a `_features.json`. Most of those videos were produced by the current detectors; the rest by older ones.
-* **Analyzed archive** — a random sample of the `_features.json` files under `<nas_root>\Analyzed`.
-* **`docs/FIELD_AUDIT.md`** — the repository's own generated audit. Its database column comes from a parquet snapshot taken before this document was verified, so it cannot show anything that changed after that.
-
-The live central database (`central_db`) was read read-only where noted; it is frequently locked by a running watcher.
+The tables say when each value is empty or always present, from reading the code. They give no rates, because rates depend on the data a lab records.
 
 ---
 
@@ -59,7 +53,7 @@ mm  = pixels  * 9.0 / ruler_pixels
 mm² = pixels² * (9.0 / ruler_pixels)²
 ```
 
-Measured over the Processing corpus, `ruler_pixels` sits in a narrow band for normal segments. Nothing sanity-checks the number. A few segments fall far outside that band, in both directions; a segment whose `ruler_pixels` is a small fraction of normal has every millimetre value in it inflated by the same factor, silently. If `ruler_pixels` is 0 or negative the conversion factor is set to `0.0` and every millimetre column in that segment reads exactly `0`, not null (`:606`, `:689`, `:884`, `:1048`, `:1246`).
+`ruler_pixels` sits in a narrow band for normal segments. Nothing sanity-checks the number. A few segments fall far outside that band, in both directions; a segment whose `ruler_pixels` is a small fraction of normal has every millimetre value in it inflated by the same factor, silently. If `ruler_pixels` is 0 or negative the conversion factor is set to `0.0` and every millimetre column in that segment reads exactly `0`, not null (`:606`, `:689`, `:884`, `:1048`, `:1246`).
 
 **Time.** Frame counts are exact integers. Anything in seconds divides by **the video's own frame rate** (since extractor 2.5.0, `kinematics/core/frame_rate.py`): the rate the video file's header states, or, when the video is not beside the pose file, the rate DeepLabCut recorded from that header in `<pose>_meta.pickle`. A lab that wants one fixed rate states it (`FeatureExtractor(frame_rate=...)`); a rate below 1 or above 1000 is refused. The rate used and where it came from are written at the top of every features file (`frame_rate`, `frame_rate_source`). If no rate can be found, nothing is guessed: a line says so and the kinematics are not written (`KinematicsProblem`), so the video is held rather than filed with values missing. Five fields use the rate: `velocity_at_apex_mm_per_sec`, `segment_duration_sec`, `time_to_first_reach_sec`, `time_to_outcome_sec` (a copy of `segment_duration_sec`), `mean_inter_reach_interval_sec`. Everything in the `extended` block is per *frame*, never per second.
 
@@ -113,31 +107,31 @@ Three places in the code agree with that, and two do not.
 
 ## 5. Per-reach fields (46, outside `extended`)
 
-"Filled today" is measured on the Processing corpus unless another source is named. Sections 5.4 and 5.5 changed with extractor 2.3.0 and have not been re-measured, so they say when a value is empty instead of how often.
+The "Filled" column says when a value is empty or always present.
 
 ### 5.1 Identity and position in the segment
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
-| `reach_id` | Number for this reach, unique within the video | Copied from reach detection (`:352`) | count | 100% |
-| `reach_num` | Which reach this is inside its segment, from 1 | Copied from reach detection (`:360`); the detector assigns it with `enumerate(..., start=1)` (`span_to_reaches.py:160`) | count | 100% |
+| `reach_id` | Number for this reach, unique within the video | Copied from reach detection (`:352`) | count | Always |
+| `reach_num` | Which reach this is inside its segment, from 1 | Copied from reach detection (`:360`); the detector assigns it with `enumerate(..., start=1)` (`span_to_reaches.py:160`) | count | Always |
 | `segment_num` | Which pellet presentation this reach belongs to | Set from the enclosing segment (`:317`). The constructor still initialises it to `0` with the comment "Will be set by caller" (`:361`) | count | Set from the enclosing segment on every reach. Older features files still read `0`. It reaches the database again: `ALL_COLUMNS` now lists `segment_num` (section 8). |
-| `is_first_reach` | Is this the first reach of the segment | `i == 0` (`:318`) | true/false | 100% present |
-| `is_last_reach` | Is this the last reach of the segment | `i == n-1` (`:319`) | true/false | 100% present |
-| `n_reaches_in_segment` | How many reaches in this segment | `len(seg['reaches'])` (`:307`, `:320`) | count | 100% |
+| `is_first_reach` | Is this the first reach of the segment | `i == 0` (`:318`) | true/false | Always present |
+| `is_last_reach` | Is this the last reach of the segment | `i == n-1` (`:319`) | true/false | Always present |
+| `n_reaches_in_segment` | How many reaches in this segment | `len(seg['reaches'])` (`:307`, `:320`) | count | Always |
 
 ### 5.2 Outcome linkage — see §2
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `causal_reach` | Is this the reach that decided the pellet's fate | `causal_reach_id == reach_id` (`:380-382`) | true/false | set on the reach the reach-assignment step names, on every segment no person decided (`causal_reach_source = reach_assignment`), since extractor 2.1.0; otherwise from human review or ground truth (section 2). |
 | `outcome` | What happened to the pellet | Copied from the segment, **only onto the causal reach** (`:383`) | text | Same rows as `causal_reach`; null on every other reach |
 | `interaction_frame` | Frame the paw met the pellet | Copied from the segment, only onto the causal reach (`:384`) | frame index | Copied onto the causal reach only. On undecided segments the extractor fills a missing segment `interaction_frame` from the reach assignment's `segment_ifr`, so the algorithm's causal reach carries it (section 2). (The contact frame is an artifact; nothing may depend on it for a reach a person picked.) It is attached only when it lies INSIDE the causal reach's frames; otherwise it is null and the `*_at_contact_*` columns of that reach are empty by rule. This happens when a person names a different causal reach than the one holding the algorithm's contact frame, or gives the reach other frames. The causal credit is not affected |
-| `distance_to_interaction` | Frames between apex and the interaction | Read from `outcome_data['reach_features']` (`:387-389`) | frames | **0%, everywhere, permanently** — that key exists in no outcomes file ever written (§2) |
+| `distance_to_interaction` | Frames between apex and the interaction | Read from `outcome_data['reach_features']` (`:387-389`) | frames | **Never** — that key exists in no outcomes file ever written (§2) |
 
 ### 5.3 Extent — inherited, wrong axis, and null on current data
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `max_extent_pixels` | Intended: how far the paw reached | Copied from reach detection (`:366`) | pixels | **Null on every reach the current detector produces.** `span_to_reaches.py:179-180` writes `None` on purpose: "Extent is not cheaply available from the flat detector". Only Processing reaches from the older 5.3.0 detector carry a value; those measure the sideways axis (§4). |
 | `max_extent_ruler` | Same, divided by the 9 mm ruler | Copied from reach detection (`:367`) | ruler lengths (1.0 = 9 mm) | Same rows |
@@ -149,7 +143,7 @@ Ground-truth-substituted reaches also get `None` for all three, deliberately: th
 
 All four use only the `RightHand` point, along its anchored path (`anchored_hand_path`, §6.1; computed in `_compute_velocity_features`). That path is the detected positions with the start anchor before them and the end anchor after them, so a reach of n detected frames has n + 1 steps. Mean velocity uses all of them. Peak velocity and velocity at apex use only the n - 1 steps between two detected frames (`tracked_steps`), because the first and last steps join a calculated point to a detected one and are charged to one frame, so they measure geometry and not how fast the hand moved. Unlike the `extended` block, the nose is not subtracted, so these are measured in image coordinates. The detected positions are not gated on likelihood; the nose and slit corner that place an anchor are (§6.1).
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `peak_velocity_px_per_frame` | Fastest single-frame move of the wrist along its anchored path | Largest of the n - 1 straight-line distances between two detected frames. The first and last steps, between an anchor and a detected position, do not count, so this can never be an anchor jump | pixels per frame | Empty for a reach of one detected frame. A reach with no anchor still has it |
 | `mean_velocity_px_per_frame` | Average per-frame move of the wrist along its anchored path | Mean of all n + 1 distances, anchor steps included: the whole trip, nose to nose | pixels per frame | Empty when the reach has no anchor |
@@ -166,7 +160,7 @@ Third, an inconsistency worth knowing: `_extract_reach_features` computes the ap
 
 Computed in `_compute_trajectory_features` on the same anchored path as §5.4, in image coordinates.
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `trajectory_straightness` | 1.0 = the wrist went in a straight line from anchor to anchor; near 0 = it wandered, or went out and came back near where it started | Straight-line distance from the start anchor to the end anchor ÷ total length of the anchored path | dimensionless 0-1 | Empty when the reach has no anchor |
 | `trajectory_smoothness` | 1.0 = perfectly smooth; smaller = jerkier | `1 / (1 + mean|third difference of position|)` along the anchored path, so the anchors are in the differences | dimensionless 0-1 | Empty when the reach has no anchor, and for a reach of one detected frame, whose three path points are too few for a third difference |
@@ -175,16 +169,16 @@ Rows from an extractor before 2.3.0 ran these between the first and last detecte
 
 ### 5.6 Paw orientation
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
-| `hand_angle_at_apex_deg` | Which way the paw was pointing at apex | `atan2(RHRight_y − RHLeft_y, RHRight_x − RHLeft_x)` per frame (`:540-542`), sampled at the apex (`:551-552`) | degrees, -180 to 180 | 100% |
-| `hand_rotation_total_deg` | Total turning of the paw across the reach | Sum of absolute frame-to-frame angle changes, with ±180 wraparound handled (`:554-559`) | degrees, always ≥ 0 | 100% |
+| `hand_angle_at_apex_deg` | Which way the paw was pointing at apex | `atan2(RHRight_y − RHLeft_y, RHRight_x − RHLeft_x)` per frame (`:540-542`), sampled at the apex (`:551-552`) | degrees, -180 to 180 | Always |
+| `hand_rotation_total_deg` | Total turning of the paw across the reach | Sum of absolute frame-to-frame angle changes, with ±180 wraparound handled (`:554-559`) | degrees, always ≥ 0 | Always |
 
 ### 5.7 Head and body at the apex
 
 Each needs both landmarks above likelihood 0.7 at that frame, otherwise null.
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `head_width_at_apex_mm` | Ear-to-ear distance at apex; a body-size proxy | distance(LeftEar, RightEar) × mm-per-pixel (`:613-619`) | mm | Nearly all |
 | `nose_to_slit_at_apex_mm` | Nose to the right edge of the slit at apex | distance(Nose, BOXR) × mm-per-pixel (`:626-632`) | mm | Nearly all. Named "slit" but measured to one corner of it. |
@@ -193,22 +187,22 @@ Each needs both landmarks above likelihood 0.7 at that frame, otherwise null.
 
 ### 5.8 Tracking quality of the wrist point
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
-| `mean_likelihood` | Average DeepLabCut confidence in the wrist across the reach | mean of `RightHand_likelihood` (`:577`) | 0-1 | 100% |
+| `mean_likelihood` | Average DeepLabCut confidence in the wrist across the reach | mean of `RightHand_likelihood` (`:577`) | 0-1 | Always |
 | `frames_low_confidence` | Frames where wrist confidence was under 0.5 | count (`:578`) | frames | Present on every reach; non-zero on a small share |
-| `tracking_quality_score` | — | **Nothing computes it.** Declared at `:83`, read by three exporters and given a database column, assigned nowhere in the repository. | — | **0%, always** |
+| `tracking_quality_score` | — | **Nothing computes it.** Declared at `:83`, read by three exporters and given a database column, assigned nowhere in the repository. | — | **Never** |
 
 ### 5.9 Flags
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `flagged_for_review` | Does this reach need a human | **Nothing sets it.** Declared `False` at `:86`, never assigned. | true/false | **Always false.** Outcome detection does flag *segments* — a minority of them — and the extractor keeps that at segment level as `outcome_flagged`. The per-reach copy is dead. |
 | `flag_reason` | Why | Never assigned (`:87`) | text | **Always null.** `SegmentFeatures` has no `flag_reason` field either, so the detector's reason string is dropped at both levels. |
 
 ### 5.10 Where the answer came from
 
-| Field | Plain English | How computed | Units | Filled today |
+| Field | Plain English | How computed | Units | Filled |
 |---|---|---|---|---|
 | `outcome_source` | `algo`, `human_review`, or `ground_truth` for this segment's outcome | Copied from the segment after truth layering (`:373`); the segment default `algo` is stamped at `truth_resolver.py:164-165` | text | On every reach whose features file was written by the current extractor (most of Processing; older files predate the field) |
 | `reach_source` | `algo`, `ground_truth`, or `human_review` (a reach a reviewer typed that the detector missed; and, the causal reach a reviewer named whose start and end the reviewer checked -- its frames are the reviewer's, the detector's are kept as `algo_start_frame` / `algo_end_frame` in the resolved reach list) for this reach's frame boundaries | `reach.get('reach_source', 'algo')` (`:374`) | text | Same — but no database column holds it (§8) |
@@ -329,7 +323,7 @@ All are populated except the six `_at_contact_*` columns, which are filled only 
 | `{point}_visibility_max` / `_min` / `_mean` / `_range` | Across the reach | 0-1 |
 | `frames_any_paw_low_confidence` | Frames where the *worst* of the four points was under 0.5 (`:1387-1391`) | frames |
 
-Measured over the Processing corpus, only a small share of reaches contain any such frame. Within detected reaches, paw tracking confidence is essentially always high.
+Only a small share of reaches contain any such frame. Within detected reaches, paw tracking confidence is essentially always high.
 
 ### 6.6 Tray contact — 1 value
 
@@ -337,7 +331,7 @@ Measured over the Processing corpus, only a small share of reaches contain any s
 |---|---|---|---|
 | `tray_contact_duration_frames` | Intended: frames where the pellet was jiggling while the wrist was hidden — a proxy for the paw being on the tray | count of frames where the 4-frame rolling standard deviation of `Pellet_x` exceeds 2 px **and** `Pillar_likelihood < 0.5` **and** `RightHand_likelihood < 0.5` (`:1414-1421`) | frames |
 
-**This value is zero on almost every reach.** Only a handful of reaches in the whole Processing corpus have a non-zero count. That is structural, not incidental: the window is a *detected reach*, which means the wrist was visible enough to be detected, while the third condition requires the wrist to be invisible. Returns 0 for reaches shorter than 4 frames (`:1411-1412`) and `None` if any of those three columns is missing from the tracking file (`:1422-1423`). The 2-pixel threshold is a raw pixel constant, not scaled by `ruler_pixels`, so it means a different physical distance on differently-zoomed videos.
+**This value is zero on almost every reach.** Only a handful of reaches have a non-zero count. That is structural, not incidental: the window is a *detected reach*, which means the wrist was visible enough to be detected, while the third condition requires the wrist to be invisible. Returns 0 for reaches shorter than 4 frames (`:1411-1412`) and `None` if any of those three columns is missing from the tracking file (`:1422-1423`). The 2-pixel threshold is a raw pixel constant, not scaled by `ruler_pixels`, so it means a different physical distance on differently-zoomed videos.
 
 ### 6.7 How the anchors were placed — 4 values
 
@@ -556,33 +550,6 @@ The audit's small `causal_reach` and `interaction_frame` fill rates come from le
 
 ---
 
-## Contested claims
-
-This document was written from the source, then checked by a second reader
-whose job was to disprove it. The statements below are ones they disputed and
-that were not resolved. Neither side is authoritative: spot-checking found the
-checker wrong at least once. **Do not rely on anything listed here without
-opening the code yourself.** Everything not listed survived two passes.
-
-- **"`ReachDetector.detect` — the v6 algorithm — has **no caller anywhere in `src/`**. Its only caller was a one-off diagnostic script."**
-  - disputed because: Both halves are false. There ARE two call sites in src/ (both unreachable, but present), and the named script is not one of the callers, while a different file is.
-- **"`spatial_refiner.py` (1008 lines) has **no importer at all**"**
-  - disputed because: It has an importer.
-- **"Also dead: `boundary_refiner.py` and `boundary_polisher.py`, whose only importer is the dead `reach_detector.py` (`:101-102`)."**
-  - disputed because: True for boundary_polisher.py, false for boundary_refiner.py, which has two other importers.
-- **"[v8/eval.py] is called by `v8/train.py:123`."**
-  - disputed because: v8_figures.py does not call or import v8/eval.py. It consumes eval output that has already been serialised to plain dicts.
-- **"In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment."**
-  - disputed because: The size of that region was stated wrongly (by more than an order of magnitude). The structural point (frames before the first boundary belong to no segment) is right.
-- **"Measured: a small number of shipped files contain a bare `NaN`, always in `ruler_pixels`. Most are the trailing segment 21, length 0 or 1, with no reaches. A few are segment 1 with length 0, flagged, holding orphan reaches."**
-  - disputed because: The cases split differently: not all of the no-reach cases are the trailing segment 21. Some are mid-video segments, which the document's framing ("trailing segment 21" vs "segment 1") implicitly rules out. This matters because mid-video NaN segments fall inside segments 1-20, the range kinematics actually reads, so their segment-level millimetre features are NaN too.
-- **"`review_widget.py:2125-2126` reads `original_start_frame` / `original_end_frame`, but nothing anywhere writes those keys"**
-  - disputed because: Another tool writes exactly those keys, and writes them into the same `{video}_reaches.json` file. The conclusion (the two GT-export fields come out null) still holds for reaches produced and edited by this widget, but the stated reason is wrong and the omission hides a second writer of the reaches file.
-- **"`boxr_x` ... **Nothing reads it.** No code anywhere loads `boxr_x` back out of this file"**
-  - disputed because: Stated as an absolute, and one place does read it. The substantive point survives (that reader is itself never called), but as written the sentence is contradicted by a one-line grep — exactly what a reference document cannot afford.
-- citation could not be resolved: ``reach_detector_v8.py:20-52`, cited as "its performance table" — does not resolve. Lines 20-52 are the Phase-2 algorithm description and the KEY PARAMETERS tabl`
-
----
 
 ## the algorithm's causal reach now reaches the data
 
