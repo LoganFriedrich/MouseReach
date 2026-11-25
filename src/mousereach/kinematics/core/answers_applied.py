@@ -2,7 +2,7 @@
 mousereach.kinematics.core.answers_applied -- is every person's answer IN a
 features file?
 
-Owner rule (2026-11-21): a person's answer -- ground truth, a deep-review
+Rule: a person's answer -- ground truth, a deep-review
 (re-segmentation) answer, a triage answer -- is ALWAYS applied, with no hold,
 queue or question. Two places act on that with this one check:
 
@@ -13,14 +13,13 @@ queue or question. Two places act on that with this one check:
     features file that lacks an answer gets a kinematics-only re-run, which
     applies it (filed_decisions.settle_against_filed).
 
-WHY a check of the CONTENT and not of a stamp: until 2026-11-21 "applied?"
-was answered from the manifest -- the review's sha256 stamp, or, without one,
-the times of the files. Both say only that a run SAW the file, not that the
-answer is in the result. 66 filed videos had answers that their
-features did not carry (kin26_not_recomputed.csv, 2026-11-20):
+WHY a check of the CONTENT and not of a stamp: the manifest's review sha256
+stamp, or, without one, the times of the files, say only that a run SAW the
+file, not that the answer is in the result. Filed features can lack answers
+in two ways:
   1. ground truth filed beside the video that its run never found (the
      extractor looked for it only in the processing tree), with a manifest
-     from before the ground-truth stamp, so the time rule called it applied;
+     lacking the ground-truth stamp, so the time rule called it applied;
   2. review answers applied by an older rule to a different pellet than the
      one whose frames they are about (re-cut or renumbered pellets), with a
      stamp that said the review was applied.

@@ -269,8 +269,8 @@ def assign_reaches_v2(
     # Each entry: (start_frame, end_frame, reach_list_index)
     reach_records: List[Tuple[int, int, int]] = []
     reach_to_seg_idx: List[Optional[int]] = []
-    # The first cut: a reach that starts before it belongs to NO pellet (owner
-    # decision D2-3, reach/core/before_first_cut.py), whatever segment number
+    # The first cut: a reach that starts before it belongs to NO pellet
+    # (reach/core/before_first_cut.py), whatever segment number
     # an older reaches file gave it and wherever its midpoint falls. It is
     # written "unassigned" with no segment, and marked before_first_cut.
     _starts = [lo for lo, _hi in seg_bounds if lo >= 0]

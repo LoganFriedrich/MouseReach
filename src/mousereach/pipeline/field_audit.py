@@ -446,7 +446,7 @@ def main(argv=None) -> int:
 
     if args.root is None:
         # Same class of failure as the missing snapshot: an unconfigured
-        # Analyzed tree used to surface as a TypeError inside rglob.
+        # Analyzed tree would surface as a TypeError inside rglob.
         print("[!] no Analyzed tree configured and no --root given: nothing to read. "
               "Run mousereach-setup, or pass --root <directory>.")
         return 2

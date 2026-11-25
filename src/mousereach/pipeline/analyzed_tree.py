@@ -54,7 +54,7 @@ def walk_onerror(error: OSError) -> None:
     listing fails: a PermissionError is skipped quietly, anything else raises.
 
     WHY: os.walk's default (onerror=None) silently skips EVERY folder it cannot
-    list, including a transient NAS error (WinError 59/64). A walk that used to
+    list, including a transient NAS error (WinError 59/64). A walk that would otherwise
     raise would then return a partial answer that looks complete -- a pose
     "not found" recorded as a video failure, a backfill or export missing
     rows -- and nothing here may fail silently. Python 3.10's rglob catches

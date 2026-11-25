@@ -36,8 +36,8 @@ Never a single point of failure
   or absent index degrades to the previous behaviour instead of lying.
 
 Store: SQLite at ``pipeline_records/version_index.db`` on the shared drive, in the
-default rollback-journal mode. It was WAL until 2026-10-22, chosen so writers and
-the dashboard would not block each other -- but SQLite documents WAL as unsafe on a
+default rollback-journal mode, not WAL (which would keep writers and
+the dashboard from blocking each other), because SQLite documents WAL as unsafe on a
 network filesystem (its -shm index is shared memory, which machines reading the
 file over the share do not share), and this file is read and written from several
 machines. Writes are best-effort and the index is rebuildable, so a brief lock

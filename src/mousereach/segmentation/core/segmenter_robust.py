@@ -864,10 +864,10 @@ def save_segmentation(boundaries: List[int], diagnostics: SegmentationDiagnostic
     passed) -- the new file records when, and which cuts it replaced
     (causal_review_io.segmenter_recut_record). The review readers then void
     the answers given before it on pellets whose frames moved, exactly as for
-    a person's re-cut (owner ruling R2); identical cuts record no re-cut.
+    a person's re-cut; identical cuts record no re-cut.
 
     The version stamped here has to be the version of the segmenter that
-    actually produced ``boundaries``. This function used to stamp its own module
+    actually produced ``boundaries``. This function must not stamp its own module
     constant, which is not what runs: every production path segments with
     ``segment_video_multi`` from segmenter_multi, so every _segments.json on disk
     claimed 2.1.3 while the code that made it was 2.2.x. The pellet-window gate

@@ -21,26 +21,25 @@ review and the ground truth (review.truth_resolver). If the rules that turn
 those inputs into decisions changed since filing, or an input the filing run
 did not see is found now, the same files give DIFFERENT reaches, outcomes or
 causal reaches -- and a kinematics-only run would file them silently, without
-any of the checks a change of decision must pass. Found on 2026-11-17: a
-ground-truth file that sat beside four filed videos but was not applied when
-they were filed (the extractor then looked for ground truth only in the
+any of the checks a change of decision must pass. Examples: a
+ground-truth file that sat beside a filed video but was not applied when
+it was filed (the extractor looked for ground truth only in the
 processing tree), and a review answer that newer review matching places on a
 different pellet than the filing run did.
 
-THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied, including
+THE RULE (a human's answer is ALWAYS applied, including
 to filed videos; 'filed is final' only protects filed results from algorithm
-re-runs"): in a kinematics-only re-run of a filed video, every person's answer
+re-runs): in a kinematics-only re-run of a filed video, every person's answer
 that applies now decides what it decides -- whether or not the filed results
 had it, and whatever the manifest says -- and every outcome and causal reach
 no person decides stays exactly as filed. Nothing is held and nobody is asked:
 settle_against_filed does it and says, in words, what differs from the filed
 results (the watcher writes that to its processing log).
 
-History: from 2026-11-17 any difference not explained by an answer the version
-scan counted as owed HELD the run (changes_not_owed + hold_message, kept below
-for the record and their tests); earlier on 2026-11-21 every answer was
-counted as owed but an algorithm difference still held it. Both left a
-person's answer unapplied whenever anything else differed.
+changes_not_owed + hold_message (kept for their tests) are the older hold
+rule: any difference not explained by an answer the version scan counted as
+owed held the run, which left a person's answer unapplied whenever anything
+else differed. settle_against_filed never holds.
 
 Pure functions over plain dicts; never touches a file except
 owed_human_layers, which only reads.
@@ -104,8 +103,8 @@ def _decision(outcome, causal_id, reaches, left_out) -> dict:
 def decisions_of_features(doc) -> Dict[int, dict]:
     """{pellet: decision} of a features file (its ``segments``)."""
     # A filed reach that starts before the first cut was filed inside pellet 1
-    # by the reach step's old rule; it belongs to no pellet (owner decision
-    # D2-3), and the extractor now takes it out of pellet 1. That is not a
+    # by the reach step's old rule; it belongs to no pellet,
+    # and the extractor now takes it out of pellet 1. That is not a
     # change of any pellet's decision, so it is not compared -- except a reach
     # a PERSON credited as the pellet's causal reach, which stays the pellet's
     # (before_first_cut.person_credited).
@@ -247,9 +246,9 @@ def settle_against_filed(filed_doc, pairs) -> List[str]:
     features file. Never refuses. Returns what differs from the filed results,
     one line per pellet, in words for the log (empty: nothing differs).
 
-    THE RULE (owner, 2026-11-21: "a human's answer is ALWAYS applied,
+    THE RULE (a human's answer is ALWAYS applied,
     including to filed videos; 'filed is final' only protects filed results
-    from ALGORITHM re-runs"), per pellet, for each of its two decisions:
+    from ALGORITHM re-runs), per pellet, for each of its two decisions:
 
       * a person's answer that applies to this pellet NOW decides it --
         ground truth > deep review > triage, by the truth layering
@@ -269,12 +268,11 @@ def settle_against_filed(filed_doc, pairs) -> List[str]:
     now was placed by an answer the current rules put on another pellet, and
     the line says so.
 
-    WHY this replaced the hold (changes_not_owed + hold_message): the hold
-    refused the whole re-run when any change could not be explained by an
-    answer the version scan counted as not yet applied. A person's answer
-    that the filed results lacked was then never applied (66 filed
-    videos on 2026-11-20), and each such video sat on a list for a person --
-    the queue the owner rule forbids."""
+    WHY this is not a hold (changes_not_owed + hold_message): a hold
+    refuses the whole re-run when any change cannot be explained by an
+    answer the version scan counted as not yet applied, so a person's answer
+    that the filed results lacked would never be applied and each such video
+    would sit on a list for a person -- a queue the rule forbids."""
     from mousereach.kinematics.core.feature_extractor import (
         causal_reach_owned_by_person, split_reaches_by_ignore_windows)
     filed = decisions_of_features(filed_doc)

@@ -6,11 +6,11 @@ machine's watcher for that one video (take it in, analyse, quality check,
 hand-score comparison, review gate, kinematics, file it), with the watcher's
 own handlers. See that module for what runs, what is refused and why.
 
-WHY no steps here any more: this module used to run its own copy of the
-steps in the chosen video's own folder -- no hand-score comparison, a quality
-check that passed a video when it could not run, a push into a database, and
-no check of where the video was. Pointed at a filed video it rewrote the filed
-results in place; pointed at a video in a review queue it rewrote the
+WHY no steps here: a module with its own copy of the
+steps in the chosen video's own folder would skip the hand-score comparison,
+pass a video when the quality check could not run, and not check where the
+video was. Pointed at a filed video it would rewrite the filed
+results in place; pointed at a video in a review queue it would rewrite the
 algorithm outputs under the reviewer. Running by hand must do exactly what the
 watcher does: one implementation, two ways to start it.
 

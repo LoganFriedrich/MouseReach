@@ -33,7 +33,7 @@ or with a person's work lost:
    the video in triage; a session whose hand scores cannot be found is NOT
    finalized, never filed uncompared. A video is compared with its OWN row
    only: the label-mismatch refusal (results matching another tray's row)
-   was retired 2026-11-20 -- the name a person gave is trusted.
+   does not exist -- the name a person gave is trusted.
  - Every stop is shown to a person (_show_the_stop): it is the summary's
    ``error``, it is printed, and with ``finalize=True`` it puts the video on
    this machine's attention list (<NAS root>/attention/<host>_bring_current_
@@ -47,7 +47,7 @@ or with a person's work lost:
    (review_gate.route_to_queue): deep review beats triage, a bundle already
    there is never overwritten, the move is recorded in this machine's watcher
    database, and a crystallized video is refused.
- - Filed is final (lab rule 2026-11-19): finalize REFUSES a video that has been
+ - Filed is final: finalize REFUSES a video that has been
    filed -- the four algorithms are never re-run onto a filed video, so a new
    version applies only to videos not filed yet. Run without finalize to
    evaluate a new version on filed videos: everything stays in the work
@@ -130,10 +130,10 @@ def _stage_review_bundle(video_id, work_dir, video_file, dlc_h5, decision, reaso
     watcher database. Does NOT finalize / supersede -- the filed outputs stay
     put until the video clears review and is filed again. Returns a summary.
 
-    WHY the router: this used to build ``<queue>/<video>`` itself -- no
-    ``.incoming`` build folder, no check for a deep-review bundle before a
-    triage one, no watcher record, and a never-overwrite check of the one
-    queue only. route_to_queue keeps every queue rule: deep review beats
+    WHY the router: building ``<queue>/<video>`` here would skip the
+    ``.incoming`` build folder, the check for a deep-review bundle before a
+    triage one, the watcher record, and the never-overwrite check of both
+    queues. route_to_queue keeps every queue rule: deep review beats
     triage, a live bundle is never merged into (AlreadyInQueueError), and a
     crystallized video is refused (CrystallizedError). The filed video is
     never passed along: the review tools find it in the filed folder."""
@@ -210,7 +210,7 @@ def _finalize_refusal(video_id: str, action: str = "brought current",
     queue state, so a video the watcher does not know is refused there.
 
     ``refuse_filed`` True (bring-current's finalize): a FILED video is
-    refused (FILED_IS_FINAL_SAYS). Lab rule 2026-11-19, "filed is final":
+    refused (FILED_IS_FINAL_SAYS). Rule "filed is final":
     finalize re-runs the four algorithms and supersedes the filed results,
     which may happen only to a video not filed yet. The stager leaves it
     False: staging a bundle is a person putting a video in front of a
@@ -317,8 +317,8 @@ _NOT_A_DEFECT_SAYS = {
 def _show_the_stop(summary: Dict, video_id: str, notice: Dict, finalize: bool) -> None:
     """Every bring-current stop is printed, and with ``finalize`` listed for a
     person unless ``notice`` says it is not to be (see _NOT_LISTED). WHY one
-    place: each refusal used to decide for itself, and most only set the
-    summary's ``error``, so the video stayed as it was with nobody told unless
+    place: a refusal that decides for itself would mostly only set the
+    summary's ``error``, so the video would stay as it was with nobody told unless
     they read the returned dictionary. A dry run touches nothing live, so it
     only prints. ``summary["attention"]`` records what was shown and
     ``summary["listed"]`` whether it went on the list."""
@@ -455,10 +455,10 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
     # A person's work beside the video goes into the work folder BEFORE any
     # step runs: their cuts (a segments file marked boundary_source "human",
     # which the segmenter keeps instead of re-cutting -- segmentation/core/
-    # batch.py) and their clear marker (which the gate reads). WHY: the work
-    # folder used to start empty, so the segmenter re-cut over a person's
-    # boundaries, the gate asked again for a clear a person had given, and
-    # finalize then archived the person's cuts and filed the algorithm's.
+    # batch.py) and their clear marker (which the gate reads). WHY: an empty work
+    # folder would let the segmenter re-cut over a person's
+    # boundaries, the gate ask again for a clear a person had given, and
+    # finalize then archive the person's cuts and file the algorithm's.
     if video_dir is not None:
         from mousereach.archive.supersede import is_human_cuts
         for name in (f"{video_id}_segments.json", f"{video_id}_deep_review_cleared.json"):
@@ -557,9 +557,9 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
             # R4: hand scores always exist, so a session without them is OUR
             # defect (an import or a sheet-to-video match) and is held
             # VISIBLY: printed, and with finalize on the attention list
-            # (Pipeline Dashboard, red panel) -- _show_the_stop. WHY: the hold
-            # used to be only in the returned summary, so the video stayed
-            # filed with its old results and nobody saw it unless they read
+            # (Pipeline Dashboard, red panel) -- _show_the_stop. WHY: a hold
+            # only in the returned summary would leave the video
+            # filed with its old results and nobody would see it unless they read
             # the dict.
             notice["says"] = (
                 f"{video_id}: {summary['error']}. Its filed results are unchanged. "
@@ -653,8 +653,8 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
         if summary["held"].get("held"):
             _attention_drop(video_id)   # held in a queue, where a person sees it
         else:
-            # Neither filed nor in a queue: a stop like any other. WHY: this
-            # used to be only inside summary["held"], with no error at all.
+            # Neither filed nor in a queue: a stop like any other. WHY: it
+            # must not be only inside summary["held"], with no error at all.
             summary["error"] = (f"not held for review ({decision}): "
                                 f"{summary['held'].get('error') or 'routing failed'}")
             if summary["held"].get("crystallized"):
@@ -710,10 +710,10 @@ def _reprocess_video_to_current(video_id, dlc_h5, video_file, work_dir, *,
     # second to last and the features file last, and a rename that fails is
     # undone so the previous generation stands complete again. It also keeps
     # a person's cuts (refused, nothing moved) and refuses a video with a
-    # publication lock record. WHY: bring-current used to move the files
-    # itself in name order -- features FIRST -- after archiving the old
-    # generation, and dropped a failed move silently, so the filed folder
-    # could hold new kinematics without the reaches or segments they were
+    # publication lock record. WHY: moving the files
+    # one by one in name order -- features FIRST -- after archiving the old
+    # generation, and dropping a failed move silently, would let the filed folder
+    # hold new kinematics without the reaches or segments they were
     # computed from, reported as success.
     #
     # The pose copy stays out of the filing: the current pose lives in its

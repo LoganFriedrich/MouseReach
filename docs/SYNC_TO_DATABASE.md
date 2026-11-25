@@ -2,81 +2,21 @@
 
 Describes: `src/mousereach/sync/` (`database.py`, `watcher.py`, `cli.py`, `__init__.py`), the three places in the pipeline that call it and the one that switches it off, and `src/mousereach/pipeline/manifest.py` for the values it copies into the provenance columns.
 
-Verified against: b65fcf0 (2026-08-23)
-
-Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
 ---
 
 ## What this subsystem is
 
-> **Status 2026-09-01:** the watcher no longer calls this path at all. The
-> in-pipeline `db_sync` step was removed -- it had been left behind after
-> the integration moved to an external database tool PULLING features files
-> from the Analyzed tree, always failed on configuration, and logged a failed step on every
-> video. `sync_file_to_database` and the tools below still exist for a lab
+> **Status:** the watcher does not call this path at all. There is no in-pipeline `db_sync` step: the integration is an external database tool PULLING features files from the Analyzed tree, and a push step would always fail on configuration and log a failed step on every video. `sync_file_to_database` and the tools below still exist for a lab
 > that configures `central_db` deliberately; nothing in the watcher invokes
 > them.
 
-One thing is written: a table called `reach_data`, in an OPTIONAL external SQLite database whose location is configuration -- `central_db` in `~/.mousereach/config.json` or the environment variable `MOUSEREACH_CENTRAL_DB` (since 2026-08-28; there is no built-in default, and with no value set the sync does nothing and says so). Why optional: MouseReach must produce complete, usable output standing alone; pushing rows into a central database is an integration a lab may or may not run. One row per reach. Alongside it, a flat comma-separated file — a full dump of that table — as `database_dump/reach_data.csv` in the folder of the configured database.
+One thing is written: a table called `reach_data`, in an OPTIONAL external SQLite database whose location is configuration -- `central_db` in `~/.mousereach/config.json` or the environment variable `MOUSEREACH_CENTRAL_DB` (there is no built-in default, and with no value set the sync does nothing and says so). Why optional: MouseReach must produce complete, usable output standing alone; pushing rows into a central database is an integration a lab may or may not run. One row per reach. Alongside it, a flat comma-separated file — a full dump of that table — as `database_dump/reach_data.csv` in the folder of the configured database.
 
 The input is always one file: `{video}_features.json`, the last thing the pipeline writes for a video. Nothing else is ever read into the table. The reach detector's own output, the outcome detector's own output, the reach-assignment file — none of them are read here. Whatever did not make it into the features file cannot reach the database through this path.
 
 Both destination paths come from one setting: `DB_PATH` (`database.py`) is `central_db` / `MOUSEREACH_CENTRAL_DB`, and the CSV path (`CSV_DUMP_PATH`) is derived from it.
-
----
-
-## FIXED 2026-08-27: writes work again
-
-`'segment_num'` is back in `ALL_COLUMNS`, so the `INSERT` no longer omits a
-`NOT NULL` column. Verified against a scratch table built from the source's own
-`CREATE_REACH_DATA_SQL`, driving the real `sync_features_file` with a shipped
-features file: one row inserted per reach, `segment_num` filled from the
-enclosing segment, no row with `segment_num = 0`.
-
-**A gap left by the defect has to be filled by hand.** Nothing
-reached `reach_data` while the defect stood. Every video
-processed in that window wrote a correct `{video}_features.json` to disk but no
-database row. Those files are the recovery path -- `sync_file_to_database`
-accepts any path, so they can be re-synced from wherever they were archived to,
-without reprocessing anything. `mousereach-sync` alone will not find them: it
-globs one folder non-recursively (`database.py:511`) and archived videos live
-under `Analyzed/<project>/<cohort>/`.
-
-The account of the bug below is kept because the shape of it is the lesson: a
-failure that is caught, re-raised, caught again, and finally logged at debug
-level under a message naming two causes that were not the cause.
-
----
-
-### What was wrong
-
-**Every attempt to write a row failed, and the failure was not reported anywhere.**
-
-The table has a column `segment_num` — which pellet, 1 through 20, the reach was aimed at. It is declared `INTEGER NOT NULL` with no default, both in the `CREATE TABLE` in the source (`database.py:107`) and in the live table on disk.
-
-The code builds `segment_num` into each row correctly, taking it from the enclosing segment (`database.py:568`). But the list of column names used to build the `INSERT` statement, `ALL_COLUMNS` (`database.py:84-92`), does not contain it. Commit `5bac3b0` removed `'segment_num'` from `REACH_JSON_COLUMNS` (the list `ALL_COLUMNS` is built from) and added it back only to the row dictionary, never to the insert list. So the statement omits a column that must not be null, and SQLite rejects it:
-
-```
-sqlite3.IntegrityError: NOT NULL constraint failed: reach_data.segment_num
-```
-
-Reproduced twice at this commit, both times with a real features file and a scratch database: once against a table built from the source's own `CREATE_REACH_DATA_SQL`, and once against a replica of the live table's schema. In both cases the first `INSERT` raises and no row is written.
-
-The error then disappears through three layers:
-
-1. `sync_features_file` catches it and re-raises it as `RuntimeError` (`database.py:649-650`).
-2. `sync_file_to_database` — the function every pipeline stage calls — catches every exception and returns `False` (`database.py:857-858`).
-3. Every caller either ignores that return value or logs at warning or debug level. `orchestrator.py:2130` logs `"Database sync skipped ... (subject not in DB or DB unavailable)"` at debug level — a message that names two causes, neither of which is the actual one.
-
-Consequences when reading the current data:
-
-- The `reach_data` table is frozen: no row is imported after commit `5bac3b0`.
-- The flat CSV is frozen too, because the export only runs after a sync that did not raise.
-- The record of which files have been synced (`.mousereach_sync_state.json`) is not updated, because the hash is recorded only after a successful commit (`database.py:641-645`). So `mousereach-sync-status` keeps reporting the same files as pending forever.
-- **No data was lost.** The `DELETE` and the `INSERT`s share one transaction; the first `INSERT` raises, the connection closes without committing, and the delete is rolled back. Verified: a pre-existing row for the video being re-synced was still present after the failed sync.
-
-Restoring `'segment_num'` to the insert list was the whole fix, applied 2026-08-27.
 
 ---
 
@@ -96,7 +36,7 @@ It is called from three places:
 | `reach/core/reach_detector.py:1140-1141` | `_reaches.json` | **does nothing** |
 | `outcomes/core/pellet_outcome.py:1799-1800` | `_pellet_outcomes.json` | **does nothing** |
 
-The watcher (`watcher/orchestrator.py`), the Run Pipeline tab's "Run chosen videos..." (`pipeline/run_all.py`, which now runs the watcher's own steps, `watcher/run_one.py`) and the bring-current routine (`pipeline/reprocess_to_current.py`) used to be on this list, pushing the features file of a video they filed; none of them calls `sync_file_to_database` any more (bring-current's `sync_db` argument is accepted and ignored), and the database tool pulls filed results from Analyzed itself.
+The watcher (`watcher/orchestrator.py`), the Run Pipeline tab's "Run chosen videos..." (`pipeline/run_all.py`, which now runs the watcher's own steps, `watcher/run_one.py`) and the bring-current routine (`pipeline/reprocess_to_current.py`) are not on this list: none of them calls `sync_file_to_database` any more (bring-current's `sync_db` argument is accepted and ignored), and the database tool pulls filed results from Analyzed itself.
 
 The last two return immediately at the file-name check (`database.py:832-833`). They look like sync points and are not. They have never written anything.
 
@@ -126,7 +66,7 @@ A file is skipped, silently, unless all of these hold:
 
 1. The name ends in `_features.json` (`database.py:832`, `database.py:511`).
 2. The video name carries an animal id that `AnimalID.parse` accepts (`{PROJECT}{CC}{SS}`), or the form `{PROJECT}_CC_SS` (`parse_subject_id`): `CNT0115` becomes `CNT_01_15`, `ASPA1011` becomes `ASPA_10_11`. A name with no parseable animal id is skipped.
-3. ~~The subject already exists in the `subjects` table.~~ **Changed 2026-08-28.** A subject the database has never heard of is now CREATED from the video name -- with its cohort and project if those are missing too -- by `DatabaseSyncer.ensure_subject_exists`, called on both the per-video and the batch path. The reason is the usual order of events in a lab: videos are recorded and shipped every day, while the tracking sheet that names the animals may be filled in much later. Gating the machine data on the hand data meant one failing sheet import could silently drop an entire cohort's results. The created cohort gets the video's date as a placeholder `start_date` (the column is NOT NULL) and `notes` beginning `auto-created from video`; mousedb's sheet import recognises that marker and replaces the placeholder with the real start date when the sheet is finally imported. A subject or cohort that already exists is never touched. (Also as of 2026-08-27, non-`CNT` names such as ASPA are parsed via `AnimalID.parse`, so item 2's "anything not named CNT is dropped" is no longer true either.)
+3. ~~The subject already exists in the `subjects` table.~~ A subject the database has never heard of is CREATED from the video name -- with its cohort and project if those are missing too -- by `DatabaseSyncer.ensure_subject_exists`, called on both the per-video and the batch path. The reason is the usual order of events in a lab: videos are recorded and shipped every day, while the tracking sheet that names the animals may be filled in much later. Gating the machine data on the hand data meant one failing sheet import could silently drop an entire cohort's results. The created cohort gets the video's date as a placeholder `start_date` (the column is NOT NULL) and `notes` beginning `auto-created from video`; mousedb's sheet import recognises that marker and replaces the placeholder with the real start date when the sheet is finally imported. A subject or cohort that already exists is never touched. (Non-`CNT` names such as ASPA are parsed via `AnimalID.parse`, so item 2's "anything not named CNT is dropped" does not hold.)
 4. For the batch path only: the file's contents changed since last time. `needs_sync` (`database.py:520`) compares the first 16 hex characters of the file's SHA-256 against `.mousereach_sync_state.json`, which lives inside the `Processing` folder. Delete that file and everything re-syncs.
 
 `check_database` (`database.py:466`) refuses to do anything when no central database is configured, or if the database file has no `subjects` table (`database.py:479-480`), and the engine refuses if the database file does not exist (`database.py:370-371`).
@@ -221,7 +161,7 @@ The insert list is `ALL_COLUMNS` (`database.py:84-92`), 62 names (`segment_num` 
 
 **Which pellet (1 column)**
 
-`segment_num` is read from the enclosing segment, never from the reach (`database.py:568`). This is deliberate: reaches used to carry a copy that was always `0`. It is in the insert list (`ALL_COLUMNS`).
+`segment_num` is read from the enclosing segment, never from the reach (`database.py:568`). This is deliberate: a reach's own copy was always `0`. It is in the insert list (`ALL_COLUMNS`).
 
 **The reach measurements (41 columns)**
 
@@ -263,7 +203,7 @@ Six columns, all read from `{video}_processing_manifest.json` sitting next to th
 
 Each version is whatever that stage stamped into its own output file (`manifest.py:152-158`, `manifest.py:233-236`), so these columns record what each stage *claimed*, which is only as good as the stage's stamp.
 
-That distinction is not academic. Until commit `61d98b9` the segmenter stamped a constant belonging to a different module than the one that actually cut the boundaries, so `segmenter_version` records the writing module's number rather than the running segmenter's.
+That distinction is not academic. The segmenter can stamp a constant belonging to a different module than the one that actually cut the boundaries, so `segmenter_version` records the writing module's number rather than the running segmenter's.
 
 **If the manifest is missing or unreadable, all six columns are `NULL` and nothing is logged** (`database.py:437-438`, `database.py:463-464`). A null here is indistinguishable from a manifest that genuinely recorded nothing.
 
@@ -273,7 +213,7 @@ Things the manifest holds that are **not** copied into the database: the reach-a
 
 ## Columns that are declared and never filled
 
-Sync copies each key verbatim, so a key that is null or missing in the features file is `NULL` in the table; whether a column is filled depends only on what the kinematics extractor that wrote the features file put there. The per-reach `outcome` and `interaction_frame` are mostly empty by nature: they are populated only for the reach the outcome stage tied to the pellet. Since 2026-11-19 `interaction_frame` is filled on the causal reach only when the frame lies inside that reach (owner decision: the contact frame is an artifact), so a reach a person picked over the algorithm's contact frame has it null -- a column derived from `interaction_frame` (such as `contact_group`) must not be read as "this reach missed"; read the reach's outcome instead.
+Sync copies each key verbatim, so a key that is null or missing in the features file is `NULL` in the table; whether a column is filled depends only on what the kinematics extractor that wrote the features file put there. The per-reach `outcome` and `interaction_frame` are mostly empty by nature: they are populated only for the reach the outcome stage tied to the pellet. `interaction_frame` is filled on the causal reach only when the frame lies inside that reach (the contact frame is an artifact), so a reach a person picked over the algorithm's contact frame has it null -- a column derived from `interaction_frame` (such as `contact_group`) must not be read as "this reach missed"; read the reach's outcome instead.
 
 `docs/FIELD_AUDIT.md` (generated by `python -m mousereach.pipeline.field_audit --markdown`) is the right tool for the file-by-file view, but do not use it as the authority on the table: it reads only the videos judged "finished and current at every stage" and takes the database side from a parquet snapshot, so its database figures can differ widely from the table's. Query the table when you want to know what is in the table.
 
@@ -301,11 +241,11 @@ It is a full dump of the whole table each time, ordered by subject, date, video,
 
 **What it contains:** 57 columns, listed explicitly in the query at `database.py:760-781`. Seven ordinary columns of the table are **not** exported: `outcome_source`, `reviewed_by`, `algo_outcome`, `algo_causal_reach_id`, `extended_features`, `test_phase` and `phase_group`. Anyone working from the CSV cannot see whether a reach's outcome came from the algorithm or from a human reviewer, and cannot see any per-paw measurement. The row `id` and the two generated columns are also absent.
 
-**Header alignment.** The header now comes from the query's own column names (`database.py:792`). It used to be a separately maintained list, and on 2026-08-20 the two drifted: the header was written from `ALL_COLUMNS` while the rows came from the `SELECT`, so 61 names sat over 57-value rows and every column from the sixth onward was mislabelled. **A dump written before the fix is that broken one**: the header has 61 names, every row has 57 values, and the column headed `causal_reach` holds outcome strings such as `displaced_sa`. Treat such a `reach_data.csv` as unusable for anything keyed on column name.
+**Header alignment.** The header comes from the query's own column names (`database.py:792`). A separately maintained list can drift from the `SELECT`: the header was written from `ALL_COLUMNS` while the rows came from the `SELECT`, so 61 names sat over 57-value rows and every column from the sixth onward was mislabelled. **A dump written before the fix is that broken one**: the header has 61 names, every row has 57 values, and the column headed `causal_reach` holds outcome strings such as `displaced_sa`. Treat such a `reach_data.csv` as unusable for anything keyed on column name.
 
 The next successful sync rewrites it with the correct header.
 
-**Failures.** The export catches everything and logs a warning (`database.py:804-809`). It used to catch everything and say nothing, which made an export that failed every time look exactly like one that succeeded.
+**Failures.** The export catches everything and logs a warning (`database.py:804-809`). Catching everything and saying nothing would make an export that failed every time look exactly like one that succeeded.
 
 ---
 
@@ -340,7 +280,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 `watcher.py:89-90` and `watcher.py:113-114` log sync failures at error level, which is the one path that says anything useful.
 
-`watchdog` is an optional dependency, declared under the `sync` extra in `pyproject.toml`; `sqlalchemy` is a core dependency since 2026-11-19 (it was in the `sync` extra before, and a plain install could not reach the watcher's coordination database). Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it.
+`watchdog` is an optional dependency, declared under the `sync` extra in `pyproject.toml`; `sqlalchemy` is a core dependency (in the `sync` extra only, a plain install could not reach the watcher's coordination database). Without `sqlalchemy` the engine raises `ImportError` (`database.py:368-369`) and the per-video path swallows it.
 
 ---
 
@@ -350,7 +290,7 @@ Collected in one place, because these are the reasons a write can produce nothin
 
 ---
 
-## a sync that does not happen is now loud
+## a sync that does not happen is loud
 
 `sync_file_to_database` returning False -- the video's results did NOT reach
 the results database (central_db) -- was logged at debug level and treated as a normal skip; the
@@ -360,29 +300,27 @@ step audit table and log a warning naming the video. The GPU node's local
 path, which never even checked the return value, checks it now. Feature
 extraction failures on that path also write a `failed` audit row.
 
-## Update 2026-11-19 (filed is final)
+## filed is final
 
 A filed video's results in Analyzed are not re-made by newer algorithm versions any more, so what a
 database integrator pulled for a filed video stays the answer, except for kinematics (which may be
 recalculated, without changing the filed decisions). When a person reopens a filed video, its filed
 files stay in Analyzed until the new run is filed and replaces them; an integrator that leaves out a
 filed video whose newer run waits in a review queue keeps doing so. See docs/PIPELINE_AS_BUILT.md,
-"Update 2026-11-19 (filed is final)".
+"filed is final".
 
-## Update 2026-11-19 (session flags)
+## session flags
 
 Every features file now carries `session_flag`: the note a person made with the review window's
 Flag Session button on the video's mouse+day session (`flagged_by`, `flagged_at`, `reason`,
 `session_key`), or null. Export it as a marker column; do not leave a flagged session out or treat
-it differently because of it (lab decision 2026-11-19: a flag is only recorded so it can be found).
+it differently because of it (a flag is only recorded so it can be found).
 Filed videos receive it through a kinematics-only recalculation when their session is flagged later.
-See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (session flags are only recorded)".
+See docs/PIPELINE_AS_BUILT.md, "session flags are only recorded".
 
 ## a reach before the first cut is synced under no pellet
 
-A reach that starts before the first cut belongs to no pellet (owner decision D2-3). A features file
-written before 2026-11-19 lists such a reach under segment 1; `sync_features_file` now reads the file
+A reach that starts before the first cut belongs to no pellet. An older features file lists such a reach under segment 1; `sync_features_file` reads the file
 through `reach/core/before_first_cut.split_before_first_cut`, so the reach is not written as one of
-pellet 1's rows (and the rest of pellet 1's reaches are renumbered 1..n). Features files written
-since list it only at the top level (`reaches_before_first_cut`), which this sync does not write as a
+pellet 1's rows (and the rest of pellet 1's reaches are renumbered 1..n). Newer features files list it only at the top level (`reaches_before_first_cut`), which this sync does not write as a
 reach row. The features file on disk is never changed.

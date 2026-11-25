@@ -2,9 +2,7 @@
 
 Describes: `src/mousereach/assignment/` (`run.py`, `cli.py`, `v1/assign.py`, `v2/assign.py`, `v2/triage_reduction.py`), plus the callers that write and read its output file (`src/mousereach/pipeline/run_all.py`, `src/mousereach/pipeline/reprocess_to_current.py`, `src/mousereach/watcher/orchestrator.py`, `src/mousereach/review/staging.py`, `src/mousereach/review/triage_status.py`, `src/mousereach/review/causal_review_widget.py`, `src/mousereach/pipeline/manifest.py`, `src/mousereach/archive/supersede.py`)
 
-Verified against: b65fcf0 (2026-08-23)
-
-Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
 ---
 
@@ -27,9 +25,9 @@ There are two implementations in the tree and they are not both live.
 | Path | Version | Where it runs |
 |---|---|---|
 | `assignment/v2/assign.py` → `assign_reaches_v2` | `2.1.0` (`v2/assign.py:40`) | **Everything in production.** |
-| `assignment/v1/assign.py` → `assign_reaches_v1` | `1.0.0` (`v1/__init__.py:25`) | Nothing. Retained for provenance; the command line tool stopped calling it in 2026-08. |
+| `assignment/v1/assign.py` → `assign_reaches_v1` | `1.0.0` (`v1/__init__.py:25`) | Nothing. Retained for provenance; the command line tool does not call it. |
 
-The command line tool `mousereach-assign-reaches` (declared in `pyproject.toml`, implemented at `assignment/cli.py` `main_batch`) calls the same `assign_reaches_for_video` the pipeline calls, so it also runs **v2** — verified by re-running it on an archived video and getting the identical per-reach table. Until 2026-08 it called **v1** instead: running it over a processing folder by hand overwrote the v2 file at the same path with a v1 file carrying `"detector": "assignment_v1"` and a weaker set of decisions — v1 has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`. Any `_reach_assignments.json` stamped `1.0.0` dates from that.
+The command line tool `mousereach-assign-reaches` (declared in `pyproject.toml`, implemented at `assignment/cli.py` `main_batch`) calls the same `assign_reaches_for_video` the pipeline calls, so it also runs **v2** — verified by re-running it on an archived video and getting the identical per-reach table. It does not call **v1**, which has no agreement test, commits whichever reach contains the interaction frame, and labels every reach in a triaged segment `triaged`; a v1 file carries `"detector": "assignment_v1"`, and any `_reach_assignments.json` stamped `1.0.0` was made by v1.
 
 Nothing warned about that overwrite at the time, and version tracking would not have caught it either: the processing manifest records each stage's version when the manifest is written (`pipeline/manifest.py:233-236`), and the repair pass that reads versions back off disk only fills in blanks — it never corrects a version already recorded (`manifest.py:376-391`). A manifest saying `2.1.0` can therefore sit next to a file saying `1.0.0`.
 
@@ -49,9 +47,9 @@ Production entry points, all of which run v2:
 - `{video}_pellet_outcomes.json`
 - the DeepLabCut pose file (`.h5`), loaded at `run.py:61`
 
-If any of the first three is missing it logs a warning and returns `None` (`run.py:52-59`), and `run.py` writes no output file. (Update 2026-11-18.) Under the watcher, a `None` result -- like an exception -- counts as a failure: `_hold_for_failed_assignment` (`watcher/orchestrator.py`) writes `<video>_reach_assignments.json` naming no causal reach and carrying `"assignment_failed": "<reason>"`, which triages every touched pellet. `reprocess_to_current` still writes nothing on `None`. See "How failure behaves".
+If any of the first three is missing it logs a warning and returns `None` (`run.py:52-59`), and `run.py` writes no output file. Under the watcher, a `None` result -- like an exception -- counts as a failure: `_hold_for_failed_assignment` (`watcher/orchestrator.py`) writes `<video>_reach_assignments.json` naming no causal reach and carrying `"assignment_failed": "<reason>"`, which triages every touched pellet. `reprocess_to_current` still writes nothing on `None`. See "How failure behaves".
 
-Three helper functions in the command line module (`assignment/cli.py`, which since 2026-08 itself calls `assign_reaches_for_video`) do the joining, and `run.py:62-63` uses them:
+Three helper functions in the command line module (`assignment/cli.py`, which itself calls `assign_reaches_for_video`) do the joining, and `run.py:62-63` uses them:
 
 - `cli.py:50` `_segment_bounds_from_segmentation` turns the segments file into `(start_frame, end_frame)` pairs. It accepts two shapes; production files carry a `boundaries` list of frame numbers and no `segments` key, so the second branch runs (`cli.py:67-74`): segment *i* runs from `boundaries[i]` to `boundaries[i+1] - 1`, and segment numbers start at 1 (`cli.py:92`).
 - `cli.py:106` `_reaches_list` flattens the reaches file. Production reaches files are nested (`segments: [{reaches: [...]}]`), so the second branch runs (`cli.py:119-128`) and stamps each reach with the `segment_num` of the block it came from.
@@ -159,7 +157,7 @@ Then (`triage_reduction.py:201-258`):
 
 If this pass somehow labels every reach a miss, the whole segment is reverted to fully triaged (`triage_reduction.py:344-346`) — the outcome has to be attributable to something.
 
-**The optional computer-vision confirmation is never used by the pipeline's assignment step.** `compute_pellet_states` and `reduce_triaged_segment` accept `cv_state` / `cv_valid` arguments that would recover on-pillar frames the keypoint dropped, and would let `off -> off` be trusted unconditionally. `v2/assign.py:376-377` calls `reduce_triaged_segment` without them, so `cv_verified` is always `False` in every assignment file (`triage_reduction.py:332`). (Update 2026-11-18.) The napari causal review tool does pass them (`review/causal_review_widget.py`, where it re-runs `reduce_triaged_segment` to choose which reaches to show), so the CV branch at `triage_reduction.py:130-136` does run there.
+**The optional computer-vision confirmation is never used by the pipeline's assignment step.** `compute_pellet_states` and `reduce_triaged_segment` accept `cv_state` / `cv_valid` arguments that would recover on-pillar frames the keypoint dropped, and would let `off -> off` be trusted unconditionally. `v2/assign.py:376-377` calls `reduce_triaged_segment` without them, so `cv_verified` is always `False` in every assignment file (`triage_reduction.py:332`). The napari causal review tool does pass them (`review/causal_review_widget.py`, where it re-runs `reduce_triaged_segment` to choose which reaches to show), so the CV branch at `triage_reduction.py:130-136` does run there.
 
 **The whole reduction pass is wrapped in a bare `except Exception: pass`** (`v2/assign.py:381-382`). If it raises for any reason, the segment stays fully triaged and nothing is logged.
 
@@ -173,7 +171,7 @@ You can nevertheless tell from the output file whether it ran. On a non-empty se
 | `causal_displaced_sa` | Both signals agreed on this reach, and the outcome was `displaced_sa`. This reach knocked the pellet off the pillar. |
 | `miss` | Everything else that is decided: a non-causal reach in a committed segment, any reach in an untouched segment, any reach in a segment with no outcome, or a reach the triage-reduction pass proved innocent. |
 | `triaged` | A human still has to look at this reach. Either the outcome stage triaged the segment, or the two signals here disagreed — and the reduction pass could not rule this reach out. |
-| `unassigned` | The reach could not be placed in any segment. Since 2026-11-19 this includes every reach that starts before the first cut (owner decision: it belongs to no pellet), whatever segment number an older reaches file gave it; such a reach also carries `before_first_cut: true`. |
+| `unassigned` | The reach could not be placed in any segment. This includes every reach that starts before the first cut (it belongs to no pellet), whatever segment number an older reaches file gave it; such a reach also carries `before_first_cut: true`. |
 | `causal_abnormal_exception` | **Never produced.** See below. |
 
 `causal_abnormal_exception` is listed in the v2 module docstring (`v2/assign.py:21`) and is genuinely produced by v1 (`v1/assign.py:54-55`). In v2 it cannot occur: `abnormal_exception` is not in `TOUCHED_OUTCOMES` (`v2/assign.py:298`), so such a segment gets no decision and all its reaches fall through to `miss` (`v2/assign.py:429-432`). This is currently harmless because the live outcome detector never emits that outcome either — grepping `committed_class=` across `outcomes/v6_cascade/` yields only `untouched`, `retrieved` and `displaced_sa` (the three variable-class stages resolve to `displaced_sa` or `retrieved` at `stage_21_...py:414,478` and `stage_24_transition_triangulation.py:253,255`). But the docstring is wrong about what the code can output.
@@ -231,13 +229,13 @@ One optional key:
 
 **No kinematic values appear here.** No velocity, no extent, no apex. This file is a labelling table only.
 
-**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The writers of `_reach_assignments.json` in `src/` are `run.py:73` (also used by the command line tool and by `reprocess_to_current`), `staging.py:333`, and (Update 2026-11-18) the watcher's `_hold_for_failed_assignment`, which writes a no-causal-reach file carrying `"assignment_failed"` when assignment fails. Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
+**Human review never edits this file.** Reviewer answers go into `{video}_causal_review.json` (`review/causal_review_io.py:278`). The writers of `_reach_assignments.json` in `src/` are `run.py:73` (also used by the command line tool and by `reprocess_to_current`), `staging.py:333`, and the watcher's `_hold_for_failed_assignment`, which writes a no-causal-reach file carrying `"assignment_failed"` when assignment fails. Rebuilding a review bundle re-runs the whole chain and overwrites it (`staging.py:298-333`).
 
 ## Who reads it — and who does not
 
 ### Nothing in the scientific data path reads `is_causal` (until extractor 2.1.0)
 
-> **Update 2026-11-18: this subsection describes the code before kinematics extractor 2.1.0.** Since 2.1.0 the kinematics extractor reads `<video>_reach_assignments.json` (`kinematics/core/feature_extractor.py`) and carries the credited reach into `causal_reach` in the features file and the database, beneath human review and ground truth (see "Update 2026-08-23" at the end, and `docs/KINEMATICS_FIELDS.md`, "Who owns a causal reach"). The paragraphs below are kept as the record of the earlier state.
+> **this subsection describes the code before kinematics extractor 2.1.0.** Since 2.1.0 the kinematics extractor reads `<video>_reach_assignments.json` (`kinematics/core/feature_extractor.py`) and carries the credited reach into `causal_reach` in the features file and the database, beneath human review and ground truth (see "is_causal is consumed now" at the end, and `docs/KINEMATICS_FIELDS.md`, "Who owns a causal reach"). The paragraphs below are kept as the record of the earlier state.
 
 The per-reach feature table and the database never see this file. The watcher's kinematics step (`watcher/orchestrator.py`, `_make_features`) shows the handoff: the kinematic extractor is given the pose file, the reaches file, the outcomes file and the human review file. The assignment file is not passed and is not opened. Grepping `kinematics/`, `export/`, `analysis/` and `sync/` for `reach_assignments` or `ASSIGN_SUFFIX` returns nothing.
 
@@ -248,7 +246,7 @@ The per-reach feature table and the database never see this file. The watcher's 
 Where analysis code does use the word "causal", it gets its answer from somewhere else:
 
 - `analysis/data.py:419` reads a field called `causal_reach` and calls the resulting column `is_causal`. That line is inside `load_features_from_json` (`data.py:354`), so it comes from the **features** file. The reaches loader (`data.py:280-353`) never touches it.
-- That `causal_reach` field is set by the kinematics stage, not here: `kinematics/core/feature_extractor.py:379-382` sets it on the reach whose id equals the outcome document's `causal_reach_id`. The v6 cascade never writes `causal_reach_id` (`outcomes/v6_cascade/detector.py:247-268` has no such key). It arrives from a human causal review applied in memory at extraction time (the picked reach found by its frames in the final reach list, so a ground-truth reach list that replaced the detected one still credits the reach the person picked) (`review/causal_review_io.py:496-499`, reached via `feature_extractor.py:222-237`, with the review path supplied by the watcher's kinematics step), or from a ground-truth overlay (`review/truth_resolver.py`, `_apply_outcome_layers`: the reach holding the ground truth's interaction frame; a causal reach id stored in a ground-truth file is never used, and with no such reach the review's pick of the same outcome, else this step's answer, applies; a ground-truth outcome of "uncertain" or none is no answer and overlays nothing, so the review's answer, else this step's, applies -- `causal_review_io.gt_outcome_is_answer`, since 2026-11-20). A separate offline napari widget also writes it (`kinematics/_reach_outcome_validator.py:579-584`). `docs/FIELD_AUDIT.md` shows `causal_reach` populated on only a small share of rows, roughly the share of segments a person has reviewed. Since the extractor merges this step's answer itself (`reach_assignments.json`, extractor 2.1.0), this step's pick lands on every touched segment no person decided; a person's pick is kept, and a review that marks a pellet touched without picking a reach takes this step's pick (the person did not say which reach). Who counts as having decided is read from the truth layering's stamps, not from whether the outcome file holds a `causal_reach_id` key -- a legacy outcome file writes that key on every segment, and its guess no longer blocks this step's answer (`causal_reach_owned_by_person`; table in `docs/KINEMATICS_FIELDS.md`, "Who owns a causal reach").
+- That `causal_reach` field is set by the kinematics stage, not here: `kinematics/core/feature_extractor.py:379-382` sets it on the reach whose id equals the outcome document's `causal_reach_id`. The v6 cascade never writes `causal_reach_id` (`outcomes/v6_cascade/detector.py:247-268` has no such key). It arrives from a human causal review applied in memory at extraction time (the picked reach found by its frames in the final reach list, so a ground-truth reach list that replaced the detected one still credits the reach the person picked) (`review/causal_review_io.py:496-499`, reached via `feature_extractor.py:222-237`, with the review path supplied by the watcher's kinematics step), or from a ground-truth overlay (`review/truth_resolver.py`, `_apply_outcome_layers`: the reach holding the ground truth's interaction frame; a causal reach id stored in a ground-truth file is never used, and with no such reach the review's pick of the same outcome, else this step's answer, applies; a ground-truth outcome of "uncertain" or none is no answer and overlays nothing, so the review's answer, else this step's, applies -- `causal_review_io.gt_outcome_is_answer`). A separate offline napari widget also writes it (`kinematics/_reach_outcome_validator.py:579-584`). `docs/FIELD_AUDIT.md` shows `causal_reach` populated on only a small share of rows, roughly the share of segments a person has reviewed. Since the extractor merges this step's answer itself (`reach_assignments.json`, extractor 2.1.0), this step's pick lands on every touched segment no person decided; a person's pick is kept, and a review that marks a pellet touched without picking a reach takes this step's pick (the person did not say which reach). Who counts as having decided is read from the truth layering's stamps, not from whether the outcome file holds a `causal_reach_id` key -- a legacy outcome file writes that key on every segment, and its guess no longer blocks this step's answer (`causal_reach_owned_by_person`; table in `docs/KINEMATICS_FIELDS.md`, "Who owns a causal reach").
 - `analysis/data.py:1249` `derive_reach_outcomes` re-implements causal attribution from scratch: it takes the reach containing `interaction_frame`, and if none contains it, falls back to the last reach ending before it (`:1286-1296`). That is Signal A alone, with an extra fallback this stage deliberately does not have, and with no agreement test. It is called from `analysis/cli.py:188`. Its answers can differ from this file's, and nothing reconciles the two.
 
 So the two-signal agreement gate — the thing this stage exists to provide — currently influences nothing downstream of the review queue.
@@ -264,7 +262,7 @@ So the two-signal agreement gate — the thing this stage exists to provide — 
 
 ## How failure behaves
 
-> **Update 2026-11-18:** under the watcher, a missing input or an exception now HOLDS the video: `_hold_for_failed_assignment` writes a no-causal-reach file carrying `"assignment_failed"`, and every touched pellet is triaged for a person (see "Update 2026-11-15" at the end). Only `reprocess_to_current` still records the error and writes nothing. A video with no assignment file at all (processed before this stage existed) still contributes no triage. The first two bullets and the "safety net does not fire" bullet below describe the watcher before that change.
+> under the watcher, a missing input or an exception now HOLDS the video: `_hold_for_failed_assignment` writes a no-causal-reach file carrying `"assignment_failed"`, and every touched pellet is triaged for a person (see "a failed assignment holds the video in triage" at the end). Only `reprocess_to_current` still records the error and writes nothing. A video with no assignment file at all (processed before this stage existed) still contributes no triage. The first two bullets and the "safety net does not fire" bullet below describe the watcher before that change.
 
 - **A missing input** → warning logged, `None` returned, no file written (`run.py:52-59`).
 - **An exception during assignment, under the watcher** → caught and logged as a warning; the video continues through the pipeline (`orchestrator.py:1081-1082`, `:2015-2016`). On the second path the "assignment completed" step log at `:2013-2014` is skipped and no "failed" step is recorded either, so the watcher database shows the step started and never finished.
@@ -282,7 +280,7 @@ There is essentially none. Every threshold in both signals and in the triage-red
 | Tray type in the video filename | `watcher/orchestrator.py:1062,1971` (the Run Pipeline tab's "Run chosen videos..." runs these) | Tray types `E` and `F` skip outcome detection **and** this stage entirely. No assignment file is produced for them. `reprocess_to_current.py:215-216` has no such check and runs the stage regardless. |
 | `write=True` (default) | `run.py:37` | Set `False` to compute the result and return it without writing the file. |
 | `window=10` | `v2/assign.py:218` | **Has no effect.** It is accepted, documented as "kept for API symmetry" (`:238-240`), and never referenced in the function body. |
-| `cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. Never supplied by the pipeline's assignment step; supplied by the napari causal review tool (Update 2026-11-18). |
+| `cv_state` / `cv_valid` | `triage_reduction.py:283-284` | Would enable the computer-vision confirmation. Never supplied by the pipeline's assignment step; supplied by the napari causal review tool. |
 | `lk_threshold=0.5` | `v2/assign.py:87` | The pellet-confidence floor for Signal B. Never overridden by the one caller. |
 
 ---
@@ -299,8 +297,6 @@ opening the code yourself.** Everything not listed survived two passes.
   - disputed because: A caller does supply them. The napari causal review tool passes both arguments into `reduce_triaged_segment`, and it is user-facing production software with a documented flag to switch it on. When that flag is set, `cv_verified` is True, so the `off -> off` branch at triage_reduction.py:224 trusts the state unconditionally, and the CV branch at triage_reduction.py:130-136 executes. What IS true is
 - **Output field table: "`reach_id` | int | Copied from the reaches file. Unique within a video, 1-based, **and it skips numbers**."**
   - disputed because: It does not skip numbers. Reach ids are a contiguous run starting at 1 in every assignment file in the corpus, without exception. The rest of the row is correct (copied from the reaches file, unique, 1-based, falls back to list position at v2/assign.py:390 — and that fallback never fires in the corpus, since no file has a 0-based minimum). The "skips numbers" clause should be cut, or replaced with
-- **Header: "Verified against: `eda9d78` (branch `master`, 2026-08-21; working tree clean and identical to it)."**
-  - disputed because: `eda9d78` is no longer the tip of master, and the working tree is not clean. This is the one line a reader uses to decide whether the rest of the document is current, so it has to be right. Nothing in the body breaks — I checked both files the newer commit touched and every cited line still resolves — but the provenance line needs updating to `4c54e46` (and the dirty-tree claim dropped or re-check
 - **"grepping `committed_class=` across `outcomes/v6_cascade/` yields only `untouched`, `retrieved` and `displaced_sa` (**the three variable-class stages** resolve to `displaced_sa` or `retrieved` at `stage_21_...py:414,478` and `stage_24_transition_triangulation.py:253,255`)"**
   - disputed because: There are two variable-class stages, not three. The four cited line numbers are all correct and the overall conclusion (the v6 cascade cannot emit `abnormal_exception` or `displaced_outside`) is correct — only the count is wrong. Two further nits in the same sentence: the third `committed_class=committed_class` site is a calibration harness, not a cascade stage, and the grep also yields a `None` (
 - **"**`outcome_known_frame` is merged and then never read by v2** — grep it in `v2/assign.py` and there are no hits."**
@@ -310,13 +306,11 @@ opening the code yourself.** Everything not listed survived two passes.
 
 ## is_causal is consumed now
 
-The headline defect this document described -- nothing downstream reads
-`is_causal` -- is fixed at extractor 2.1.0: kinematics loads the assignment
+Since extractor 2.1.0 kinematics loads the assignment
 file and carries the credited reach into the features (and from there the
 database), beneath the human-review and ground-truth layers. An assignment
 failure in the watcher now also writes a `failed` row to the step audit table
-on both machine roles, so it is countable; it previously left only a
-started/completed count mismatch. The gate still does not hold a video whose
+on both machine roles, so it is countable (otherwise it would leave only a started/completed count mismatch). The gate still does not hold a video whose
 assignment never ran -- deliberately, because videos processed before this
 stage existed have no assignment file and would flood triage on their next
 re-gate.
@@ -339,11 +333,11 @@ triage on a re-gate. A re-run of such a video runs assignment, and then either h
 is held as above. The "How failure behaves" section above describes the behaviour before this
 change.
 
-## Update 2026-11-19 (filed is final)
+## filed is final
 
 A new version of this algorithm is used only for videos that are not filed yet. A filed video's
 result from this step is final: the version scan never marks a filed video to run this step again,
 and a filed video's kinematics-only re-run never recomputes it (if the filed output is missing, that
 re-run is given up and the filed results stand). To see how a new version would do on filed videos,
 use the evaluation tools (or bring-current without finalize); they write outside Analyzed and never
-replace a filed file. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
+replace a filed file. See docs/PIPELINE_AS_BUILT.md, "filed is final".

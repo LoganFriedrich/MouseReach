@@ -114,8 +114,8 @@ def build_video_reaches(
 
     # ------------------------------------------------------------------
     # 1. Assign every span to a segment by reach-START containment.
-    #    A span that starts BEFORE THE FIRST CUT belongs to no pellet (owner
-    #    decision D2-3, before_first_cut.py): it goes into the file's own
+    #    A span that starts BEFORE THE FIRST CUT belongs to no pellet
+    #    (before_first_cut.py): it goes into the file's own
     #    ``reaches_before_first_cut`` list, never into segment 1. Any other
     #    orphan (start not inside any segment -- not possible with segments
     #    built by segments_from_boundaries, whose last segment runs to the end

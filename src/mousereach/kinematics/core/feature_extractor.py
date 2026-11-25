@@ -198,7 +198,7 @@ class VideoFeatures:
     frame_rate: Optional[float] = None
     frame_rate_source: Optional[str] = None
     # Reaches that start before the first cut: no pellet's, so in no segment
-    # and not measured (owner decision D2-3, reach/core/before_first_cut.py).
+    # and not measured (reach/core/before_first_cut.py).
     # Listed so the file still says they happened: reach_id, start_frame,
     # end_frame, reach_source. None when there are none.
     reaches_before_first_cut: Optional[List[Dict]] = None
@@ -310,7 +310,7 @@ def reach_outcome_of(reach: dict, outcome_data: dict) -> Tuple[Optional[str], Op
     """(reach_outcome, reach_outcome_source) for one reach of a pellet (the
     ReachFeatures fields say what they mean).
 
-    WHY (owner rule 2026-11-19): a person naming the causal reach of a pellet
+    WHY: a person naming the causal reach of a pellet
     also answers every other reach of it -- they all missed, whether or not
     anyone watched them -- and "untouched" means every reach missed. One
     answered reach of fifty is fifty known reach outcomes; the results must
@@ -351,11 +351,11 @@ def pair_segments_by_number(reach_segments, outcome_segments):
     not describe the same pellets. Any problem means no pairing is trusted:
     the caller raises KinematicsProblem and writes nothing.
 
-    WHY by number and not by position: the two lists used to be zipped by
-    position. If the two files disagree on how many pellets there are, or list
-    them in another order, a zip pairs a pellet's reaches with ANOTHER pellet's
-    outcome and causal reach, and nothing said so -- the kinematics, the
-    outcome and the causal-reach flag of every reach after the first gap were
+    WHY by number and not by position: zipping the two lists by
+    position fails if the two files disagree on how many pellets there are, or list
+    them in another order: a zip pairs a pellet's reaches with ANOTHER pellet's
+    outcome and causal reach, and nothing says so -- the kinematics, the
+    outcome and the causal-reach flag of every reach after the first gap are
     filed against the wrong pellet. Pairing by number either pairs a pellet
     with its own outcome or stops.
 
@@ -436,7 +436,7 @@ class KinematicsProblem(Exception):
     (pair_segments_by_number), or -- in a
     kinematics-only re-run of a filed video (``keep_filed``) -- the filed
     features file cannot be read. (A difference from the filed decisions is
-    no longer a reason: since 2026-11-21 a person's answer is always applied
+    not a reason: a person's answer is always applied
     and the rest stays as filed, filed_decisions.settle_against_filed.)
     ``problems`` lists each one in words for a person.
 
@@ -463,7 +463,7 @@ class RecutVoidedAnswers(KinematicsProblem):
 
     NOT raised for an answer a re-cut voided because its pellet's frames
     moved: such an answer is dropped and the pellet takes the re-run
-    algorithms' call (owner ruling 2026-11-21).
+    algorithms' call.
 
     WHY a refusal and not the algorithm's call: the person's answer still
     stands on that footage; filing the algorithm's call unasked would put it
@@ -485,12 +485,12 @@ class RecutVoidedAnswers(KinematicsProblem):
 class FeatureExtractor:
     """Extract features from reaches linked to outcomes."""
 
-    VERSION = "2.6.0"  # 2.6 (2026-11-17): adds the legacy_swipe_* group to the
+    VERSION = "2.6.0"  # 2.6: adds the legacy_swipe_* group to the
                        # extended block (legacy_swipe.py): an earlier swipe-measure
                        # definition reproduced on each reach, for continuity with
                        # analyses built on it. Kept separate from 2.5.0 because 2.5.0
                        # output without these columns already exists.
-                       # 2.6 also (2026-11-18, folded in before 2.6.0 was declared or
+                       # 2.6 also (folded in before 2.6.0 was declared or
                        # deployed, so no 2.6.0 output exists without it): ONE frame
                        # convention, first and last frame both included
                        # (causal_review_io.reach_file_segment_span). The reaches file
@@ -512,7 +512,7 @@ class FeatureExtractor:
                        # Reach start/end frames are unchanged. So 2.6.0 changes
                        # those values as well as adding columns; no earlier version
                        # is compatible.
-                       # 2.5 (2026-11-17), also: speeds read through repeated frames
+                       # 2.5, also: speeds read through repeated frames
                        # (anchored_path.fill_repeated_frames). A video whose recorder
                        # repeats a picture until the camera sends a new one has steps
                        # of nothing followed by steps of two frames' movement, so peak
@@ -522,7 +522,7 @@ class FeatureExtractor:
                        # (wrist and per point), both smoothness values and
                        # paw_velocity_correlation change; positions, paths, lengths,
                        # straightness and mean speed do not.
-                       # 2.5 (2026-11-17): seconds come from the video's own frame
+                       # 2.5: seconds come from the video's own frame
                        # rate (frame_rate.py) instead of an assumed 30, so on a
                        # 60 frames-per-second video the segment length, time to first
                        # reach, time to outcome and inter-reach interval were twice
@@ -530,21 +530,21 @@ class FeatureExtractor:
                        # wrong time base. The rate and its source are written into
                        # the features file. Changes those values, so no earlier
                        # version is compatible.
-                       # 2.4 (2026-11-02): peak speed and speed at the apex, wrist
+                       # 2.4: peak speed and speed at the apex, wrist
                        # and per-point, leave out the first and last anchor steps
                        # (anchored_path.tracked_steps says why). The path, its length
                        # and straightness still run nose to nose. A last-frame apex
                        # has no speed again, and because these values no longer read
                        # an anchor, a reach with no anchor now has them. Changes
                        # those values, so no earlier version is compatible.
-                       # 2.3 (2026-10-31): every paw-position measurement goes
+                       # 2.3: every paw-position measurement goes
                        # through anchored_hand_path: a reach starts and ends at the
                        # nose, so the frame before detection and the frame after the
                        # paw disappears are part of its path. The flat velocity and
                        # trajectory columns ignored this; the per-paw ones placed the
                        # anchors from the wrong frames. Changes those values, so no
                        # earlier version is compatible. Adds anchor_* columns.
-                       # 2.2 (2026-10-30): a reviewer's ignore windows now take
+                       # 2.2: a reviewer's ignore windows now take
                        # the reaches they touch out of the measurements
                        # (split_reaches_by_ignore_windows); n_reaches counts the
                        # measured reaches and n_reaches_left_out / reaches_left_out
@@ -618,8 +618,8 @@ class FeatureExtractor:
         # Load reaches
         with open(reaches_path) as f:
             reaches_data = json.load(f)
-        # A reach that starts before the first cut belongs to no pellet (owner
-        # decision D2-3): an older reaches file carries it inside segment 1,
+        # A reach that starts before the first cut belongs to no pellet:
+        # an older reaches file carries it inside segment 1,
         # and it is taken out here, before anything maps reaches to pellets.
         from mousereach.reach.core.before_first_cut import (BEFORE_FIRST_CUT_KEY,
                                                             split_before_first_cut)
@@ -693,13 +693,10 @@ class FeatureExtractor:
         # once per process. In a long-running watcher it predates a ground-truth
         # file copied down for a re-run -- the very file the re-run exists to
         # apply -- so the re-run applied no ground truth, or an older one.
-        # Then the video's FILED folder. WHY (2026-11-21, 66 filed videos
-        # filed without their ground truth): a ground-truth file made for a
+        # Then the video's FILED folder. WHY: a ground-truth file made for a
         # filed video lives beside its filed results, and the corpus index
         # covers only the processing tree. A re-run in the processing folder
-        # then found no ground truth and filed without it; the manifest had no
-        # ground-truth stamp yet, so the version scan's time rule called the
-        # older file "applied" and nothing ever applied it.
+        # would find no ground truth and file without it.
         _gt_dirs = [Path(reaches_path).parent]
         try:
             from mousereach.archive.core import get_archive_destination
@@ -737,7 +734,7 @@ class FeatureExtractor:
         # re-cut) but was kept aside, so it cannot be applied, and nobody has
         # answered them on the new cuts. A NEW run asks again in triage
         # (RecutVoidedAnswers). A kinematics-only re-run of a FILED video asks
-        # nothing (owner rule 2026-11-21): no answer applies there now, so the
+        # nothing: no answer applies there now, so the
         # filed decision stands (filed_decisions.settle_against_filed).
         self.recut_voided = list(_applied.get('recut_voided') or [])
         if self.recut_voided and keep_filed is None and ask_voided:
@@ -764,10 +761,10 @@ class FeatureExtractor:
         #   2. Everything else gets algo-4's answer, if it has one -- also a
         #      segment whose outcome file already names a causal reach, as the
         #      legacy outcome detector's files do. WHY not "the key is present,
-        #      so someone owns it" (the rule before): the legacy detector and
+        #      so someone owns it": the legacy detector and
         #      the legacy in-place review tools write the key on every segment,
-        #      so its mere presence blocked the reach assignment's answer and
-        #      shipped the old detector's guess as if a person had made it.
+        #      so its mere presence would block the reach assignment's answer and
+        #      ship the old detector's guess as if a person had made it.
         #
         # This runs AFTER the human-truth layering above, which stamps who
         # decided each segment (outcome_source, causal_reach_source). On
@@ -779,10 +776,9 @@ class FeatureExtractor:
             if _asn is None:
                 # No assignment for this segment. Legal for pre-algo-4 files,
                 # but when it happens on a TOUCHED segment the causal reach is
-                # about to be absent from the output -- and this skip used to
-                # be silent, which is how touched segments shipped with an
-                # outcome and no causal reach before anyone noticed. Count it
-                # and say so below.
+                # about to be absent from the output -- a silent skip would
+                # let touched segments ship with an outcome and no causal
+                # reach. Count it and say so below.
                 if _seg.get('outcome') in ('retrieved', 'displaced_sa', 'displaced_outside'):
                     _unmerged_touched += 1
                 continue
@@ -848,9 +844,8 @@ class FeatureExtractor:
                 refused for that; ``self.changes_from_filed`` says what
                 differs. A re-cut that voided a person's answer is not asked
                 again here either: the filed decision stands on that pellet.
-            owed: accepted for older callers and ignored. Until 2026-11-21 only
-                these kinds of answer could change a filed decision; now every
-                person's answer does (owner rule).
+            owed: accepted for older callers and ignored. Every
+                person's answer can change a filed decision.
 
         Returns:
             VideoFeatures object with all extracted features
@@ -1187,15 +1182,14 @@ class FeatureExtractor:
             features.causal_reach = True
             features.outcome = outcome_data['outcome']
             # The contact frame is attached to the causal reach only when it
-            # lies inside that reach's frames (owner decision D5-3, 2026-11-19:
-            # "contact frame doesn't matter. it's an artifact"; nothing may
+            # lies inside that reach's frames (nothing may
             # depend on it for a reach a person picked). WHY: the frame comes
             # from the outcome algorithm, and when a person names a different
             # causal reach (or gives that reach's frames) the algorithm's
-            # contact frame stays behind on the pellet -- it was attached to
-            # the person's reach anyway, so the export carried a contact frame
-            # outside the reach it is exported with and every at-contact
-            # measure of that reach was empty. Now such a frame is simply not
+            # contact frame stays behind on the pellet -- attaching it to
+            # the person's reach anyway would export a contact frame
+            # outside the reach it is exported with and leave every at-contact
+            # measure of that reach empty. So such a frame is simply not
             # this reach's: interaction_frame None, at-contact measures empty
             # by rule, the reach and its causal credit unaffected. A reach the
             # algorithm picked always holds its frame (reach assignment picks

@@ -79,7 +79,7 @@ def declared_dlc_scorer(max_age_s: Optional[float] = None) -> str:
     """The DLC scorer pipeline_versions.json declares as current ('' if none).
 
     Cached for a minute, not for the life of the process: a watcher that
-    has run since before a model change used to keep preferring the OLD
+    has run since before a model change would keep preferring the OLD
     pose whenever two sat side by side -- exactly the situation a re-pose
     creates. Pass ``max_age_s=0`` to read the declaration now.
     """
@@ -155,12 +155,10 @@ def select_pose_file(candidates, expected_scorer: str = None) -> Optional[Path]:
 # Every pipeline stage that must be version-tracked, and the file + key where
 # that stage records the version it actually ran at.
 #
-# This exists as ONE declaration because the alternative kept failing. The
-# manifest writer used to name its stages by hand and the currency check used
-# its own separate list, so a stage could exist in the pipeline and appear in
-# neither. That is exactly how kinematics went untracked until 2026-08-19, and
-# how assignment was still untracked after it -- every manifest ever written was
-# missing it, so no video could honestly be certified as current at every step.
+# This exists as ONE declaration because the alternative kept failing. A
+# manifest writer that names its stages by hand and a currency check with its
+# own separate list let a stage exist in the pipeline and appear in
+# neither, so no video could honestly be certified as current at every step.
 #
 # Both create_processing_manifest() and compare_manifest_to_current() read this
 # map, so adding a stage here is the only thing needed to make it tracked, and a
@@ -334,11 +332,11 @@ def ground_truth_applied(manifest: Optional[dict], gt_path, gt_mtime=None,
     beside the video now is owed (False), and the kinematics-only re-run
     that follows stamps it, so it is owed once.
 
-    WHY no time rule any more (2026-11-21): "the file is older than the
-    manifest, so it was applied" was how 25 filed videos kept ground
-    truth their kinematics never carried -- the run had not looked where the
-    file was (beside the filed results), and the manifest predated the
-    stamp. A person's answer is always applied (owner rule); being unsure is
+    WHY no time rule: "the file is older than the
+    manifest, so it was applied" lets filed videos keep ground
+    truth their kinematics never carried -- the run may not have looked where the
+    file was (beside the filed results), and the manifest may predate the
+    stamp. A person's answer is always applied; being unsure is
     a reason to apply it, never a reason not to.
 
     An error reading the file answers True (applied): a file that cannot be
@@ -402,10 +400,10 @@ def record_kinematic_version(video_id: str, processing_dir: Path, version: str,
         manifest.setdefault('pipeline_versions', {})['kinematic_extractor'] = version
         # Record WHICH review these kinematics applied, by CONTENT identity
         # (reviewed_at + sha256), never by file mtime. WHY: "is the review
-        # applied yet?" used to be answered by comparing two mtimes stamped by
+        # applied yet?" is not answered by comparing two mtimes stamped by
         # two different clocks -- SMB-written reviews carry the NAS server's
         # clock while archived features keep the local clock (copy2 preserves
-        # it) -- and a NAS clock skew of minutes made every fresh re-run look
+        # it) -- and a NAS clock skew of minutes would make every fresh re-run look
         # staler than the review it had just applied, reprocessing reviewed
         # videos in a loop. No clock can break a content
         # stamp. An absent stamp means this run applied no review.
@@ -478,10 +476,10 @@ def backfill_manifest_versions(root: Path, apply: bool = False,
     version that actually produced it. That value is recoverable without
     recomputing anything.
 
-    This has happened twice now, for the same structural reason: kinematics
-    (fixed 2026-08-19) and assignment (never recorded in any manifest, on any
-    node, ever). So this is written once, over TRACKED_STAGES, rather than once
-    per stage -- whichever stage is missed next, this repairs it.
+    A stage missing from the manifests is a structural risk (kinematics and
+    assignment were each once never recorded). So this is written once, over
+    TRACKED_STAGES, rather than once per stage -- whichever stage is missed
+    next, this repairs it.
 
     Originals are copied to ``archive_dir`` before anything is written. Nothing
     is ever deleted. With ``apply``, a crystallized (publication-locked) video
@@ -691,8 +689,8 @@ def backfill_kinematic_versions(root: Path, apply: bool = False,
     With ``apply`` each manifest is first copied into ``archive_dir`` (as
     backfill_manifest_versions does) and then replaced in one step; a video
     this machine's watcher database calls crystallized (publication-locked)
-    is skipped. WHY: this rewrites filed records in place, and it used to keep
-    no copy and ask no lock.
+    is skipped. WHY: this rewrites filed records in place, so it keeps
+    a copy and takes the lock.
 
     Args:
         root: directory to walk (e.g. the Analyzed tree)

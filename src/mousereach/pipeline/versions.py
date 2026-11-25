@@ -74,7 +74,7 @@ def declaration_drift(declared: dict) -> list:
 
     WHY: this drift has gone invisible twice -- the declaration said segmenter
     2.1.3 while 2.2.3 ran (so the pellet-window gate never marked one video
-    outdated), and kinematic_extractor stayed declared 2.0.0 until 2026-08-29
+    outdated), and kinematic_extractor stayed declared 2.0.0
     (so videos kept causal-reach-less features and nobody was told).
     Both times a human census found it months later. A machine can find it in
     milliseconds, so it does."""
@@ -141,8 +141,8 @@ def get_current_versions(nas_root: Path = None, strict: bool = False) -> dict:
     A SHARED DRIVE THAT IS AWAY is not "no declaration". The read has a time
     limit (shared_drive.read_text_bounded), and when the drive does not answer
     the last declaration this machine read successfully is returned instead,
-    with a warning. WHY: during an outage this used to return {} -- and a
-    graphics-card node, finding no declared model, stopped posing as if it were
+    with a warning. WHY: returning {} during an outage would make a
+    graphics-card node, finding no declared model, stop posing as if it were
     misconfigured. With no earlier copy to fall back on, ``strict`` callers get
     SharedDriveUnavailable (so they can wait); others get {} as before.
     """

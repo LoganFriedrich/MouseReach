@@ -37,7 +37,7 @@ VERSION = "8.1.0"
 # Default production model path. Resolved relative to this file so the
 # package ships with the artifact and a custom path can be passed at
 # runtime if needed.
-# v8.1.0 (2026-06-30): recalibrated to the w=0.7 GBM retrained on DLC Model 4.0
+# v8.1.0: recalibrated to the w=0.7 GBM retrained on DLC Model 4.0
 # features (the locked 4.0 reach config). Reproduces its
 # gen-20 scorecard exactly: classic [3693,48,63], topology 3688/37/16/17/3/8.
 # 4.0-trained -> ships WITH the Model-4.0 DLC flip; the prior 3.1 model
@@ -50,8 +50,8 @@ DEFAULT_THRESHOLD = 0.5
 DEFAULT_MERGE_GAP = 0
 DEFAULT_MIN_SPAN = 3
 
-# v8.0.2 leading-trim postprocess defaults (calibrated 2026-05-21 for DLC Model 3.1).
-# v8.1.0 (2026-06-30): recalibrated for DLC Model 4.0 (resnet101). Model 4.0's steadier
+# v8.0.2 leading-trim postprocess defaults (calibrated for DLC Model 3.1).
+# v8.1.0: recalibrated for DLC Model 4.0 (resnet101). Model 4.0's steadier
 # tracking saturates the paw likelihood, so the 3.1-tuned floor (0.60/N3) under-trimmed
 # reach edges on 4.0. Raised to 0.90/N2 per a gen-20 calibration sweep.
 # On 4.0 this lifts causal recall 90.5% -> 97.0% and
@@ -62,7 +62,7 @@ DEFAULT_TRIM_LK_THRESHOLD = 0.90
 DEFAULT_TRIM_SUSTAIN_N = 2
 DEFAULT_TRIM_ENABLED = True
 
-# v8.0.3 apex-split postprocess defaults (calibrated 2026-05-22).
+# v8.0.3 apex-split postprocess defaults (calibrated).
 # See postprocess.apex_split_at_trough for the calibration evidence.
 DEFAULT_APEX_SPLIT_ENABLED = True
 DEFAULT_APEX_SPLIT_PROMINENCE = 0.12
@@ -70,8 +70,8 @@ DEFAULT_APEX_SPLIT_DEPTH_MIN = 0.5
 DEFAULT_APEX_SPLIT_PEAK2_REL_MAX = 0.85
 DEFAULT_APEX_SPLIT_MIN_DISTANCE = 4
 
-# v8.0.4 trailing-trim postprocess defaults (calibrated 2026-05-26 for DLC Model 3.1).
-# v8.1.0 (2026-06-30): recalibrated to 0.90/N2 for Model 4.0, symmetric to the
+# v8.0.4 trailing-trim postprocess defaults (calibrated for DLC Model 3.1).
+# v8.1.0: recalibrated to 0.90/N2 for Model 4.0, symmetric to the
 # leading-trim (see above). Near-inert on 4.0 (it holds high lk through reach ends),
 # but kept symmetric for consistency.
 # See postprocess.trim_trailing_sustained_lk for the calibration evidence.
