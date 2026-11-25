@@ -124,7 +124,7 @@ def _attention(env, name):
     return json.loads(f.read_text(encoding="utf-8"))["items"]
 
 
-# ------------------------------------------------------------------ MRP-02d
+# ------------------------- errors before and during the crop
 
 def test_an_error_before_the_crop_starts_never_escapes_the_dispatch(env):
     """An error while the children are looked up leaves the row 'stable'.
@@ -151,7 +151,7 @@ def test_an_error_during_the_crop_still_records_failed(env):
     assert row["state"] == "failed" and "bad" in (row.get("validation_error") or "")
 
 
-# --------------------------------------------------------- MRP-02e / D2-8
+# ------------------------- collages listed for a person
 
 def _scanning_node(env, monkeypatch):
     """The node's scan with everything but the collage intake stubbed out."""
@@ -244,7 +244,7 @@ def test_the_health_line_names_a_collage_that_could_not_be_cropped(env):
     assert "Nothing is stuck" not in text
 
 
-# ------------------------------------------------------------------ MRP-03b
+# ------------------------- stuck claims
 
 def _hours_ago(h):
     return (datetime.now() - timedelta(hours=h)).isoformat()
@@ -308,7 +308,7 @@ def test_every_node_listing_the_same_stuck_claim_is_shown_once(tmp_path):
     assert len([i for i in shown if i["kind"] == "x"]) == 2
 
 
-# ------------------------------------------------------------------ MRP-03c
+# ------------------------- cropped marks and claims after a restart
 
 @pytest.fixture
 def shared(tmp_path):
@@ -346,7 +346,7 @@ def test_another_nodes_claim_and_an_uncropped_collage_are_left_alone(env, shared
     assert shared.get_collage_claim(other)["hostname"] == OTHER
 
 
-# ------------------------------------------------------------------- D1-12
+# ------------------------- a child placed nowhere
 
 def _fake_crop(monkeypatch):
     """Stand in for ffmpeg: write one small file per non-blank slot."""

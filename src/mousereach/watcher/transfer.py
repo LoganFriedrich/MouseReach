@@ -125,9 +125,9 @@ def safe_copy(src: Path, dst: Path, verify: bool = True) -> bool:
     # The copy is written under a temporary name beside the destination and
     # renamed onto the final name only once it is complete (and, with
     # verify, the right size). WHY: a copy interrupted mid-file (the process
-    # killed, the machine restarted, the share dropped) used to leave a
-    # truncated video under its FINAL name; the next pass found a file of the
-    # expected name, took it for the video and could queue it for pose. A
+    # killed, the machine restarted, the share dropped) would leave a
+    # truncated video under its FINAL name; the next pass would find a file of the
+    # expected name, take it for the video and could queue it for pose. A
     # leftover '<name>.part' is never taken for a video: every picker skips
     # the temporary suffixes (watcher.state.TEMP_SUFFIXES).
     part = dst.with_name(dst.name + PART_SUFFIX)

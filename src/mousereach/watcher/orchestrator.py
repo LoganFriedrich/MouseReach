@@ -70,7 +70,7 @@ def segmentation_could_not_run(error, dlc_path) -> bool:
     queue means "an algorithm's judgment about this animal's behaviour needs a
     human eye" -- a scientific queue. An unreadable input is not a judgment.
     Routing it there spends the lab's scarcest resource on a file-handle error
-    and, worse, buries the real work: hundreds of such bundles once hid the few
+    and, worse, buries the real work: many such bundles can hide the few
     genuine review items sitting in the same folder.
 
     A real seg failure (over-long recording, uniform-fallback boundaries) still
@@ -146,7 +146,7 @@ def with_session_flag(features: dict, video_id: str) -> dict:
     session (who flagged it, when, why -- causal_review_io.flag_session), or
     None when the session is not flagged.
 
-    WHY (lab decision 2026-11-19, D5-10): "flags are there so we could in
+    WHY: "flags are there so we could in
     theory find them". A flag holds nothing and changes nothing -- no video is
     held, moved, left out or treated differently because of it. It is only
     recorded where a reader of the results finds it: in every features file of
@@ -194,7 +194,7 @@ def filed_rerun_reuses_analysis(reprocess_start_stage, archived_at,
     is how filed videos came back to a queue when only the kinematic extractor
     changed.
 
-    Nor the review gate (lab decision 2026-11-19, 'triage has nothing to do
+    Nor the review gate ('triage has nothing to do
     with kinematics'): a kinematics recalculation never holds the video and
     never asks a person anything; a segment no person answered stays as it
     was filed. If the kinematics cannot be made without changing what was
@@ -219,8 +219,8 @@ def kept_rerun_start_stage(row, held_for_hand_scores: bool = False):
     video's row: 'kinematics' for a filed video whose kinematics-only re-run
     is still owed, else None (every stage runs, with every check).
 
-    WHY: the start stage of a re-run used to travel only inside the work item
-    _reprocess_video builds. When that run failed (the kinematics step itself,
+    WHY: the start stage of a re-run must not travel only inside the work item
+    _reprocess_video builds. When that run fails (the kinematics step itself,
     say) the failed-video retry picked the bare row an hour later, and a
     watcher restart picked the 'processing' row the same way -- both with no
     start stage, so a filed video whose only change was a later calculation
@@ -278,8 +278,8 @@ def queue_folder_holds_this_run(queue_folder, processing_dir, video_id) -> bool:
         record, written after this run, lists the manifest as a file it failed
         to move (a route that went partly wrong): True; otherwise False.
 
-    WHY: the archive step used to adopt the queue's state for ANY folder of
-    that name. Again and again a return could not
+    WHY: the archive step must not adopt the queue's state for ANY folder of
+    that name. A return can fail to
     delete a video the review tool still held open, leaving a lone .mp4 in
     the triage folder; the clean re-run that followed (the reviewer's answers
     applied) was then not archived but forced to 'triage', and the return scan
@@ -590,7 +590,7 @@ def _reprocess_copy_set(source_dirs, pose_dir, video_id):
                 if filter_pose and d == Path(pose_dir) and "DLC" not in f.name:
                     continue
                 out.append(f)
-    # The video itself, when no folder above supplied it. WHY (2026-11-09): a
+    # The video itself, when no folder above supplied it. WHY: a
     # video re-posed while held in a review queue (mousereach-repose-videos)
     # has no filed results folder holding its mp4 -- its video sits beside the
     # newly staged pose in the posed folder and, parked, in the re-pose
@@ -689,8 +689,8 @@ class BaseOrchestrator:
         WHY it returns a reason instead of carrying on: filing means done for
         good, and the features file is what the database takes from the filed
         folder. A video whose kinematics failed, or whose reaches or outcomes
-        file was missing so kinematics never ran, used to go on to 'processed'
-        and be filed with no features file; the caller now holds it instead
+        file was missing so kinematics never ran, does not go on to 'processed'
+        and get filed with no features file; the caller holds it instead
         (_hold_without_kinematics).
 
         ``keep_filed_decisions``: this run is a kinematics-only re-run of a
@@ -698,7 +698,7 @@ class BaseOrchestrator:
         filed features file: every person's answer that applies now is
         applied, and every outcome and causal reach no person decides stays as
         filed (filed_decisions.settle_against_filed). It is never refused for
-        a difference from the filed results (owner rule 2026-11-21: a person's
+        a difference from the filed results (a person's
         answer is always applied; only an ALGORITHM never re-decides a filed
         video)."""
         processing_dir = Path(processing_dir)
@@ -811,7 +811,7 @@ class BaseOrchestrator:
                              duration=time.time() - step_start)
             if keep_filed_decisions:
                 # A kinematics recalculation of a filed video never asks a
-                # person anything (lab decision 2026-11-19): the reason goes
+                # person anything: the reason goes
                 # back, and the caller lets the filed results stand.
                 return f"feature extraction refused ({voided})"
             from mousereach.watcher.review_gate import (AlreadyInQueueError,
@@ -865,7 +865,7 @@ class BaseOrchestrator:
         only when the features file could not be made again, or still lacks
         the answer after that; the video is not filed then.
 
-        WHY here (owner rule 2026-11-21; 66 filed videos): answers
+        WHY here: answers
         can arrive between the kinematics step and filing, a ground-truth file
         can sit where the kinematics step did not look, and a run can have
         applied an answer to the wrong pellet under an older rule. The
@@ -935,7 +935,7 @@ class BaseOrchestrator:
         triage review tool asks a person for the causal reach of exactly those
         pellets, and the return scan releases the video once they are answered.
         A pellet nobody touched needs no causal reach and is not asked about.
-        WHY: a failed assignment used to write no file, which silently switched
+        WHY: a failed assignment writing no file would silently switch
         off the gate's "touched pellet with no credited reach" hold, so the
         video could be filed with no causal reach anywhere. An earlier
         generation's file is replaced too: it describes outcomes this run
@@ -972,8 +972,8 @@ class BaseOrchestrator:
         review_gate.QC_TRIAGE_FAILED, which the gate treats like a failed
         quality check: the video is held in the deep-review queue for a person,
         with the routed reason saying the quality triage could not run.
-        WHY: the verdict used to stay 'auto_approved' when triage raised, so a
-        crash in the checks let the video through the gate unchecked and be
+        WHY: the verdict must not stay 'auto_approved' when triage raises, or a
+        crash in the checks would let the video through the gate unchecked and be
         filed. (Easy and Flat trays are never held -- the gate's rule -- so for
         them this changes nothing.)
 
@@ -1029,8 +1029,7 @@ class BaseOrchestrator:
             if pose_flags and not self._new_pose_requestable(video_id, dlc_path):
                 # Not a case the round trip may re-pose (_new_pose_requestable):
                 # a video not filed is started completely over from a new cut
-                # of its recording (restart_from_recrop, lab decision
-                # 2026-11-19), never held for a person -- no review fixes a pose.
+                # of its recording (restart_from_recrop), never held for a person -- no review fixes a pose.
                 if self._restart_from_recrop(
                         video_id, f"{RESTART_POSE_UNUSABLE}: {'; '.join(pose_flags)}"):
                     return QC_RESTARTED
@@ -1049,8 +1048,7 @@ class BaseOrchestrator:
                                f"({'; '.join(pose_flags)}); not a review question")
                 return QC_POSE_UNUSABLE
             # A step output missing or unreadable: no person can supply it,
-            # so the video is started completely over (lab decision
-            # 2026-11-19, D2-11 flag 2). A boundary count or an uncertain
+            # so the video is started completely over. A boundary count or an uncertain
             # outcome is NOT this: a person answers those, and they hold the
             # video in review as before.
             from mousereach.watcher.restart_from_recrop import is_output_missing_finding
@@ -1173,7 +1171,7 @@ class BaseOrchestrator:
         model -- a different file -- and adopts it when it arrives. Never
         raises (False on any doubt).
 
-        Every other case is an open lab decision and is left exactly as it
+        Every other case is left exactly as it
         was (the video goes on and is held where it fails, as before):
           * a filed video whose unusable pose IS the current model's own: the
             round trip would find this same pose in the archive and never
@@ -1500,7 +1498,7 @@ class BaseOrchestrator:
         False: hold the video where it is -- in 'processing', its files in
         ``folder`` -- and stop this run before the gate.
 
-        WHY here and not before filing (moved 2026-10-28): checked at
+        WHY here and not before filing: checked at
         filing, a video with a triage question went to the queue, was
         answered, came back, and only then met the hand score; a
         disagreement then sent it to the queue a second time. Checked before
@@ -1606,7 +1604,7 @@ class BaseOrchestrator:
                                                "no_sheet": no_sheet}
                 self._write_score_attention()
                 return False
-            # No label-mismatch hold (retired 2026-11-20, owner rule "Just
+            # No label-mismatch hold ("just
             # trust what is written down"): hand_scores.check() compares a
             # video with its OWN row only and never returns LABEL_MISMATCH.
             # The flags in the outcomes file are always those of THIS
@@ -2002,7 +2000,7 @@ class BaseOrchestrator:
         stop on Windows is a hard kill. psutil's terminate() is an alias for
         kill() there, and a watcher started detached (as the Restart button
         starts it) has no console, so a Ctrl+C event cannot reach it either.
-        Killing a watcher mid-pose throws away a 14-minute GPU run and used to
+        Killing a watcher mid-pose throws away a 14-minute GPU run and can
         strand the video outright.
 
         The loop checks this between work items, so the item in flight always
@@ -2172,7 +2170,7 @@ class BaseOrchestrator:
             if not nas_root:
                 return
             # With a time limit: on a drive that does not answer, this write
-            # used to hang the loop like any other shared-drive call.
+            # would hang the loop like any other shared-drive call.
             shared_drive.call_bounded(
                 node_status.write, nas_root, state, reason, hostname=self.hostname,
                 extra=self._work_report(), timeout=shared_drive.STATUS_WRITE_TIMEOUT_S,
@@ -2286,9 +2284,9 @@ class BaseOrchestrator:
             sender.settings = settings
             # One SLICE, not a whole pass: this runs at the start of every
             # cycle, before the cycle's work item, so a long pass here holds
-            # up posing. A PC with hundreds of recordings to clear once spent
+            # up posing. A PC with many recordings to clear would spend
             # 30-45 minutes here every cycle (the hand-started pass's limit,
-            # recording_outbox_pass_minutes) and posed one video per cycle
+            # recording_outbox_pass_minutes) and pose one video per cycle
             # instead of about four an hour. The next slice carries on where this
             # one stopped (recording_outbox.RecordingSender._in_turn).
             report = sender.run_pass(budget_seconds=settings.cycle_seconds)
@@ -2565,7 +2563,7 @@ class BaseOrchestrator:
         logger.info(f"{self.__class__.__name__} running once")
 
         # The same two gates as the main loop. WHY: the GUI "Run Once" button
-        # and 'mousereach-watch --once' used to ignore both, so a person could
+        # and 'mousereach-watch --once' must not ignore both, or a person could
         # start a pose on top of a recording, or on a watcher they had just
         # asked to stop, with one click.
         if self._run_once_blocked("before starting"):
@@ -2850,8 +2848,7 @@ class BaseOrchestrator:
         order for the whole lab, so the processing side and the human review
         tools cannot disagree about what matters.
 
-        Re-resolved while running: it used to be resolved
-        once per process, so an edit -- including a Save in the priority panel,
+        Re-resolved while running, not once per process, so an edit -- including a Save in the priority panel,
         which says machines pick it up within a minute -- reached a watcher
         only when it was restarted. The order is logged at the first resolve
         and again whenever it changes, not every minute.
@@ -2981,8 +2978,8 @@ class BaseOrchestrator:
         listing's own entry answers that (no extra round trip on Windows).
         WHY: intake runs this on the posed-video folder, which holds every
         posed video waiting for analysis with its pose files -- thousands of
-        entries -- and it used to ask the share "is this a file?" for every
-        one of them before looking at the name: minutes per video, of an
+        entries -- and asking the share "is this a file?" for every
+        one of them before looking at the name costs minutes per video, of an
         intake whose copying takes seconds."""
         files = []
         try:
@@ -3064,7 +3061,7 @@ class DLCOrchestrator(BaseOrchestrator):
 
     # How often a node whose coordination database failed tries it again.
     # WHY retry at all: a node that started while the share was still coming up
-    # used to crop nothing until someone restarted it, silently, for days.
+    # would crop nothing until someone restarted it, silently.
     # Minutes, not seconds: each try opens a database over the share.
     _COORDINATOR_RETRY_S = 300
     # While claims stay unavailable the WARNING repeats this often, so the
@@ -3141,9 +3138,9 @@ class DLCOrchestrator(BaseOrchestrator):
 
         # --- Cross-PC coordination via the shared watcher_central.db ---
         # WHY the failure is RECORDED and not just left as coordinator=None:
-        # None used to mean "crop without a claim", so a node whose share
-        # blinked at startup cropped every collage other nodes were also
-        # cropping. The collage handler now refuses to crop without a working
+        # None meaning "crop without a claim" would let a node whose share
+        # blinked at startup crop every collage other nodes were also
+        # cropping. The collage handler refuses to crop without a working
         # coordinator (see _hold_collage_claim) and says why, once, using the
         # reason kept here. Restore and recovery are separate steps on purpose:
         # neither is needed for a claim, so neither may switch claims off.
@@ -3213,9 +3210,9 @@ class DLCOrchestrator(BaseOrchestrator):
 
         With NO coordinator (the shared database did not answer at startup and
         has not been reached since) the write is QUEUED, not dropped. WHY:
-        this used to return before queuing, so every
-        state change between a failed startup connect and the reconnect was
-        lost for good -- a hand-off and the next pose start went unrecorded.
+        returning before queuing would lose every
+        state change between a failed startup connect and the reconnect
+        for good -- a hand-off and the next pose start went unrecorded.
         The reconnect (_retry_coordinator) then lands the queue
         at the next scan and reconciles this host's rows from the local
         database (_put_missing_on_shared_record), which is the durable copy.
@@ -3280,9 +3277,8 @@ class DLCOrchestrator(BaseOrchestrator):
         whose state is behind the local one. Rows another host owns are never
         touched. Runs at startup and after every reconnect; if the record is
         unavailable, or unavailable part-way, the fill is marked unfinished and
-        a later scan resumes it (_finish_shared_record_fill) -- it used to wait
-        for the next restart, and a node left hundreds of videos off that
-        way. Written in batches (insert_video_states_if_absent): one
+        a later scan resumes it (_finish_shared_record_fill) -- not waiting
+        for the next restart, which would leave a node hundreds of videos off. Written in batches (insert_video_states_if_absent): one
         row per connection opened the shared file hundreds of times in seconds.
         Never raises; returns how many rows were added or corrected.
 
@@ -3296,7 +3292,7 @@ class DLCOrchestrator(BaseOrchestrator):
         later write or another host's) is left alone."""
         if not getattr(self, 'coordinator', None):
             # Could not run at all: remember to, so the reconnect's next scan
-            # runs it (it used to return 0 and forget).
+            # runs it (not return 0 and forget).
             self._shared_fill_pending = True
             return 0
         self._shared_fill_attempted = time.monotonic()
@@ -3649,8 +3645,8 @@ class DLCOrchestrator(BaseOrchestrator):
         of retries, and still in the intake folder (state.py records them as
         parked_collages on every scan). Never raises.
 
-        WHY: such a collage used to sit 'failed' with only a DEBUG line, so the
-        sessions on it were never cut and no screen said so. It is now an item
+        WHY: a collage sitting 'failed' with only a DEBUG line would never have its
+        sessions cut and no screen would say so. It is an item
         in ``<NAS root>/attention/<host>_collages.json`` (kind
         collage_crop_parked, needs_person true), which the Pipeline Dashboard
         shows in its red panel with the last error.
@@ -3802,7 +3798,7 @@ class DLCOrchestrator(BaseOrchestrator):
                                      error) -> None:
         """Remember a 'cropped' that did not reach the shared claim table, so
         it is sent again (_retry_unsynced_collage_claims). WHY it matters now:
-        a claim left in 'cropping' used to block other nodes only; since claims
+        a claim left in 'cropping' blocks other nodes only; since claims
         can be taken over after COLLAGE_CLAIM_STALE_S, a lost 'cropped' is how
         a finished collage gets cropped again a day later."""
         pending = getattr(self, '_unsynced_collage_claims', None)
@@ -3998,8 +3994,8 @@ class DLCOrchestrator(BaseOrchestrator):
         every machine reads.
 
         CLAIM FIRST (watcher/single_claim.py). Several GPU nodes poll the same
-        folder, and each used to copy and pose every video it saw. The video is
-        now renamed into ``.inflight/<this host>/`` before it is copied; a node
+        folder, and each would copy and pose every video it saw without a claim. The video is
+        renamed into ``.inflight/<this host>/`` before it is copied; a node
         whose rename finds nothing lost the race and leaves the video to the
         winner, recording nothing against it. The claimed file stays there
         until this node has handed the video on, and is then removed as a
@@ -4341,8 +4337,8 @@ class DLCOrchestrator(BaseOrchestrator):
     def _give_back_abandoned(self, keep) -> int:
         """Give back at once every claim of this node's that is not in ``keep``
         (its row is failed, unresolvable, quarantined or missing). Returns how
-        many went back. WHY at once: such a claim used to be left to go stale,
-        which held the video from every other node for a day; a node that
+        many went back. WHY at once: such a claim left to go stale
+        would hold the video from every other node for a day; a node that
         has stopped working a video has nothing to wait for."""
         given = 0
         for vid, path in single_claim.host_claims(self.hostname).items():
@@ -4384,7 +4380,7 @@ class DLCOrchestrator(BaseOrchestrator):
 
         WHY THIS EXISTS
         ---------------
-        Cropping used to publish only the FACT that a single existed -- the row was
+        Cropping must not publish only the FACT that a single exists -- the row was
         synced to the shared table -- while the file itself went straight to this
         node's LOCAL queue. No other machine could see it, so no other machine could
         ever help with it or take it over. If the cropping node then stalled, its
@@ -4442,9 +4438,9 @@ class DLCOrchestrator(BaseOrchestrator):
         """Put a freshly cut video into the shared singles folder, unclaimed,
         instead of keeping it in this node's queue. True when it went there.
 
-        WHY: a node used to keep every video of every recording it cut -- eight
-        at a time -- and pose them one by one while the other GPU nodes had
-        nothing to do; a recording pause held them all. Now a node keeps
+        WHY: a node that kept every video of every recording it cut -- eight
+        at a time -- and posed them one by one would leave the other GPU nodes with
+        nothing to do; a recording pause would hold them all. So a node keeps
         single_claim.KEEP_AHEAD (the next one and one ready behind it) and puts
         the rest where any node, itself included, takes them the ordinary way
         (claim by rename, then pose). Its own row is parked with
@@ -4482,7 +4478,7 @@ class DLCOrchestrator(BaseOrchestrator):
         Returns how many went back. Never raises.
 
         Called whenever the node is paused. WHY: a node pauses for the whole of
-        a recording day, and the videos it had claimed used to wait for it
+        a recording day, and the videos it had claimed would wait for it
         while the other GPU nodes had nothing to do. A video that is posing
         when the pause starts finishes and is not given back; only ones still
         waiting in 'dlc_queued' go.
@@ -4693,7 +4689,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 # Neither an 'unresolvable' nor a 'failed' row is put back to
                 # work from its DLC-queue copy while the video is also in a
                 # shared place and this node holds no claim on it
-                # (_queue_copy_elsewhere): a restart used to pose such
+                # (_queue_copy_elsewhere): a restart would pose such
                 # a copy while another node posed the shared one.
                 #
                 # A 'failed' row is looked at only while it has retries left
@@ -4826,9 +4822,9 @@ class DLCOrchestrator(BaseOrchestrator):
         # Shared-record writes that failed since the last scan (see
         # _sync_to_connectome), and a startup fill the record interrupted.
         # Before the scan, so other nodes see them sooner. The reconnect is
-        # tried here first: until 2026-10-30 it was tried only when a collage
-        # came up for selection, so a node that started mid-pose with the
-        # record unreachable stayed disconnected until that pose ended.
+        # tried here first, not only when a collage
+        # comes up for selection, or a node that started mid-pose with the
+        # record unreachable would stay disconnected until that pose ended.
         self._retry_coordinator()
         self._retry_failed_shared_writes()
         self._finish_shared_record_fill()
@@ -5053,8 +5049,8 @@ class DLCOrchestrator(BaseOrchestrator):
         # ADMIT: adopting one brings a new file onto this node and creates new
         # GPU work, so it waits behind the videos already queued.
         #
-        # discover_new_singles records these as 'validated', and until
-        # 2026-09-13 no job list selected that state: the file was noticed,
+        # discover_new_singles records these as 'validated', and a
+        # state no job list selects is one where the file is noticed,
         # written into the database, and then ignored for good. Somebody
         # dropping a video where the folder layout says videos go is the most
         # ordinary thing a person can do, and it has to work.
@@ -5199,8 +5195,8 @@ class DLCOrchestrator(BaseOrchestrator):
         'cropping' may become 'failed' (db.COLLAGE_TRANSITIONS). An error
         BEFORE the crop started -- while the claim was checked or the children
         were looked up -- leaves the row 'stable', and 'stable' -> 'failed' is
-        refused with a ValueError. That ValueError used to leave this handler
-        for the main loop, the row stayed 'stable' and the same collage was
+        refused with a ValueError. That ValueError would leave this handler
+        for the main loop, the row would stay 'stable' and the same collage be
         picked again at once, every poll. So:
 
           * 'cropping': record 'failed' with the error, as before; the intake
@@ -5241,8 +5237,8 @@ class DLCOrchestrator(BaseOrchestrator):
 
     def dry_run(self):
         """Print the read-only preview (watcher/preview.py). WHY not a scan:
-        this used to call the real scans, which register files and move
-        videos between states -- a dry run that changed things."""
+        the real scans register files and move
+        videos between states -- a dry run that changes things."""
         from mousereach.watcher.preview import preview
         for line in preview(self.config, getattr(self.db, "db_path", None)):
             print(line)
@@ -5275,8 +5271,8 @@ class DLCOrchestrator(BaseOrchestrator):
                     continue
                 # A video queued to be RE-posed is only complete when a pose
                 # from the declared model exists. An older pose beside it (a
-                # leftover from an interrupted stage) used to count as done,
-                # and the old pose was staged as the "new" one.
+                # leftover from an interrupted stage) must not count as done,
+                # or the old pose would be staged as the "new" one.
                 declared_hits = ([h for h in h5_files if repose.scorer_of(h) == declared]
                                  if declared else h5_files)
                 if declared_hits:
@@ -5570,7 +5566,7 @@ class DLCOrchestrator(BaseOrchestrator):
                 # cropped and registered but the DLC_Queue copy never succeeded --
                 # and the cleanup below deletes the working-dir crop regardless, so
                 # a 'validated' child has no file anywhere. Re-cropping is the only
-                # way to recover it. (One GPU node had hundreds stuck exactly here.)
+                # way to recover it. 
                 prior_state = (self.db.get_video(video_id) or {}).get('state')
                 if prior_state and prior_state not in ('discovered', 'validated', 'failed'):
                     videos_skipped += 1
@@ -5622,9 +5618,9 @@ class DLCOrchestrator(BaseOrchestrator):
 
                 # Neither copy exists: the working file is the ONLY copy of
                 # this cut, and the cleanup below deletes the working files.
-                # WHY it fails the collage: it used to be recorded 'cropped'
-                # anyway (here and on the shared claim), so no node ever cut
-                # this child again and its session was lost. Counted as a
+                # WHY it fails the collage: recording it 'cropped'
+                # anyway (here and on the shared claim) would mean no node ever cuts
+                # this child again and its session is lost. Counted as a
                 # failed slot, the collage is retried like a slot ffmpeg could
                 # not cut; the retry re-drives this 'validated' child. Its
                 # working file is kept (not deleted with the others) until a
@@ -5746,8 +5742,8 @@ class DLCOrchestrator(BaseOrchestrator):
                                          videos_created: int) -> None:
         """Give the shared claim back after this node's crop failed.
 
-        WHY: a claim used to outlive a failed crop forever, so the one node
-        that could not crop a collage stopped every other node from trying.
+        WHY: a claim that outlives a failed crop forever would let the one node
+        that cannot crop a collage stop every other node from trying.
         Released only when this node carries no child of the collage: none
         queued by this attempt, and none left in flight here by an earlier one
         (_collage_children_in_flight_here). Once a child is on this node it
@@ -5836,7 +5832,7 @@ class DLCOrchestrator(BaseOrchestrator):
             park the row.
         WHY: a node that gave a claim back but kept its queue copy (the
         give-back could not confirm the shared copy; a failed pose or
-        hand-off) used to pose that copy again -- at its next start, or when
+        hand-off) would pose that copy again -- at its next start, or when
         a hand retry queued it -- while another node posed the shared one.
 
         Never raises: a share that cannot be read counts as "not there", so
@@ -6234,7 +6230,7 @@ class DLCOrchestrator(BaseOrchestrator):
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
         # Path(None) raised and failed nearly every video on a GPU node, and the
         # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
-        # missing-pose guard stopped firing and hundreds of videos were routed to human
+        # missing-pose guard would stop firing and videos would be routed to human
         # review with "[Errno 13] Permission denied: '.'". locate_pose_file
         # (through resolve_pose_input) returns a real file or None and never a
         # placeholder path.
@@ -6252,11 +6248,11 @@ class DLCOrchestrator(BaseOrchestrator):
             self.db.mark_failed(video_id, f"DLC h5 not found for {video_id}")
             return False
 
-        # Stage outputs land BESIDE the pose file, and this function used to
-        # make the pose's own folder the working directory -- so any video
-        # whose pose resolved into the archive's model tree scattered its
-        # results there while the review bundle was assembled from stale
-        # copies in Processing (found by a reviewer: a corrected video's
+        # Stage outputs land BESIDE the pose file, and this function must not
+        # make the pose's own folder the working directory -- or any video
+        # whose pose resolves into the archive's model tree would scatter its
+        # results there while the review bundle is assembled from stale
+        # copies in Processing (a corrected video's
         # PERFECT re-detection sat in the pose tree while the queue showed old
         # data with reaches outside their segments). Same
         # defect as _run_pipeline's, same cure: stage the pose locally,
@@ -6726,8 +6722,8 @@ class DLCOrchestrator(BaseOrchestrator):
         # as "already staged". This handler WRITES into staging, so a file found
         # there says nothing about THIS node: the same stem can be another
         # node's hand-off, or the processing server's intake mid-copy. A video
-        # used to be force-marked 'archived' here on the strength of such a
-        # file. Now only this node's own copies are found, and staging is looked
+        # must not be force-marked 'archived' here on the strength of such a
+        # file. Only this node's own copies are found, and staging is looked
         # at in exactly one case: finishing this node's own interrupted stage
         # (_resume_interrupted_stage), where the proof is a pose this node
         # stages itself.
@@ -6758,9 +6754,9 @@ class DLCOrchestrator(BaseOrchestrator):
         # WHY: the search above also looks at the top of the shared singles
         # folder, and the loop below MOVES every file of the video it finds
         # into Posed. A 'dlc_complete' row with no local copy (cross-node
-        # recovery, a video another node gave back) used to move that shared,
-        # unposed file into Posed and delete it from the singles folder. Now
-        # nothing is moved and the row says where the copy was.
+        # recovery, a video another node gave back) must not move that shared,
+        # unposed file into Posed and delete it from the singles folder.
+        # Nothing is moved and the row says where the copy was.
         refusal = self._not_held_for_pose(current_path)
         if refusal:
             refusal = refusal.replace("not posed", "not staged", 1)
@@ -6798,10 +6794,10 @@ class DLCOrchestrator(BaseOrchestrator):
             duration = time.time() - start_time
 
             # Mark as archived (done on this machine). Record the STAGED pose
-            # path too: until 2026-09-12 only current_path was updated and
-            # dlc_output_path kept pointing at the local DLC_Queue file the
-            # move above had just removed -- most archived rows on a GPU node
-            # named a pose file that no longer existed, and any
+            # path too, or
+            # dlc_output_path keeps pointing at the local DLC_Queue file the
+            # move above just removed -- an archived row on a GPU node would
+            # name a pose file that no longer exists, and any
             # reader that trusts the recorded path (rather than globbing the
             # folder) concluded those videos had no pose. The pose recorded is
             # one THIS call staged, never whatever else sits in staging.
@@ -6998,7 +6994,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
                         "missing": kind == "hand_scores_missing",
                         "no_sheet": bool(item.get("no_sheet"))}
             # A "label_mismatch" item is a hold written before that hold was
-            # retired (2026-11-20): restored as a plain hold, checked again
+            # retired: restored as a plain hold, checked again
             # once like every restored hold, and then goes on as named.
         if out:
             logger.info(f"Restored {len(out)} video(s) held for their hand scores before "
@@ -7080,8 +7076,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Reprocessing scanner instance (the heavy version-compliance scan
         # itself is scheduled by BaseOrchestrator._maybe_review_reprocess_scan
         # -- ONE scheduler, wall-clock, stamped after completion. _scan_phase
-        # used to fire a second, cycle-counted copy of the same scan; two
-        # schedulers meant double NAS load, and cycle counts made the cadence
+        # must not fire a second, cycle-counted copy of the same scan; two
+        # schedulers mean double NAS load, and cycle counts made the cadence
         # depend on an assumption about loop speed that nothing enforces.
         # Back-to-back scans were once "fixed" by raising the cycle count, and
         # recurred anyway -- a stuck priority-1 row failed in milliseconds
@@ -7149,8 +7145,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         be a handover in progress.
 
         The folder is listed ONCE per pass and every check below looks names
-        up in that one listing. WHY: this runs on every cycle, and it used to
-        list the whole folder again for each video in it (once for a pose
+        up in that one listing. WHY: this runs on every cycle, and listing
+        the whole folder again for each video in it would cost (once for a pose
         file, once for a half-written file). The folder sits on a shared
         drive and holds every posed video waiting to be analysed with its
         pose files; with a large backlog waiting that was over a thousand
@@ -7432,9 +7428,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         priority_animal = self._get_priority_animal()
 
         # Priority 1: Archive - move processed videos to NAS, before taking on
-        # new work. WHY: archive used to be below pipeline, and intake keeps
-        # the pipeline pool topped up, so completed results piled up locally and
-        # never reached the NAS (or the database that pulls from it) until the
+        # new work. WHY: archive below pipeline, with intake keeping
+        # the pipeline pool topped up, would pile completed results up locally and
+        # never reach the NAS (or the database that pulls from it) until the
         # staged supply ran dry -- days, during a backlog. Archiving is quick
         # file moves; doing it first keeps results flowing without measurably
         # starving the pipeline. Same finish-what's-done ordering the DLC-node
@@ -7522,8 +7518,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
             if processing_count >= self.config.max_local_pending:
                 # The normal state, not a fault: the node holds only what it is
                 # about to start (config.max_local_pending), so the pipeline runs
-                # next. Logged at DEBUG -- it used to be a WARNING telling a
-                # person to act, which with a small buffer would fire every cycle.
+                # next. Logged at DEBUG -- a WARNING telling a
+                # person to act would fire every cycle with a small buffer.
                 if not admit_deferred:
                     logger.debug(
                         f"{processing_count} video(s) already waiting here for the "
@@ -7565,8 +7561,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
         outdated = self.db.get_videos_in_state('outdated')
         if outdated:
             # 'full' means the video needs a genuinely NEW pose, which this node
-            # cannot make -- it has no CUDA. It used to be pushed into
-            # 'dlc_queued' here, and that went nowhere useful: this node's work
+            # cannot make -- it has no CUDA. It must not be pushed into
+            # 'dlc_queued' here, which goes nowhere useful: this node's work
             # loop never selects dlc_queued, a GPU node's DLC_Queue is a LOCAL
             # folder it cannot see, and the only thing that crossed machines was
             # the state itself, through the shared database -- where cross-node
@@ -8255,7 +8251,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         WHY: re-running an outdated video starts from its archived results. When
         the shared drive dropped, the re-run step marked each
-        outdated video FAILED, about one a second -- hundreds of infrastructure
+        outdated video FAILED, about one a second -- infrastructure
         failures recorded as if they were the videos' fault, the class of error
         a failed state must never mean. With the archive out of reach, nothing
         is offered for re-running; the videos keep their state and the work
@@ -8290,8 +8286,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
           * neither: nothing here can produce a pose, so the video is marked
             failed, saying plainly that its video is missing too.
 
-        WHY: this used to mark the video failed outright. Once the
-        bench-disagreement router had moved videos' bundles -- pose
+        WHY: this must not mark the video failed outright. When a
+        bench-disagreement router has moved videos' bundles -- pose
         included -- into triage while their rows still said 'archived'; the
         version scan saw empty results, marked them outdated, and this step
         failed them. A missing pose is a pose to make or a file to follow, not
@@ -8371,7 +8367,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # a freshly staged one from the declared model, adopted by the
         # re-pose round trip (watcher/repose.py) -- wins over anything in the
         # archive, then a declared-model pose in staging, and only then the
-        # archive search that served every reprocess before 2026-09-12.
+        # archive search.
         from mousereach.watcher import repose
         declared = repose.declared_scorer()
         h5_files = []
@@ -8455,7 +8451,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # Cannot start: the files this try copied down are set aside (a
             # file that was already in the processing folder stays) and the
             # copy-down is tried again later (_rerun_could_not_start). Marked
-            # 'failed', the retry used to run the pipeline on exactly the
+            # 'failed', the retry would run the pipeline on exactly the
             # partial set this guard is here to stop.
             self._rerun_could_not_start(
                 video_id,
@@ -8508,8 +8504,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     def dry_run(self):
         """Print the read-only preview (watcher/preview.py). WHY not a scan:
-        this used to call the real scans, which register files and move
-        videos between states -- a dry run that changed things."""
+        the real scans register files and move
+        videos between states -- a dry run that changes things."""
         from mousereach.watcher.preview import preview
         for line in preview(self.config, getattr(self.db, "db_path", None)):
             print(line)
@@ -8520,10 +8516,10 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
     # A posed video is claimed with a marker in Processing/Posed/.claims/,
     # created exclusively (watcher/claim_marker.py): when several nodes race
-    # for one video, exactly one create succeeds. WHY (2026-10-22): the marker
-    # used to be written, re-read after half a second and trusted -- a window
-    # in which two nodes can both believe they won -- and was deleted after
-    # 24 hours whatever its holder was doing, so a video one node had held for
+    # for one video, exactly one create succeeds. WHY: a marker
+    # written, re-read after half a second and trusted leaves a window
+    # in which two nodes can both believe they won, and one deleted after
+    # 24 hours whatever its holder was doing lets a video one node had held for
     # a day, waiting in review, could be taken in by another. Same primitive
     # as the review queues' claims (review_return._claim_return).
     #
@@ -8606,9 +8602,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
           its status report -- never for its age.
         * A video in the posed folder that this node has in hand (its row is
           in _POSED_HELD_STATES) is claimed if it is not claimed already.
-          WHY: until 2026-10-22 every marker was deleted after 24 hours, so
-          most posed copies of videos in review had none, and to any node
-          taking in posed videos they looked like waiting work.
+          WHY: a marker deleted after 24 hours would leave
+          most posed copies of videos in review with none, and to any node
+          taking in posed videos they would look like waiting work.
         * This node lets go of its claim on a video that has left the posed
           folder (nothing remains for anyone to take) and on one that is
           waiting again (a lifted hold is put back as 'dlc_complete' for a
@@ -8747,8 +8743,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         # Multi-node claiming: ensure no other node is processing this video.
         # Declined, not done: returning False tells the loop no work happened
-        # (it used to return None, which counts as progress, so a held video
-        # was re-picked at once, over and over), and the video stays out of
+        # (returning None counts as progress, so a held video
+        # would be re-picked at once, over and over), and the video stays out of
         # this node's picks for a while so the next one down gets taken in.
         if not self._claim_video(video_id):
             logger.debug(f"Skipping {video_id} - claimed by another node")
@@ -8763,9 +8759,9 @@ class ProcessingOrchestrator(BaseOrchestrator):
         try:
             # Find all files in staging directory.
             #
-            # This used to be Path(current_path or '').parent, which for a
-            # pathless row is Path('.').parent -- the current working directory.
-            # It exists, so the fallback below never fired, and intake went
+            # Path(current_path or '').parent is not used, because for a
+            # pathless row it is Path('.').parent -- the current working directory.
+            # It exists, so the fallback below would never fire, and intake would go
             # looking for the video among whatever files happen to sit in the
             # directory the watcher was started from.
             staged = locate_video_file(
@@ -8813,7 +8809,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # All or nothing -- including the case where NO file copied (a
             # full disk fails every copy): there is then nothing to remove,
             # and the row is parked and counted exactly as for one failed
-            # file. (That case used to raise, and the handler below turned it
+            # file. (That case does not raise, which the handler below would turn
             # into 'failed' on the first attempt.) WHY all or nothing: a run
             # that went on without one of its files
             # -- the video most of all -- analysed the video with the outcome
@@ -8926,7 +8922,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         """Why a filed video's kinematics-only re-run cannot be done WITHOUT
         re-running an algorithm or asking for a new pose, or None when it can.
 
-        FILED IS FINAL (lab rule 2026-11-19): the four algorithms are never
+        FILED IS FINAL: the four algorithms are never
         re-run onto a filed video and nothing automatic reopens one; only its
         kinematics may be recalculated. So such a run needs, in the processing
         folder, the filed outputs it measures -- cuts, reaches and (Pillar
@@ -8979,7 +8975,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # dlc_output_path has bitten this pipeline twice, in opposite directions:
         # Path(None) raised and failed nearly every video on a GPU node, and the
         # `or ''` fix for it made Path('') -> Path('.'), which exists, so the
-        # missing-pose guard stopped firing and hundreds of videos were routed to human
+        # missing-pose guard would stop firing and videos would be routed to human
         # review with "[Errno 13] Permission denied: '.'". resolve_pose_input
         # returns a real file or None and never a placeholder path.
         dlc_path = resolve_pose_input(
@@ -9005,7 +9001,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         logger.info(f"Running pipeline on {video_id}")
         # A filed video's kinematics-only re-run never recomputes an algorithm
-        # and is never sent for a new pose (filed is final, 2026-11-19):
+        # and is never sent for a new pose (filed is final):
         # anything it would need for that ends the re-run and the filed
         # results stand (_filed_kinematics_refusal says what is checked).
         if self._filed_kinematics_only_run(video_id, video_data):
@@ -9444,13 +9440,13 @@ class ProcessingOrchestrator(BaseOrchestrator):
         ``rerun_triage_and_hand_scores`` False (a filed video whose re-run
         recomputed no algorithm, filed_rerun_reuses_analysis): nothing is
         run and nothing holds -- no quality triage, no hand-score comparison,
-        no gate (lab decision 2026-11-19: a kinematics recalculation never
+        no gate (a kinematics recalculation never
         holds or re-asks)."""
         # --- Unified QC triage (DLC coherence / structural / cross-step / outliers) ---
         qc_verdict = 'auto_approved'
         if not rerun_triage_and_hand_scores:
             # A kinematics recalculation of a filed video: no quality triage,
-            # no hand-score comparison and NO review gate. Lab rule 2026-11-19
+            # no hand-score comparison and NO review gate
             # ('triage has nothing to do with kinematics'; filed is final): it
             # never holds the video and never asks a person anything. A
             # segment no person answered stays as it was filed.
@@ -9546,7 +9542,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # a queue, never retried into the same refusal. The filed results
             # stand; the row goes back to 'archived' with the reason, on this
             # machine's failed re-runs list for a person
-            # (_restore_filed_after_failed_rerun). Lab decision 2026-11-19.
+            # (_restore_filed_after_failed_rerun).
             self._restore_filed_after_failed_rerun(
                 video_id, f"kinematics recalculation not made: {why}")
             return
@@ -9639,7 +9635,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
         # Let go of the outcome detector's cached video handle first: it keeps
         # the LAST processed mp4 open until the next video replaces it, and the
         # move below then fails with "being used by another process" until it
-        # does (hundreds of videos cycled through archive backoff this way).
+        # does (videos cycle through archive backoff this way).
         try:
             from mousereach.outcomes.v6_cascade.cv_artifact_gate import release_cap_cache
             release_cap_cache()
@@ -9648,11 +9644,11 @@ class ProcessingOrchestrator(BaseOrchestrator):
 
         logger.info(f"Archiving {video_id} to NAS")
         # 'archiving' is written BEFORE anything moves, so a run that dies
-        # mid-move leaves a row that says so. WHY: the state used to be written
+        # mid-move leaves a row that says so. WHY: writing the state
         # only after the move (processed -> archiving -> archived, back to
-        # back). A crash between the move and those writes left the row
-        # 'processed' with the files already filed; the next pass found
-        # nothing in Processing and marked a filed video 'failed'. Now startup
+        # back) would let a crash between the move and those writes leave the row
+        # 'processed' with the files already filed; the next pass would find
+        # nothing in Processing and mark a filed video 'failed'. Startup
         # reclaim puts an 'archiving' row back to 'processed', and the
         # "nothing left here" branch below recognises this run's files in the
         # filed folder (filed_this_run) and records 'archived'.
@@ -9689,7 +9685,7 @@ class ProcessingOrchestrator(BaseOrchestrator):
             # A posed file is deleted only when the same file (name and size)
             # is in the filed folder. WHY: the posed folder can hold the only
             # single-animal copy of a video; a run that went on without one of
-            # its files used to file without it and then delete the posed
+            # its files would file without it and then delete the posed
             # copy, leaving the video in no place. A file kept here keeps the
             # claim (below) and the periodic sweep, so it is seen, not lost.
             left_behind = 0
@@ -9772,8 +9768,8 @@ class ProcessingOrchestrator(BaseOrchestrator):
                     return False
                 # Other errors are retriable -- but not on EVERY cycle: a video
                 # that cannot be archived usually cannot be archived a second
-                # later either, and the loop ran at roughly one attempt per
-                # second for months, logging hundreds of thousands of failures
+                # later either, and a loop running at roughly one attempt per
+                # second would log huge numbers of failures
                 # against a handful of videos and burying everything else in the
                 # log. Back off, and say so once per escalation rather than once
                 # per attempt.

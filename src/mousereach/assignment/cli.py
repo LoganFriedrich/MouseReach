@@ -18,10 +18,10 @@ two-signal agreement gate), which the watcher, ``pipeline/run_all.py`` and
 ``pipeline/reprocess_to_current.py`` all call. It has no assignment logic
 of its own.
 
-WHY: until 2026-08 this command called assignment v1 (a single-signal IFR
-join, ``1.0.0``) while everything automatic ran v2 (``2.1.0``). Running it
-by hand over a processing folder silently overwrote the v2 file the
-pipeline had written with a weaker v1 file at the same path, and the
+WHY: this command calls assignment v2 (``2.1.0``) like everything
+automatic; calling v1 (a single-signal IFR join, ``1.0.0``) by hand over a
+processing folder would silently overwrite the v2 file the
+pipeline had written with a weaker v1 file at the same path, while the
 processing manifest kept saying 2.1.0. v1 is retained under
 ``assignment/v1`` for provenance but is no longer reachable from any
 command.
@@ -115,8 +115,8 @@ def _reaches_list(reaches_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     if isinstance(reaches_doc.get("reaches"), list):
         return list(reaches_doc["reaches"])
-    # A reach that starts before the first cut belongs to no pellet (owner
-    # decision D2-3, reach/core/before_first_cut.py). Older reaches files
+    # A reach that starts before the first cut belongs to no pellet
+    # (reach/core/before_first_cut.py). Older reaches files
     # carry it inside segment 1; it is taken out of the segment here and
     # listed with no segment, marked ``before_first_cut``, so the assignment
     # writes it as unassigned and never credits it to pellet 1.

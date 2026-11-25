@@ -106,7 +106,7 @@ def _ground_truth_cuts(output_path: Path, video_id: str) -> Optional[Dict]:
     over ``output_path`` when they are due, and return this step's result for
     them (None when nothing was written).
 
-    WHY (owner decision D5-6, 2026-11-19): what a person said is the correct
+    WHY: what a person said is the correct
     result for every step after it. A ground-truth file whose cuts are all
     determined is a person's segmentation, so it is applied exactly as the
     segmentation fixer's cuts are (review/hand_cuts.apply_ground_truth_cuts:
@@ -161,7 +161,7 @@ def process_single(dlc_path: Path, output_dir: Optional[Path] = None,
     # boundary at frame 0, which every reach detector reads as one segment
     # running to the end of the video -- so reaches are found across the whole
     # session, and the ruler is one estimate over the whole video. Running the
-    # segmenter on them cut 21 pellet windows nobody uses and, when it failed,
+    # segmenter on them cut pellet windows nobody uses and, when it failed,
     # held the session for a person. Checked before the human-boundary rule
     # below: a hand-set cut on one of these is no more used than a machine one.
     if is_outcome_free_tray(video_id):

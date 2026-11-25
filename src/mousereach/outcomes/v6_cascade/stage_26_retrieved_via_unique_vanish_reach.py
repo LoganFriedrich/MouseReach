@@ -32,8 +32,8 @@ Predicate (commit retrieved iff all true):
       bouncing in the SA cannot be retrieved," sustained off-pillar
       high-confidence pellet observations after the vanish reach
       mean the pellet is in the SA, not in the mouse.
-  P4. (No longer enforced; "vanish reach must be last" was too strict
-      -- many valid retrievals have post-retrieval paw movement.)
+  P4. Not required: the vanish reach need not be the last reach, because
+      many valid retrievals have post-retrieval paw movement.
   P5. No sustained run of >= MIN_UNCOVERED_PAW_RUN (10) frames of
       paw-past-slit activity BEFORE the vanish reach that is outside
       any annotated reach window. Rationale: an unannotated reach
@@ -206,7 +206,7 @@ class Stage26RetrievedViaUniqueVanishReach(Stage):
             pl = sub_raw[f"{bp}_likelihood"].to_numpy(dtype=float)
             paw_past |= (py <= slit_y) & (pl >= PAW_LK_THR)
         # Strict version: at least 2 paw bodyparts at lk >= 0.7 in the
-        # same frame (empirical 2026-05-03: cleanly separates real paw
+        # same frame (empirical: cleanly separates real paw
         # from DLC noise).
         paw_past_strict = paw_past & (n_paws_high >= 2)
 

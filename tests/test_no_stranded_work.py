@@ -97,7 +97,7 @@ def test_an_archive_killed_half_way_is_filed_again():
     for cls in (DLCOrchestrator, ProcessingOrchestrator):
         o = _node(cls, videos={"archiving": ["20240101_ABC0102_P1"]})
         assert o._reclaim_orphaned_work() == {"archiving": 1}
-        # 'archiving' -> 'processed' is legal since 2026-11-15 ('archiving' is
+        # 'archiving' -> 'processed' is legal ('archiving' is
         # written before the files move, and a failed attempt goes back), so
         # no forced write is needed.
         assert o.db.moves == [("video", "20240101_ABC0102_P1", "processed", False)]

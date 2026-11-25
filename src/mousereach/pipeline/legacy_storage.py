@@ -29,7 +29,7 @@ What counts as "the pipeline already has it" -- any one is enough:
     (corrected an animal id), and the old copy still carries the old name.
     WHY: those sessions are held only under the CORRECTED ids, so the session
     test above cannot see it -- the old copy of a corrected typo (say CNT0211 for
-    CNT0112) would have come back in and recreated the fake animal.
+    CNT0112) would come back in and recreate the fake animal.
 
 What is brought in, and where (``--bring-in``): RECORDINGS ONLY, into
 Unanalyzed/Multi-Animal (the intake), where the pipeline cuts and poses them.

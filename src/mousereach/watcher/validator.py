@@ -508,7 +508,7 @@ def release_from_quarantine(
     The new name (``new_name``, or the old name when none is given) is
     checked with the validator of the chosen destination BEFORE anything
     moves. WHY: a file released under a name the watcher cannot read is only
-    quarantined again on the next scan, and the panel used to say "the
+    quarantined again on the next scan, and the panel must not say "the
     watcher will pick it up" regardless. An UNCHANGED name is not refused: a
     file may have been held by a validator rule that has since been
     corrected, and then its old name is now valid. The watcher takes such a

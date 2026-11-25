@@ -17,7 +17,7 @@ Discriminator (per segment):
   change = (A - Bmed) / R.  A real displacement lifts the spot from empty to
   bright (large positive change); an artifact does not (change ~ 0).
 
-Validation (corpus-wide, train+gen, 2026-07-02): true displaced pellets have
+Validation (corpus-wide, train+gen): true displaced pellets have
 change p10=+0.26 (train) / +0.36 (gen); all retrieved-as-displaced artifacts
 have change <= +0.05. Threshold 0.10 sits in the gap. It catches every artifact
 at ~1.0% (train) / ~1.4% (gen) over-triage, and the over-triaged true displaced
@@ -41,7 +41,7 @@ from .stage_base import StageDecision
 from .guards import lrun
 
 # Normalized empty->bright change below which a displaced landing is treated as
-# a DLC artifact (pre-existing speck) and triaged. Validated 2026-07-02.
+# a DLC artifact (pre-existing speck) and triaged.
 CV_CHANGE_GATE_T = 0.10
 
 _PAW = ("RightHand", "RHLeft", "RHOut", "RHRight")

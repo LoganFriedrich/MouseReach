@@ -81,8 +81,7 @@ class TestValidateTrayMotion:
         """SA excursion present and pillar lk static -> valid.
 
         v2.2.1: pillar lk test is disabled. Excursion alone determines
-        validity. This test was previously named test_excursion_only_fails
-        and inverted -- pillar-only failures no longer invalidate.
+        validity. Pillar-only failures do not invalidate.
         """
         df = _make_df(1000)
         df.loc[470:480, "SABL_x"] = 60.0

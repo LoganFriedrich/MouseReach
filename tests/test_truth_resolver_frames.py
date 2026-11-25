@@ -37,7 +37,7 @@ def test_frames_only_review_still_resolves():
 
 
 def test_frames_no_reach_covers_are_a_reach_the_detector_missed_never_the_stored_id():
-    """Until 2026-10-26 the stored id was the fallback -- but in this run id 36
+    """The stored id is not the fallback -- in this run id 36
     is a DIFFERENT reach (3990-4004), so the answer landed on it. The frames are
     the fact: the reach is added with them (_add_reviewed_reaches)."""
     out = _seg_overrides_from_review(_review({"start": 5000, "end": 5010, "reach_id": 36}),

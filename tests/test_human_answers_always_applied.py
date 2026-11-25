@@ -1,5 +1,4 @@
-"""A person's answer is ALWAYS applied, with no hold, queue or question
-(owner rule 2026-11-21).
+"""A person's answer is ALWAYS applied, with no hold, queue or question.
 
   (a) filing never completes while an answer for the video is missing from
       the features file about to be filed: the archive step makes the file
@@ -142,9 +141,9 @@ def lab(tmp_path, monkeypatch):
 
 def test_a_run_finds_ground_truth_filed_beside_the_video(lab):
     """REPRODUCES (c) 1: the run's folder holds no ground truth; the file sits
-    beside the filed results. Before 2026-11-21 the extractor looked only in
-    the run's folder and the processing-tree index, so the answer was not
-    applied and the video was filed without it."""
+    beside the filed results. An extractor that looked only in
+    the run's folder and the processing-tree index would not
+    apply the answer and would file the video without it."""
     pose = _video_files(lab.proc)
     _ground_truth(lab.filed)
     feats = FeatureExtractor().extract(pose, lab.proc / f"{VID}_reaches.json",

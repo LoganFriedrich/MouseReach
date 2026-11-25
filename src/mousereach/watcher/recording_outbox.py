@@ -108,8 +108,8 @@ HOW LONG A PASS MAY TAKE (sending never starves the watcher's other work)
 The running watcher sends in SLICES: one pass at the start of a watcher cycle,
 limited to ``recording_outbox_cycle_seconds`` (default 120), then the cycle's
 work item (a pose, a cut ...), then the next slice. WHY: a recording PC with
-hundreds of recordings to clear once spent its whole 30-minute pass at the
-start of every cycle, so its graphics card posed one video per 30-45 minutes
+many recordings to clear would spend its whole 30-minute pass at the
+start of every cycle, so its graphics card would pose one video per 30-45 minutes
 instead of about four an hour. A hand-started pass
 (``mousereach-send-recordings --once``) has no other work to make room for and
 uses ``recording_outbox_pass_minutes`` (default 30) instead.

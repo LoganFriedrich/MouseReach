@@ -44,15 +44,12 @@ not configured.
 WHY IT IS BUILT THIS WAY
 ------------------------
 Running the pipeline by hand from a window is the most important capability
-the tool has, so the tab stays. But the tab used to run its own, older copy
-of the steps (pipeline/core.py, now removed): the old outcome detector, run
-BEFORE reach detection, in the folder the watcher works in, with no reach
-assignment, no hand-score check, no gate, no review queue and no watcher
-record -- and a "Reprocess All" button that deleted every segments, reaches
-and outcomes file in Processing, a person's hand-set cuts included. Its
-results were never filed and nothing said why.
+the tool has, so the tab stays. It does not run its own copy of the steps
+(an older copy would run the old outcome detector BEFORE reach detection, in
+the folder the watcher works in, with no reach assignment, no hand-score
+check, no gate, no review queue and no watcher record).
 
-So there is now ONE implementation and two ways to start it. This tab IS the
+So there is ONE implementation and two ways to start it. This tab IS the
 Watcher Control panel's run-once (it subclasses WatcherControlWidget and keeps
 its guards and its run-once unchanged) with a smaller screen: same steps, same
 order, same gates and holds, same outputs, same refusals. A change to how the
@@ -64,18 +61,15 @@ the same file ``mousereach-watch-prioritize`` writes): the next passes take
 that animal's videos before any other, with every step, check and hold
 unchanged. That is how a person has chosen videos done now from a window.
 
-THE OLD CONTROLS ARE GONE (2026-11-19). "Select Specific Files...", "Clear
-Selection" and "Reprocess All..." were kept greyed out until the lab owner
-decided whether chosen videos come back. The owner's answer (2026-11-19):
-everything must be runnable by hand, easily, from the window and the command
-line. So "Run chosen videos..." replaces the first two, running each chosen
+CHOSEN VIDEOS. Everything must be runnable by hand, easily, from the window
+and the command line. "Run chosen videos..." runs each chosen
 video through the watcher's own steps; what it does with a filed, held or
-crystallized video is what the watcher does (refuse, and say why). "Reprocess
-All" is not brought back: it deleted every segments, reaches and outcomes
+crystallized video is what the watcher does (refuse, and say why). There is
+no "Reprocess All": it would delete every segments, reaches and outcomes
 file in Processing, a person's hand-set cuts included, and filed results are
 final (a filed video is run again only by a person's explicit command, e.g.
-the dashboard's "Re-run video"). The separate Run All Steps tab, which ran one
-chosen video, is retired: this button does the same for one or many.
+the dashboard's "Re-run video"). There is no separate Run All Steps tab:
+this button does the same for one or many.
 
 ASCII-only console output (Windows cp1252). Qt widget text may use Unicode,
 but this module prints nothing to the terminal.

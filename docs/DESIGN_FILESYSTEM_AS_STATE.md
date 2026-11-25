@@ -1,13 +1,13 @@
 # Design: the filesystem is the state, the database is derived
 
-STATUS: PARTLY BUILT (2026-09-14). Built: the read-only check (step 0), the
+STATUS: PARTLY BUILT. Built: the read-only check (step 0), the
 rule that every walk of Analyzed skips superseded outputs, and the stage-folder
 layout (steps 1 and 2: config, the folder builder, the archive root, guard-file
 handling). Not yet built: claim by rename (step 3), rebuilding the database
 from folders (step 4), folder-first readers (step 5).
 For what the pipeline does today, read PIPELINE_AS_BUILT.md.
 
-Decided 2026-09-14: a video's position in the pipeline is determined by which
+Decision: a video's position in the pipeline is determined by which
 folder contains it. The database is a cache of that fact, rebuildable by
 scanning, and never the authority. A watcher becomes an automation
 convenience rather than a load-bearing component.
@@ -97,12 +97,11 @@ it waits for cleanup. One such folder holds videos:
 `Unanalyzed/Single_Animal/.inflight/<machine>/` holds singles a GPU node has
 claimed for pose (watcher/single_claim.py). A scan counts each one as still
 waiting in `Unanalyzed/Single_Animal`, never as a stage of its own and never
-as lost (2026-09-15).
+as lost.
 `Processing/Review/_Problematic/` holds recordings that failed (empty, a
 fraction of a second, unreadable), each with a
 `<name>.recording_issue.json` reason file; a person deals with them. It is
-not a stage, and it is not leftover either (docs/RECORDING_ISSUES.md;
-update 2026-11-18).
+not a stage, and it is not leftover either (docs/RECORDING_ISSUES.md).
 
 Both `Unanalyzed/` folders accept new videos at any time, even while nodes run.
 A video is taken only once it has stopped changing, and singles are claimed by
@@ -171,7 +170,7 @@ One stage, in order:
   5. Delete the local scratch copy.
 
 This replaces the `.claims` marker files, which were not atomic (write, sleep,
-read back). Since 2026-10-22 those markers are an exclusive create instead
+read back). Those markers are now an exclusive create instead
 (`watcher/claim_marker.py`), broken only when the holder stops reporting --
 atomic, but still a marker beside the files rather than the folder itself
 being the queue.

@@ -1,4 +1,4 @@
-"""Filed is final (lab rule, 2026-11-19).
+"""Filed is final.
 
 Once a video is filed, the four algorithms (segmentation, reach detection,
 outcome detection, reach assignment) are never re-run onto it; a newer version

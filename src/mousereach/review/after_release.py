@@ -5,9 +5,9 @@ WHY ONE SENTENCE IN ONE PLACE: releasing a video (Clear in the review tool,
 --clear) only marks it finished. It goes back into the pipeline at the next
 pass of the watcher's review return -- by itself within about two minutes
 when the automatic watcher runs, but NOT AT ALL on a machine where nobody runs
-the watcher (a lab that runs everything by hand). Those messages used to say
-only "the watcher picks it up", which on such a machine was never true: the
-person had to know to press Run again. Every release message now ends with
+the watcher (a lab that runs everything by hand). Those messages must not say
+only "the watcher picks it up", which on such a machine is never true: the
+person has to know to press Run again. Every release message ends with
 this sentence. ASCII only (it is also printed).
 """
 

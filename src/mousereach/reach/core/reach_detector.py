@@ -84,7 +84,6 @@ KNOWN LIMITATIONS
 
 REFERENCES
 ==========
-- Rule derivation: src/mousereach/reach/analysis/DISCOVERED_RULES.md
 - Evaluation scripts: src/mousereach/reach/analysis/
 - Ground truth videos: Processing/ folder with _reach_ground_truth.json files
 """
@@ -102,7 +101,7 @@ from .boundary_refiner import split_reach_boundaries
 from .boundary_polisher import BoundaryPolisher
 
 
-VERSION = "6.0.0"  # v6.0: New-DLC recalibration (2026-03-27 model)
+VERSION = "6.0.0"  # v6.0: New-DLC recalibration
 
 
 @dataclass
@@ -182,8 +181,8 @@ class VideoReaches:
     reaches_added: int = 0
     reaches_removed: int = 0
     segments_flagged: int = 0
-    # Reaches that start before the first cut: no pellet's (owner decision
-    # D2-3; reach/core/before_first_cut.py says why). Never inside a segment.
+    # Reaches that start before the first cut: no pellet's
+    # (reach/core/before_first_cut.py says why). Never inside a segment.
     reaches_before_first_cut: List[Reach] = field(default_factory=list)
 
 
@@ -196,7 +195,6 @@ class ReachDetector:
     2. Reach Start: First frame ANY hand point likelihood >= 0.3 while nose engaged
     3. Reach End: Either hand disappears OR hand retracts left significantly
 
-    See src/mousereach/reach/analysis/DISCOVERED_RULES.md for full derivation.
     """
 
     # Thresholds derived from GT analysis (v3.1 refinements)
@@ -210,7 +208,7 @@ class ReachDetector:
     # noise where hand likelihood briefly crossed 0.5 then dropped. Genuine
     # reach starts have the hand visible continuously.
     # v2.5.1-dev: reverted from 3 back to 2.
-    # Rationale (2026-04-23): scoring against the full 23-video reach-GT
+    # Rationale: scoring against the full 23-video reach-GT
     # corpus (unified-aware eval harness) shows the v6.0 raise was net
     # negative under a recall-first priority framing:
     # raised from 2 to 3 reduced FP by ~58 but increased FN by ~71.
@@ -239,7 +237,7 @@ class ReachDetector:
     # describing a completed reach, not a classification feature for deciding
     # whether a reach occurred. Using it as a filter is self-referential:
     # it rejects reach candidates based on their own measured extent.
-    # Ground-truth analysis (2026-04-23): 55.9% of real human-annotated reaches
+    # Ground-truth analysis: 55.9% of real human-annotated reaches
     # have negative signed extent -- i.e., the hand did not physically cross
     # BOXR during the reach but the reach was still a real reach. No threshold
     # on this signed 1-D projection can cleanly separate real from phantom.

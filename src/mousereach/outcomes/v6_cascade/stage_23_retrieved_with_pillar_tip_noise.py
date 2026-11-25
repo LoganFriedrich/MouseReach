@@ -55,7 +55,7 @@ PAW_LK_THR = 0.5
 ON_PILLAR_RADII = 1.0
 NEAR_PILLAR_TIP_RADII = 2.5     # observations within this dist from
                                 # pillar center could be tip-noise
-# 2026-05-03: Stage 23 disabled. Pillar-tip cluster signature is real
+# Stage 23 disabled. Pillar-tip cluster signature is real
 # but bout-pick across multi-reach cases requires GT visual judgment
 # we can't replicate. All commit attempts produce wrong-bout errors.
 CLUSTER_STD_PX_MAX = 0          # disabled (impossible threshold)

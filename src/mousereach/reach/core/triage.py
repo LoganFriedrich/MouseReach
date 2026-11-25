@@ -175,7 +175,7 @@ def triage_results(
     files in Processing/ and tracks status via validation_status in JSON.
     Use the watcher (mousereach-watch, or the "2 - Run Pipeline" tab) instead.
 
-    v2.3+: No longer creates folders or moves files. Updates JSON metadata only.
+    Creates no folders and moves no files; updates JSON metadata only.
     """
     import warnings
     warnings.warn(

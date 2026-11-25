@@ -200,8 +200,8 @@ def test_a_posed_file_that_cannot_be_removed_keeps_the_claim(share, tmp_path, mo
 
 
 def test_videos_in_hand_without_a_claim_are_claimed(share, tmp_path):
-    # Before 2026-10-22 every marker was deleted after 24 h, so posed copies of
-    # videos in review had none and looked like waiting work.
+    # A marker deleted after 24 h would leave posed copies of
+    # videos in review with none, looking like waiting work.
     posed, status = share
     a = _node("NODE-A", posed, tmp_path,
               states={V1: "triage", V2: "dlc_complete", V3: "archived"})

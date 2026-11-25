@@ -1,6 +1,6 @@
 """A person's cuts (boundary_source "human") or a person's confirmation of the
 cuts (cuts_confirmed) are never questioned by an automated check of segment
-length, spacing or count (owner, 2026-11-23; causal_review_io.cuts_taken_as_made).
+length, spacing or count (causal_review_io.cuts_taken_as_made).
 """
 import json
 

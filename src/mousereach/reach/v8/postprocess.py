@@ -155,7 +155,7 @@ def trim_leading_sustained_lk(
     Reaches reduced below min_span after trimming are dropped from the
     output entirely.
 
-    Calibrated 2026-05-21 on the model 3.1 DLC corpus:
+    Calibrated on the model 3.1 DLC corpus:
       - LOOCV: TP +44 / FP -92 / FN -44 vs v8.0.1 baseline.
         TOLERANCE_ERROR(start_early) reduced 83 -> 7 (92% reduction).
       - Holdout (19 videos): TP +51 / FP -100 / FN -51.
@@ -231,7 +231,7 @@ def trim_trailing_sustained_lk(
     Reaches reduced below min_span after trimming are dropped from the
     output entirely.
 
-    Calibrated 2026-05-26 on the model 3.1 DLC corpus:
+    Calibrated on the model 3.1 DLC corpus:
       - Calibration LOOCV: TP +3 / FP -3 / FN -3 vs v8.0.3 baseline.
         TOLERANCE_ERROR pairs reduced 22 -> 19 (-3).
       - Holdout (19 videos): TP +1 / FP -2 / FN -1.
@@ -361,7 +361,7 @@ def apex_split_at_trough(
     artifacts (grab, hold, jitter) where the second peak is near the
     end of the algo span and represents a single-reach pattern.
 
-    Calibrated 2026-05-22 on the model 3.1 DLC corpus (16-video
+    Calibrated on the model 3.1 DLC corpus (16-video
     calibration LOOCV + 19-video holdout):
       - Calibration: TP +84 / FP -35 / FN -84 vs v8.0.2 baseline.
         MERGED topology reduced 57 -> 10 (82% reduction).

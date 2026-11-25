@@ -2,9 +2,7 @@
 
 Describes: `src/mousereach/outcomes/v6_cascade/` (all files), `src/mousereach/outcomes/core/` (`batch.py`, `pellet_outcome.py`, `triage.py`, `advance.py`, `geometry.py`, `__init__.py`), `src/mousereach/outcomes/cli.py`, `src/mousereach/outcomes/_review.py`, `src/mousereach/lib/pillar_geometry.py`
 
-Verified against: b65fcf0 (2026-08-23)
-
-Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
 ---
 
@@ -25,17 +23,17 @@ There are two detectors in this directory.
 **v6 cascade** (`v6_cascade/`, version string `6.1.0` at `v6_cascade/__init__.py:16`). This is what the batch pipeline and the watcher run:
 
 - `outcomes/core/batch.py:154` `process_single()` runs v6 unless the caller passes `legacy=True`. Every caller of it uses the default: `watcher/orchestrator.py:1068` and `:1981` (also the Run Pipeline tab's "Run chosen videos...", `pipeline/run_all.py`, which runs the watcher's own handlers through `watcher/run_one.py`), `pipeline/reprocess_to_current.py:213`.
-- `mousereach-detect-outcomes` runs v6 through the same `process_batch` -> `process_single` path (`outcomes/cli.py` `main_batch`). Since 2026-08 it has no detection or input-reading code of its own.
+- `mousereach-detect-outcomes` runs v6 through the same `process_batch` -> `process_single` path (`outcomes/cli.py` `main_batch`). It has no detection or input-reading code of its own.
 
 **Legacy detector** (`core/pellet_outcome.py`; its `VERSION` constant is `"4.0.0_step2"` at line 110). Its output has a completely different shape (see "What is not in the file").
 
-### `--legacy` reaches the legacy detector (since 2026-08; it did not before)
+### `--legacy` reaches the legacy detector 
 
-`mousereach-detect-outcomes --legacy` passes `legacy=True` by name through `process_batch` (`core/batch.py`) into `process_single`, whose `legacy` branch is the only place that constructs `PelletOutcomeDetector`. Before 2026-08 the flag printed a legacy banner and ran v6 anyway: `process_batch` called `process_single(dlc, seg, reach, output_dir)` with four positional arguments and `legacy` is the fifth parameter, so it stayed `False`. Any file from that era stamped `6.1.0` was produced by v6 whatever flag was typed.
+`mousereach-detect-outcomes --legacy` passes `legacy=True` by name through `process_batch` (`core/batch.py`) into `process_single`, whose `legacy` branch is the only place that constructs `PelletOutcomeDetector`. Passing `legacy` positionally would leave it `False` (it is the fifth parameter of `process_single`), so the flag is passed by name; a file stamped `6.1.0` was produced by v6 whatever flag was typed.
 
-### The "Step 2 - Run Pipeline" tab no longer runs the legacy detector
+### The "Step 2 - Run Pipeline" tab does not run the legacy detector
 
-The napari **"Step 2 - Run Pipeline"** tab used to run its own processor (`pipeline/core.py`, removed), which constructed `PelletOutcomeDetector` directly, BEFORE reach detection and with no reach file, and stamped its files `4.0.0_step2`. The tab now runs one pass of this machine's watcher (`pipeline/batch_widget.py`, the same code as the Watcher Control tab's Run Once), so on the processing machine it runs v6 through `process_single` after reach detection, exactly as the watcher does. (On a pose-only graphics-card PC the pass only cuts and poses; no outcome detector runs there.) Files stamped `4.0.0_step2` that already exist were made by the old tab.
+The napari **"Step 2 - Run Pipeline"** tab does not run its own processor (one that constructs `PelletOutcomeDetector` directly would run BEFORE reach detection with no reach file, and stamp its files `4.0.0_step2`). The tab runs one pass of this machine's watcher (`pipeline/batch_widget.py`, the same code as the Watcher Control tab's Run Once), so on the processing machine it runs v6 through `process_single` after reach detection, exactly as the watcher does. (On a pose-only graphics-card PC the pass only cuts and poses; no outcome detector runs there.) Files stamped `4.0.0_step2` that already exist were made by the old tab.
 
 Nothing announces which detector produced a given file except the `detector_version` string inside it. Anything reading outcomes files has to cope with at least three shapes: v6 (`6.1.0`), archived legacy (`2.4.4`), and legacy-as-it-stands-today (`4.0.0_step2`).
 
@@ -69,11 +67,11 @@ It is not true that everything then triages. Stages differ:
 
 So the effect is a systematic shift toward `untouched` and toward triage, not uniform triage.
 
-### The reach-loading bug that used to exist in the CLI (fixed 2026-08)
+### The CLI reads reaches nested per segment
 
-`core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list. It is now the only reader: `mousereach-detect-outcomes` calls `process_batch`, which calls `process_single`, which calls it. Since 2026-11-19 it also reads the reaches file's top-level `reaches_before_first_cut` list (reaches that start before the first cut, which belong to no pellet and are no longer written inside segment 1): the cascade gets exactly the reach list it got before, and places reaches by its own windows, which start at the first cut, so no call changes.
+`core/batch.py:107-142` `_extract_reaches()` reads the current reach-file format, where reaches are nested per segment under `segments[].reaches`, and falls back to an older flat top-level `reaches` list. It is now the only reader: `mousereach-detect-outcomes` calls `process_batch`, which calls `process_single`, which calls it. It also reads the reaches file's top-level `reaches_before_first_cut` list (reaches that start before the first cut, which belong to no pellet and are no longer written inside segment 1): the cascade gets exactly the reach list it got before, and places reaches by its own windows, which start at the first cut, so no call changes.
 
-**Until 2026-08 `outcomes/cli.py` carried a second, private copy of `_extract_reaches` that read only the flat top-level `reaches` key.** Current reach files have no top-level `reaches` key at all — a scan of archived `_reaches.json` files under `Analyzed` found the key absent from every one, with reaches nested per segment instead. So that copy returned `[]` on every real reach file, and `mousereach-detect-outcomes` produced materially different (and worse) outcomes than the pipeline did on the same inputs: on an archived video re-run through it, most segments differed and many of them fell through to `triaged`. It also used `r.get("start_frame") or r.get("start")`, so a reach starting at frame 0 would have been dropped even if the format had matched. The copy is gone; after the fix the same re-run reproduced every per-segment field of the archived file exactly.
+**`outcomes/cli.py` has no private copy of `_extract_reaches`.** Current reach files have no top-level `reaches` key at all -- a scan of archived `_reaches.json` files under `Analyzed` found the key absent from every one, with reaches nested per segment instead. A copy that read only the flat top-level `reaches` key would return `[]` on every real reach file, and `mousereach-detect-outcomes` would produce materially different (and worse) outcomes than the pipeline on the same inputs. Re-running an archived video through the CLI reproduces every per-segment field of the archived file exactly.
 
 ---
 
@@ -95,7 +93,7 @@ Segment identity is not something this step checks — it is something this step
 
 **Very short segments produce triage.** If `seg_end - 5 <= seg_start`, most stages return `continue` with reason `too_short` and the segment falls to stage 99.
 
-**Nothing records which boundaries were used.** The outcomes file carries five top-level keys -- `video_id`, `detector`, `detector_version`, `cv_video`, `segments` (Update 2026-11-18: `cv_video` was added after this was written) -- and no segment start/end frames, no segmenter version, no source-file reference. If `{video}_segments.json` is later regenerated with different boundaries, the outcomes file silently no longer matches it, and no code compares them.
+**Nothing records which boundaries were used.** The outcomes file carries five top-level keys -- `video_id`, `detector`, `detector_version`, `cv_video`, `segments` -- and no segment start/end frames, no segmenter version, no source-file reference. If `{video}_segments.json` is later regenerated with different boundaries, the outcomes file silently no longer matches it, and no code compares them.
 
 ---
 
@@ -183,7 +181,7 @@ After the stage list is built, `detector.py:154-163` wraps three extra checks ar
 
 **3. Pixel check on the landing spot** (`cv_artifact_gate.py:171-195`, measurement at `:81-157`). This is the only guard that can *create* a triage. It opens the video, finds where the pellet supposedly landed (median position of the last 60 confident off-pillar sightings), and measures brightness in a small patch there before and after. It computes `(after − before) / pellet_brightness`, where `pellet_brightness` is the same pellet sampled on the pillar earlier in this same video. A real pellet arriving makes a dark spot bright. If the change is below **0.10** (`CV_CHANGE_GATE_T`, `cv_artifact_gate.py:45`), the tracker had latched onto something already bright at that location — dust, a corner marker, a reflection — and the commit becomes **triage** with reason `cv_artifact_landing_no_pellet_arrival`.
 
-This guard is a no-op if `video_dir` is `None`, if the file is not found, if `cv2` will not import, if the segment is shorter than 20 clean frames, if there are fewer than three confident off-pillar sightings, or if any of the sampled brightness measurements come back unusable — every one of those returns `None` and the commit stands. It finds the video through `cv_artifact_gate.resolve_video`, which accepts `.mp4`, `.avi` and `.mkv` (the same rule Stage 98 and the batch runner use; Update 2026-11-18).
+This guard is a no-op if `video_dir` is `None`, if the file is not found, if `cv2` will not import, if the segment is shorter than 20 clean frames, if there are fewer than three confident off-pillar sightings, or if any of the sampled brightness measurements come back unusable — every one of those returns `None` and the commit stands. It finds the video through `cv_artifact_gate.resolve_video`, which accepts `.mp4`, `.avi` and `.mkv` (the same rule Stage 98 and the batch runner use).
 
 **4. Paw-confidence override.** `detector.py:157-158` raises `paw_lk_threshold` from 0.5 to 0.9 on exactly two stages, `Stage16DisplacedViaMaxDisplacement` and `Stage17DisplacedViaDominantMaxDisplacement` (`guards.py:114-117`), because DeepLabCut 4.0 detects an approaching paw past the slit far more often than 3.x did. The override is applied only to the objects in the top-level list. Stages 22 and 25 construct **their own private copies** of stages 16 and 17 inside `__init__` (`stage_22_retry_with_stabilized_dlc.py:48-53`, `stage_25_retry_with_strict_pellet_confidence.py:46-51`), and those copies keep the 0.5 threshold. The three wrapping guards still apply to 22 and 25, because they wrap the outer object's `decide` — confirmed in the archive, where stage 22 appears with a `cv_artifact` triage reason.
 
@@ -300,9 +298,7 @@ Stage 98 is the only stage whose purpose is to give a triage a *specific* reason
 
 An earlier block at `:231-233` computes the same late-zone count using a 0.75 cut-point and stores it under the same feature key; `:281-283` overwrites it with the 0.5 version. The 0.75 computation has no effect.
 
-**Update:** Stage 98, the CV-artifact guard and the batch runner now find the video by one rule (`cv_artifact_gate.resolve_video`: `.mp4`, `.avi`, `.mkv`), so the paragraph below describes the earlier behaviour.
-
-**It only looked for `{video_id}.mp4`** (`stage_98_lost_in_shadow_triage.py:121-127`). The directory search that supplies `video_dir` accepts `.avi`, `.mp4` and `.mkv` (`core/batch.py:148`). For a video stored as `.avi`, `video_dir` is found, this stage reports `video_unavailable`, and the segment falls to stage 99 with the generic reason. The pixel guard on displaced commits does not have this problem — it checks `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
+**Finding the video.** Stage 98, the CV-artifact guard and the batch runner find the video by one rule (`cv_artifact_gate.resolve_video`: `.mp4`, `.avi`, `.mkv`), so a video stored as `.avi` is found by all three.
 
 Every failure inside stage 98 becomes a `continue`: `cv2` not installed (`:336-343`), video will not open (`:345-351`), tray box degenerate (`:324-329`). Nothing is logged. The result is indistinguishable from "not a shadow case".
 
@@ -331,7 +327,7 @@ Written by `process_single` in `core/batch.py` (both the pipeline and `mousereac
 }
 ```
 
-Top level -- five keys: `video_id`, `detector`, `detector_version`, `cv_video`, `segments`. Files written before `cv_video` was added carry only the other four. (Update 2026-11-18.)
+Top level -- five keys: `video_id`, `detector`, `detector_version`, `cv_video`, `segments`. Files written before `cv_video` was added carry only the other four.
 
 | Key | Value |
 |---|---|
@@ -373,7 +369,7 @@ Per segment, triaged case — the same six keys plus `flag_reason`, with `outcom
 
 ### What later steps add
 
-The retired triage-clearing tool used to write back into this file when a person resolved a segment, setting on that segment `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` and `causal_reach_id`. It no longer does anything (it prints a pointer to `mousereach-review-tool` and stops); a person's answer now goes into the review record `{stem}_causal_review.json`, never into this file. So `causal_reach_id` and those clearing fields appear in an outcomes file only if an old copy of the tool wrote them.
+An old triage-clearing tool wrote back into this file when a person resolved a segment, setting on that segment `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` and `causal_reach_id`. It no longer does anything (it prints a pointer to `mousereach-review-tool` and stops); a person's answer now goes into the review record `{stem}_causal_review.json`, never into this file. So `causal_reach_id` and those clearing fields appear in an outcomes file only if an old copy of the tool wrote them.
 
 In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `Analyzed` and `Processing` found **zero** v6 segments carrying `triage_cleared`, `human_verified`, `cleared_by`, `original_triage_reason` or `causal_reach_id`. Every v6 file in the pipeline is exactly as the detector wrote it.
 
@@ -388,7 +384,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `mousereach-advance-outcomes` crashes immediately. `cli.py:340` calls `advance_videos(args.input, require_validation=not args.force)`; the function signature is `advance_videos(input_dir, output_dir, verbose=True)` (`core/advance.py:38`). There is no `require_validation` parameter and `output_dir` has no default. Every invocation raises `TypeError`.
 - `mousereach-review-pellet-outcomes` crashes on any v6 file. `_review.py:84` does `data['summary']` on the raw JSON; v6 files have no `summary` key. It also offers `displaced_outside`, `no_pellet` and `uncertain` as corrections, which the detector never produces.
 - `mousereach-triage-outcomes` does not crash, and it is not harmless. `core/triage.py:77-84` requires `data['n_segments']` and `data['summary']`; on a v6 file the `KeyError` is caught at `:85-90` and stored as the video's `error`. `triage_results` then counts the video as `failed` and **writes into the file** `validation_status: "needs_review"` and `triage_reason: "'n_segments'"` (`core/triage.py:184-186`, `:199-205`). Every v6 video, always. The function also raises a `DeprecationWarning` when called (`:153-160`).
-- `mousereach-detect-outcomes` works (since 2026-08): it runs the pipeline path (`process_batch` -> `process_single`), so it reads reaches the way the watcher does and its `--legacy` flag reaches the legacy detector. Before that it silently loaded zero reaches from current reach files (see "Inputs" above) and `--legacy` did nothing.
+- `mousereach-detect-outcomes` works: it runs the pipeline path (`process_batch` -> `process_single`), so it reads reaches the way the watcher does and its `--legacy` flag reaches the legacy detector. Before that it silently loaded zero reaches from current reach files (see "Inputs" above) and `--legacy` did nothing.
 
 **Docstrings and names that describe something other than what the code does.** Each checked individually against the code at this commit:
 
@@ -403,7 +399,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `stage_26:22` and `stage_27:15` say the displacement threshold is 12 px; both constants are 10.0.
 - `guards.py:10` says the vanish guard applies to four named stage classes; it applies to all 33.
 - `lib/pillar_geometry.py:14` describes the pillar offset as "perpendicular" to the tray front edge; the code offsets straight up in image y (`:104`).
-- `v6_cascade/STAGE_DESCRIPTIONS.md` is headed "v6.0.0_dev" and its stage table still says stage 0 triages abnormally short segments. (Update 2026-11-18: it now opens with a banner marking it as the historical May 2026 validation record and pointing here.)
+- `v6_cascade/STAGE_DESCRIPTIONS.md` is headed "v6.0.0_dev" and its stage table still says stage 0 triages abnormally short segments. (it opens with a banner marking it as the historical validation record and pointing here.)
 - `outcomes/core/__init__.py` describes the legacy geometric algorithm, ruler units, `displaced_outside`, confidence scores and the `validation_status` workflow. It does not mention the v6 cascade at all.
 
 **Parameters and imports that have no effect.**
@@ -411,7 +407,7 @@ In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `A
 - `stage_2` imports `detect_tray_motion_onset` (`:34`) and never calls it. It also defines `ANCHOR_BACK_OFFSET = 10` (`:53`), used only inside a comment.
 - `DISPLACED_VANISH_GUARD_CLASSES` is imported by `detector.py:88` and never used.
 
-**Failures that are swallowed.** `process_batch` (`core/batch.py`), which `mousereach-detect-outcomes` runs, catches every exception per video, prints `FAILED: <message>`, and continues (Update 2026-11-18: the CLI no longer has a loop of its own). Nothing is raised and no file is written; a video with a corrupt pose file simply has no outcomes file afterwards. The watcher's reprocess path is better: `watcher/orchestrator.py:1994-1998` logs the step as failed, marks the video failed, and re-raises. Inside stage 98 and the pixel guard, every video-access failure becomes a silent `continue`.
+**Failures that are swallowed.** `process_batch` (`core/batch.py`), which `mousereach-detect-outcomes` runs, catches every exception per video, prints `FAILED: <message>`, and continues (the CLI no longer has a loop of its own). Nothing is raised and no file is written; a video with a corrupt pose file simply has no outcomes file afterwards. The watcher's reprocess path is better: `watcher/orchestrator.py:1994-1998` logs the step as failed, marks the video failed, and re-raises. Inside stage 98 and the pixel guard, every video-access failure becomes a silent `continue`.
 
 ---
 
@@ -423,7 +419,7 @@ The only things that vary at runtime:
 
 | What | Where | Effect |
 |---|---|---|
-| `legacy=True` | `core/batch.py` `process_single`, passed through by `process_batch` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reached by `process_single(..., legacy=True)` from Python or by `mousereach-detect-outcomes --legacy` (since 2026-08; before that the flag did not reach it) |
+| `legacy=True` | `core/batch.py` `process_single`, passed through by `process_batch` | Runs the old geometric detector: different algorithm, different output shape, different version string. Reached by `process_single(..., legacy=True)` from Python or by `mousereach-detect-outcomes --legacy` |
 | `video_dir` | `core/batch.py:145-151`, defaults to searching the output directory | If no video file is found, the pixel-based artefact guard and stage 98 both become no-ops. Displaced commits that would have been triaged are committed instead. Nothing reports that this happened |
 | Tray type | `watcher/orchestrator.py:1062`, `:1971` (the Run Pipeline tab's "Run chosen videos..." runs these) | Tray `E` or `F` → the whole step is skipped, no file written |
 | Whether reaches exist | `core/batch.py:199-202` | No reach file → empty reach list → stage 7 and most touched stages defer, stage 4 loosens; net shift toward `untouched` and toward triage |
@@ -432,18 +428,11 @@ The stage list itself (`detector.py:112-146`) is hard-coded and identical for ev
 
 ---
 
-## Update 2026-08-23
-
-Watcher-side only, no cascade behaviour changed: failures around the cascade's
-neighbours (assignment after it, feature extraction and database sync below it)
-now write `failed` rows to the step audit table instead of vanishing into
-warnings, so a run that half-happened is countable.
-
-## Update 2026-11-19 (filed is final)
+## filed is final
 
 A new version of this algorithm is used only for videos that are not filed yet. A filed video's
 result from this step is final: the version scan never marks a filed video to run this step again,
 and a filed video's kinematics-only re-run never recomputes it (if the filed output is missing, that
 re-run is given up and the filed results stand). To see how a new version would do on filed videos,
 use the evaluation tools (or bring-current without finalize); they write outside Analyzed and never
-replace a filed file. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
+replace a filed file. See docs/PIPELINE_AS_BUILT.md, "filed is final".

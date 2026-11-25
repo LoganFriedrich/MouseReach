@@ -750,7 +750,7 @@ quietly rebuilding the old folder and working there.
 
 - docs/CLI_REFERENCE.md lists every command and its options
 - Use `--help` with any command: `mousereach-segment --help`
-- Report issues: [GitHub Issues](https://github.com/LoganFriedrich/MouseReach/issues)
+- Report issues: on the repository's GitHub Issues page
 
 ---
 

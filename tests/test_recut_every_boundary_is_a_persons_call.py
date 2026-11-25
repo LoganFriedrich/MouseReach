@@ -1,5 +1,4 @@
-"""Every boundary must be explicitly accepted or moved before re-cut cuts count
-(owner decision MRR-08d, 2026-11-19).
+"""Every boundary must be explicitly accepted or moved before re-cut cuts count.
 
 "Force a human to at least look at every single boundary ... can't save and
 can't send the video out of resegmentation until they have explicitly accepted
@@ -207,7 +206,7 @@ def test_save_is_refused_while_a_boundary_is_unwalked(tmp_path, monkeypatch):
 
 
 def test_loading_a_video_starts_the_walk_at_boundary_1():
-    # Owner rule (2026-11-20): the walk always starts at boundary 1, even when
+    # The walk always starts at boundary 1, even when
     # earlier calls are carried over; those keep their answer.
     import inspect
     src = inspect.getsource(W._load_bundle)

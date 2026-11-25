@@ -96,7 +96,7 @@ def test_the_holder_itself_still_routes(queues):
 
 
 def test_flag_session_touches_nothing_while_held(queues, held_elsewhere, monkeypatch):
-    """Flag Session is only a note (2026-11-19): it takes no claim and touches
+    """Flag Session is only a note: it takes no claim and touches
     no file, held elsewhere or not."""
     triage, deep = queues
     touched, errors, advanced = [], [], []

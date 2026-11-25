@@ -1,6 +1,6 @@
-"""Ground truth inside a triage bundle answers its flagged pellets (MRR-03d).
+"""Ground truth inside a triage bundle answers its flagged pellets.
 
-Owner decision 2026-11-19: "an answer a human gives is always true so long as
+"An answer a human gives is always true so long as
 it was given about the correct pellet/segment". The ground-truth tool's
 ``*_unified_ground_truth.json`` is a person's answer. Before this, the release
 check read ground truth only through the corpus index, which does not cover

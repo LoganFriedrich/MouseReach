@@ -302,7 +302,7 @@ def test_a_held_video_stops_where_the_watcher_holds_it(env, monkeypatch):
 
 
 def test_the_tab_never_says_the_database_was_pushed_to():
-    # The Run All Steps tab is retired (2026-11-19); its line per video is now
+    # The Run All Steps tab is retired; its line per video is now
     # run_one.chosen_summary_line, shown by "Run chosen videos..." and printed
     # by mousereach-run-videos.
     from mousereach.watcher.run_one import chosen_summary_line as status_text

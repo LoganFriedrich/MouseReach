@@ -111,7 +111,7 @@ def test_flag_session_in_the_resegmentation_queue_keeps_every_file(
     after = _contents(bundle)
     assert not errors
     # Every file still there, byte for byte, the clear too: Flag Session is
-    # only a note since 2026-11-19 and touches nothing.
+    # only a note and touches nothing.
     assert {k: v for k, v in after.items() if k != clear.name} == before
     assert clear.exists()
     assert any("nothing was moved" in m for m in said)

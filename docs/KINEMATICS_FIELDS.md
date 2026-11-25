@@ -2,9 +2,9 @@
 
 Describes: `src/mousereach/kinematics/core/feature_extractor.py`, `src/mousereach/kinematics/cli.py`, `src/mousereach/kinematics/analysis/reach_export.py`, `src/mousereach/export/features_csv.py`, `src/mousereach/sync/database.py`, `src/mousereach/review/truth_resolver.py`, `REACH_KINEMATIC_DATA_DICTIONARY.md`
 
-Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
-Verified against: b65fcf0 (2026-08-23). A `:123` reference means a line of `feature_extractor.py` at that commit, and the percentages were measured then. Sections 5.4, 5.5, 6 (opening), 6.1, 6.3 and 6.7 describe extractor 2.3.0: they were checked against the code at 966f182 and name functions instead of lines.
+A `:123` reference means a line of `feature_extractor.py` as the document was written, and the percentages were measured then. Sections 5.4, 5.5, 6 (opening), 6.1, 6.3 and 6.7 describe extractor 2.3.0: they name functions instead of lines.
 
 ---
 
@@ -38,40 +38,15 @@ One class, `FeatureExtractor` (`feature_extractor.py:169`), turns three files in
 
 **Run by**: `mousereach-grasp-analyze` (`kinematics/cli.py:17`, entry point at `pyproject.toml:132`), the watcher (`watcher/orchestrator.py:1154` and `:2103`; the Run Pipeline tab's "Run chosen videos...", `pipeline/run_all.py`, runs the watcher's own step through `watcher/run_one.py`), and `pipeline/reprocess_to_current.py:259`.
 
-**Sizes.** `ReachFeatures` declares 45 fields: 44 named values (Update 2026-11-18: `causal_reach_source` was added) plus a nested dictionary called `extended` holding a further 174 named values (165 before extractor 2.6.0, which added the nine `legacy_swipe_*` values of section 6.8). `SegmentFeatures` declares 29: 28 values (`n_reaches_left_out`, `reaches_left_out` and `ignore_windows` were added) plus the reach list. Counted by parsing the dataclasses; the 161 from before extractor 2.3.0 confirmed by reading shipped files, and the four anchor columns added by 2.3.0 read from the code (§6.7).
+**Sizes.** `ReachFeatures` declares 45 fields: 44 named values plus a nested dictionary called `extended` holding a further 174 named values (165 before extractor 2.6.0, which added the nine `legacy_swipe_*` values of section 6.8). `SegmentFeatures` declares 29: 28 values (`n_reaches_left_out`, `reaches_left_out` and `ignore_windows` were added) plus the reach list. Counted by parsing the dataclasses; the 161 from before extractor 2.3.0 confirmed by reading shipped files, and the four anchor columns added by 2.3.0 read from the code (§6.7).
 
 ---
 
-## 2. Read this before the tables: nothing the algorithm produces links a reach to an outcome
+## 2. Linking a reach to an outcome
 
-> **Update 2026-11-18 -- read this first: the title of this section is no longer true.** Since extractor 2.1.0 the extractor loads `{video}_reach_assignments.json` (found beside the outcomes file) and, on every segment no person decided, sets the segment's `causal_reach_id` to the reach the reach-assignment step credited (`causal_reach_source = reach_assignment`) and fills a missing `interaction_frame` from that step's `segment_ifr`. So `causal_reach`, `outcome`, `interaction_frame` and the `*_at_contact_*` columns ARE filled on the algorithm's causal reach. On a segment a person decided, the person's pick stands and the assignment's pick is recorded as `algo_causal_reach_id`. Still true: `SegmentFeatures` has no `interaction_frame` field, and `distance_to_interaction` is never computed. The rules are in "Update 2026-08-23" and "Who owns a causal reach" at the end of this document. The text below describes the code before 2.1.0 and is kept as the record.
+The extractor loads `{video}_reach_assignments.json` (found beside the outcomes file) and, on every segment no person decided, sets the segment's `causal_reach_id` to the reach the reach-assignment step credited (`causal_reach_source = reach_assignment`). It fills a missing `interaction_frame` from that step's `segment_ifr`. So `causal_reach`, `outcome`, `interaction_frame` and the `*_at_contact_*` columns are filled on the algorithm's causal reach. On a segment a person decided, the person's pick stands and the assignment's pick is recorded as `algo_causal_reach_id`.
 
-The extractor decides which reach caused the pellet's fate with one comparison (`feature_extractor.py:380-384`):
-
-```python
-causal_reach_id = outcome_data.get('causal_reach_id')
-if causal_reach_id is not None and causal_reach_id == reach_id:
-    features.causal_reach = True
-    features.outcome = outcome_data['outcome']
-    features.interaction_frame = outcome_data.get('interaction_frame')
-```
-
-**The current outcome detector never writes `causal_reach_id`.** Every segment it emits carries exactly seven keys — `segment_num`, `outcome`, `outcome_known_frame`, `interaction_frame`, `stage`, `flagged_for_review`, and `flag_reason` when triaged. Measured over every outcome file in the Processing corpus:
-
-| Outcome detector | Segments with `causal_reach_id` | Segments with `confidence` |
-|---|---|---|
-| `v6_cascade` 6.1.0 | **none** | **none** |
-| unnamed, version 2.4.4 (older) | some | all |
-
-So `causal_reach = True` only ever arrives from somewhere other than the current algorithm. In the Analyzed-archive sample, the causal reaches come mostly from old pre-v6 files, then from human causal reviews, a few from ground-truth files, and **none** with `outcome_source = 'algo'`. Human reviews and ground truth put a causal reach id onto the segment through the truth-layering step (`review/truth_resolver.py`), and the extractor then picks it up. Since 2026-09-01 that step resolves a human's causal pick by its **frames** whenever the review records them, and only falls back to the stored reach id when it does not: reach ids are renumbered on every run, so a review written against last month's reach list named an id this run does not have, and the human's answer silently vanished from the reach rows. The stored id is kept beside the resolved one for provenance.
-
-**Two things follow, and they are the largest holes in this data.**
-
-1. **`interaction_frame` is thrown away.** The current outcome detector supplies a non-null `interaction_frame` on most of its segments. `SegmentFeatures` has no field for it, and the reach only receives it inside the `causal_reach_id` branch above. So it is discarded. Everything keyed to the moment of contact goes null with it: the reach's `interaction_frame`, and all ten extended `*_at_contact_*` columns. Across the Analyzed sample those ten are populated on well under one percent of reaches.
-
-2. **`distance_to_interaction` can never be filled, for a second and independent reason.** The extractor reads it from `outcome_data['reach_features']` (`:387-389`). No outcomes file contains a `reach_features` key — on no segment, at either detector version. In the older detector the dictionary is genuinely computed (`outcomes/core/pellet_outcome.py:1645-1689`), returned by `find_causal_reach`, assigned to a local variable at `:1572`, and then not passed into the `PelletOutcome` built at `:1591-1600`; the dataclass has no such field. So `.get('reach_features', {})` returns empty every time. Even if causal reaches came back, this stays null.
-
-**The causal link is computed — by a different stage, into a file the extractor never opens.** `{video}_reach_assignments.json` (detector `assignment_v2` 2.1.0, present for every current video in Processing) carries per reach: `is_causal`, `label`, `segment_outcome`, `segment_ifr`, `segment_num`. In a sample of these files, a small share of reaches are marked `is_causal`. Nothing under `src/mousereach/kinematics/` references that file.
+The outcome detector itself never writes `causal_reach_id`; only the reach-assignment step and a person's review do. `SegmentFeatures` has no `interaction_frame` field, and `distance_to_interaction` is never computed. The rules are in "the algorithm's causal reach reaches the data" and "Who owns a causal reach" at the end of this document.
 
 ---
 
@@ -104,7 +79,7 @@ Measured over the Processing corpus, `ruler_pixels` sits in a narrow band for no
 
 **The one exception on disk, and how it is read.** The reaches file's own segment list stores each segment's `end_frame` as the frame AFTER its last one: the next cut, or `total_frames` for the stretch after the last cut. Thousands of filed reaches files carry that format, so it is kept as it is. The extractor converts it once, through `reach_file_segment_span`, and never reads it as a last frame. Features files written before extractor 2.6.0 carry that same end on their segments; a tool that reads a features file's segment frames goes through `causal_review_io.features_segment_span`, which reads the file's `extractor_version` and gives the first and last frame either way.
 
-**What extractor 2.6.0 corrected** (2026-11-18, folded into 2.6.0 before 2.6.0 was declared or deployed). The pellet-position window ("before the first reach") ended ON the first reach's start frame and now ends at the frame before (section 7). Before, the stored segment end was read as the last frame. So every segment-level value took in the first frame of the NEXT pellet: `attention_score`, the body/posture values, the quality values, and the pellet window that sets the `legacy_swipe_*` threshold line and slit zone. `segment_duration_sec` and `time_to_outcome_sec` were one frame too long, and the file's segment `end_frame` was the next pellet's first frame.
+**What extractor 2.6.0 corrected**. The pellet-position window ("before the first reach") ended ON the first reach's start frame and now ends at the frame before (section 7). Before, the stored segment end was read as the last frame. So every segment-level value took in the first frame of the NEXT pellet: `attention_score`, the body/posture values, the quality values, and the pellet window that sets the `legacy_swipe_*` threshold line and slit zone. `segment_duration_sec` and `time_to_outcome_sec` were one frame too long, and the file's segment `end_frame` was the next pellet's first frame.
 
 A reach's `duration_frames` was copied from the reaches file or from ground truth. It is now counted from the reach's own frames. Two kinds of reach carried a value one frame short (`end - start`): reaches a person moved or added in the reach review window, and every reach substituted from ground truth or typed by a reviewer (`truth_resolver`). Reach `start_frame` and `end_frame` are unchanged, and so is every per-reach measurement computed from them.
 
@@ -136,7 +111,7 @@ Three places in the code agree with that, and two do not.
 
 ---
 
-## 5. Per-reach fields (46, outside `extended`, since `reach_outcome` and `reach_outcome_source` were added 2026-11-19; 43 before `causal_reach_source` was added)
+## 5. Per-reach fields (46, outside `extended`)
 
 "Filled today" is measured on the Processing corpus unless another source is named. Sections 5.4 and 5.5 changed with extractor 2.3.0 and have not been re-measured, so they say when a value is empty instead of how often.
 
@@ -146,7 +121,7 @@ Three places in the code agree with that, and two do not.
 |---|---|---|---|---|
 | `reach_id` | Number for this reach, unique within the video | Copied from reach detection (`:352`) | count | 100% |
 | `reach_num` | Which reach this is inside its segment, from 1 | Copied from reach detection (`:360`); the detector assigns it with `enumerate(..., start=1)` (`span_to_reaches.py:160`) | count | 100% |
-| `segment_num` | Which pellet presentation this reach belongs to | Set from the enclosing segment (`:317`). The constructor still initialises it to `0` with the comment "Will be set by caller" (`:361`) | count | Set from the enclosing segment on every reach (Update 2026-11-18). Features files written before commit `5bac3b0` (2026-08-20) still read `0`. It reaches the database again: `ALL_COLUMNS` now lists `segment_num` (section 8). |
+| `segment_num` | Which pellet presentation this reach belongs to | Set from the enclosing segment (`:317`). The constructor still initialises it to `0` with the comment "Will be set by caller" (`:361`) | count | Set from the enclosing segment on every reach. Older features files still read `0`. It reaches the database again: `ALL_COLUMNS` now lists `segment_num` (section 8). |
 | `is_first_reach` | Is this the first reach of the segment | `i == 0` (`:318`) | true/false | 100% present |
 | `is_last_reach` | Is this the last reach of the segment | `i == n-1` (`:319`) | true/false | 100% present |
 | `n_reaches_in_segment` | How many reaches in this segment | `len(seg['reaches'])` (`:307`, `:320`) | count | 100% |
@@ -155,9 +130,9 @@ Three places in the code agree with that, and two do not.
 
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
-| `causal_reach` | Is this the reach that decided the pellet's fate | `causal_reach_id == reach_id` (`:380-382`) | true/false | Update 2026-11-18: set on the reach the reach-assignment step names, on every segment no person decided (`causal_reach_source = reach_assignment`), since extractor 2.1.0; otherwise from human review or ground truth (section 2). |
+| `causal_reach` | Is this the reach that decided the pellet's fate | `causal_reach_id == reach_id` (`:380-382`) | true/false | set on the reach the reach-assignment step names, on every segment no person decided (`causal_reach_source = reach_assignment`), since extractor 2.1.0; otherwise from human review or ground truth (section 2). |
 | `outcome` | What happened to the pellet | Copied from the segment, **only onto the causal reach** (`:383`) | text | Same rows as `causal_reach`; null on every other reach |
-| `interaction_frame` | Frame the paw met the pellet | Copied from the segment, only onto the causal reach (`:384`) | frame index | Copied onto the causal reach only. Update 2026-11-18: on undecided segments the extractor fills a missing segment `interaction_frame` from the reach assignment's `segment_ifr`, so the algorithm's causal reach carries it (section 2). Since 2026-11-19 (owner decision: the contact frame is an artifact; nothing may depend on it for a reach a person picked) it is attached only when it lies INSIDE the causal reach's frames; otherwise it is null and the `*_at_contact_*` columns of that reach are empty by rule. This happens when a person names a different causal reach than the one holding the algorithm's contact frame, or gives the reach other frames. The causal credit is not affected |
+| `interaction_frame` | Frame the paw met the pellet | Copied from the segment, only onto the causal reach (`:384`) | frame index | Copied onto the causal reach only. On undecided segments the extractor fills a missing segment `interaction_frame` from the reach assignment's `segment_ifr`, so the algorithm's causal reach carries it (section 2). (The contact frame is an artifact; nothing may depend on it for a reach a person picked.) It is attached only when it lies INSIDE the causal reach's frames; otherwise it is null and the `*_at_contact_*` columns of that reach are empty by rule. This happens when a person names a different causal reach than the one holding the algorithm's contact frame, or gives the reach other frames. The causal credit is not affected |
 | `distance_to_interaction` | Frames between apex and the interaction | Read from `outcome_data['reach_features']` (`:387-389`) | frames | **0%, everywhere, permanently** — that key exists in no outcomes file ever written (§2) |
 
 ### 5.3 Extent — inherited, wrong axis, and null on current data
@@ -236,13 +211,13 @@ Each needs both landmarks above likelihood 0.7 at that frame, otherwise null.
 | Field | Plain English | How computed | Units | Filled today |
 |---|---|---|---|---|
 | `outcome_source` | `algo`, `human_review`, or `ground_truth` for this segment's outcome | Copied from the segment after truth layering (`:373`); the segment default `algo` is stamped at `truth_resolver.py:164-165` | text | On every reach whose features file was written by the current extractor (most of Processing; older files predate the field) |
-| `reach_source` | `algo`, `ground_truth`, or `human_review` (a reach a reviewer typed that the detector missed, since 2026-10-26; and, since 2026-11-19, the causal reach a reviewer named whose start and end the reviewer checked -- its frames are the reviewer's, the detector's are kept as `algo_start_frame` / `algo_end_frame` in the resolved reach list) for this reach's frame boundaries | `reach.get('reach_source', 'algo')` (`:374`) | text | Same — but no database column holds it (§8) |
+| `reach_source` | `algo`, `ground_truth`, or `human_review` (a reach a reviewer typed that the detector missed; and, the causal reach a reviewer named whose start and end the reviewer checked -- its frames are the reviewer's, the detector's are kept as `algo_start_frame` / `algo_end_frame` in the resolved reach list) for this reach's frame boundaries | `reach.get('reach_source', 'algo')` (`:374`) | text | Same — but no database column holds it (§8) |
 | `causal_reach_source` | Who named the segment's causal reach: `ground_truth` (the reach whose frames contain the ground truth's interaction frame), `human_review` (the reviewer's pick or typed reach), `reach_assignment` (the reach assignment step's pick, merged by the extractor), or null (no causal reach, or one carried by an old outcome file) | Stamped on the segment by `truth_resolver._apply_outcome_layers` / `_add_reviewed_reaches`, or by the extractor's assignment merge; copied onto every reach | text | Features files written since this field was added; no database column holds it |
-| `reach_outcome` | What THIS reach did to the pellet, when it is known (since 2026-11-19): on the causal reach, the pellet's outcome; on every other reach of a pellet whose causal reach is known, or that nothing touched, `missed`; null while the pellet's causal reach is not known. WHY: a person naming the causal reach also answers every other reach of the pellet (owner rule 2026-11-19) | `feature_extractor.reach_outcome_of` | text | Features files written since 2026-11-19 |
+| `reach_outcome` | What THIS reach did to the pellet, when it is known: on the causal reach, the pellet's outcome; on every other reach of a pellet whose causal reach is known, or that nothing touched, `missed`; null while the pellet's causal reach is not known. WHY: a person naming the causal reach also answers every other reach of the pellet | `feature_extractor.reach_outcome_of` | text | Newer features files only |
 | `reach_outcome_source` | Who settled `reach_outcome`: `human_review` / `ground_truth` (a person named the causal reach, answered untouched, or listed this reach as a miss), `reach_assignment` (the algorithm named the causal reach), `algo` (the algorithm's untouched call); null with `reach_outcome` | `feature_extractor.reach_outcome_of` | text | Same |
-| `reviewed_by` | Who gave the review answer for this pellet: since 2026-10-28 the person named in that segment's own review record; for a review file saved before that date, whoever saved the file last (all a file then recorded) | Copied from the segment (`:375`) | text | Empty in Processing (no reviewed videos there); filled only on reviewed videos in the Analyzed archive (see `FIELD_AUDIT.md` for the current rate) |
+| `reviewed_by` | Who gave the review answer for this pellet: the person named in that segment's own review record; for a review file saved before that date, whoever saved the file last (all a file then recorded) | Copied from the segment (`:375`) | text | Empty in Processing (no reviewed videos there); filled only on reviewed videos in the Analyzed archive (see `FIELD_AUDIT.md` for the current rate) |
 | `algo_outcome` | What the algorithm said before a human overrode it | Copied from the segment (`:376`), stamped at `truth_resolver.py:172` | text | Same rows as `reviewed_by` |
-| `algo_causal_reach_id` | Which reach the algorithm blamed before a human overrode it | Copied from the segment (`:377`), stamped at `truth_resolver.py:173` from whatever `causal_reach_id` the algorithm had | count | Update 2026-11-18: on a segment a person decided, the extractor records the reach assignment's pick here (when not already set), so it is filled on every person-owned segment the assignment step answered; empty elsewhere. |
+| `algo_causal_reach_id` | Which reach the algorithm blamed before a human overrode it | Copied from the segment (`:377`), stamped at `truth_resolver.py:173` from whatever `causal_reach_id` the algorithm had | count | on a segment a person decided, the extractor records the reach assignment's pick here (when not already set), so it is filled on every person-owned segment the assignment step answered; empty elsewhere. |
 
 ### 5.11 Fields declared and never computed by anything
 
@@ -341,7 +316,7 @@ Computed per frame on real frames only, in raw pixel coordinates (no nose subtra
 
 Eight summaries each (`:1290-1330`): `_at_start` (first reach frame), `_at_apex` (the reach's primary apex — see §4), `_at_end` (last reach frame), `_at_contact` (the interaction frame), `_max`, `_min`, `_mean`, `_range` (max − min).
 
-All are populated except the six `_at_contact_*` columns, which are filled only on the reach the reach assignment (or a person) names as causal, now that its `interaction_frame` is set, and null on all other reaches (Update 2026-11-18; section 2).
+All are populated except the six `_at_contact_*` columns, which are filled only on the reach the reach assignment (or a person) names as causal, now that its `interaction_frame` is set, and null on all other reaches (section 2).
 
 ### 6.5 Visibility of each paw point — 4 points × 8 + 1 = 33
 
@@ -398,13 +373,13 @@ New in extractor 2.6.0, from `legacy_swipe_measures` in `kinematics/core/legacy_
 
 ---
 
-**The video record (top level of `{video}_features.json`).** (Added 2026-11-18.) `video_name`; `extractor_version` (`"2.6.0"` today); `total_frames`; `n_segments`; `segments` (the segment records of section 7); `summary` (`total_reaches`, `causal_reaches`, `mean_extent_mm`, `mean_duration_frames`, `mean_peak_velocity`, `mean_attention_score`, `outcome_counts`); `extracted_at`; `frame_rate`; `frame_rate_source` (section 3); `reaches_before_first_cut` (since 2026-11-19: the reaches that start before the first cut, which belong to no pellet -- each with `reach_id`, `start_frame`, `end_frame`, `reach_source`; they are in no segment and carry no measurements; `null` when there are none. A features file written before then lists such a reach under segment 1; the exports and the database sync take it out of segment 1 when they read the file, and the file itself is not changed).
+**The video record (top level of `{video}_features.json`).** `video_name`; `extractor_version` (`"2.6.0"` today); `total_frames`; `n_segments`; `segments` (the segment records of section 7); `summary` (`total_reaches`, `causal_reaches`, `mean_extent_mm`, `mean_duration_frames`, `mean_peak_velocity`, `mean_attention_score`, `outcome_counts`); `extracted_at`; `frame_rate`; `frame_rate_source` (section 3); `reaches_before_first_cut` (the reaches that start before the first cut, which belong to no pellet -- each with `reach_id`, `start_frame`, `end_frame`, `reach_source`; they are in no segment and carry no measurements; `null` when there are none. An older features file lists such a reach under segment 1; the exports and the database sync take it out of segment 1 when they read the file, and the file itself is not changed).
 
-**Easy and Flat tray videos get a session-only features file** (`extract_session_only`; added 2026-11-18). These trays are not segmented, so the file has one segment covering the whole video. It carries each reach's id, number, frames (`start_frame`, `apex_frame`, `end_frame`, `duration_frames`) and position in the segment, and the segment's `attention_score`. Every kinematic and outcome field is left empty, never invented, and `summary` holds only `session_only: true`, `total_reaches` and a note.
+**Easy and Flat tray videos get a session-only features file** (`extract_session_only`). These trays are not segmented, so the file has one segment covering the whole video. It carries each reach's id, number, frames (`start_frame`, `apex_frame`, `end_frame`, `duration_frames`) and position in the segment, and the segment's `attention_score`. Every kinematic and outcome field is left empty, never invented, and `summary` holds only `session_only: true`, `total_reaches` and a note.
 
 ## 7. Per-segment fields (29: 28 values plus the reach list)
 
-One record per pellet presentation. All are written to `{video}_features.json`; only six of them reach the database: `segment_num` plus the five listed in section 8 (Update 2026-11-18).
+One record per pellet presentation. All are written to `{video}_features.json`; only six of them reach the database: `segment_num` plus the five listed in section 8.
 
 | Field | Plain English | How computed | Units | Notes |
 |---|---|---|---|---|
@@ -451,15 +426,15 @@ Everything above.
 
 ### The central database (`central_db`), table `reach_data`
 
-> **Update 2026-11-18: the insert failure described below is fixed.** `ALL_COLUMNS` now includes `segment_num` (the comment above it in `sync/database.py` records the bug). It is 62 columns: 5 session identity + `segment_num` + 41 reach columns + 5 segment context + 4 metadata + 6 provenance. From commit `5bac3b0` (2026-08-20) until that fix every insert failed silently, as described below. The table keeps 42 of the 44 per-reach values (the 41 reach columns plus `segment_num`) and drops `reach_source` and `causal_reach_source`.
+> **the insert failure described below is fixed.** `ALL_COLUMNS` now includes `segment_num` (the comment above it in `sync/database.py` records the bug). It is 62 columns: 5 session identity + `segment_num` + 41 reach columns + 5 segment context + 4 metadata + 6 provenance. Without it every insert failed silently. The table keeps 42 of the 44 per-reach values (the 41 reach columns plus `segment_num`) and drops `reach_source` and `causal_reach_source`.
 
 One row per reach is built at `sync/database.py:576-608` and inserted at `:619-632`.
 
 * The insert names `ALL_COLUMNS` (`:84-92`), which is `REACH_JSON_COLUMNS` (41 names, `:61-78`) plus five session-identity, five segment-context, four metadata and six provenance columns — 61 in all.
-* `segment_num` is **not** in that list. It was removed by commit `5bac3b0` on 2026-08-20, on the reasoning (comment at `:56-60`) that the reach's copy was always 0 and should come from the segment instead. The row dictionary does carry `segment_num` from the segment (`:568`), but the INSERT statement never names it.
+* `segment_num` is **not** in that list. It was removed on the reasoning (comment at `:56-60`) that the reach's copy was always 0 and should come from the segment instead. The row dictionary does carry `segment_num` from the segment (`:568`), but the INSERT statement never names it.
 * The live table declares `segment_num INTEGER NOT NULL` with no default. Reproducing the exact statement against a fresh table built from `CREATE_REACH_DATA_SQL` raises `IntegrityError: NOT NULL constraint failed: reach_data.segment_num`. **Every insert fails.**
 * This is invisible. The DELETE and the INSERTs share one connection block that is only committed at the end (`:623-634`), so the failure rolls the DELETE back — existing rows survive, nothing is corrupted, and nothing new arrives. `sync_file_to_database` then catches every exception and returns `False` (`:857-858`), so the callers' own `except` blocks never fire. The watcher logs it at DEBUG as "Database sync skipped (subject not in DB or DB unavailable)" (`orchestrator.py:2129-2130`) — a message that names two causes, neither of which is the real one.
-* Confirmed on a live database: the newest `imported_at` in `reach_data` dated from the moment commit `5bac3b0` landed, and nothing was written after it.
+* A database whose `reach_data` shows no `imported_at` newer than the change that dropped `segment_num` from the insert list had nothing written after it.
 
 When it did work, the table:
 
@@ -472,7 +447,7 @@ When it did work, the table:
 
 `export_csv` (`sync/database.py:749-805`) selects 57 columns (`:759-784`). Relative to the table it includes `segment_num` and omits `extended_features`, `outcome_source`, `reviewed_by`, `algo_outcome`, `algo_causal_reach_id`. So all 174 extended values (165 before extractor 2.6.0) and all review provenance are absent from the file that downstream tools read.
 
-Older code wrote the header from `ALL_COLUMNS` while the rows came from that separate SELECT. Commit `eec74e6` (2026-08-21) fixed it by taking the header from the query itself. **A file written before the fix** carries a 61-name header over 57-value rows. Verified by reading one: the header has 61 names, the first data row has 57 values, and from position 6 onward every column is labelled with the name of the column before it. The column headed `reach_id` holds pellet numbers; the one headed `causal_reach` holds outcome strings such as `displaced_sa`; the one headed `max_extent_pixels` holds durations. Such a file is not regenerated until a sync succeeds, because `export_csv` runs only after a successful sync (`:854`), and syncs fail while the insert bug above stands.
+Older code wrote the header from `ALL_COLUMNS` while the rows came from that separate SELECT. The header is taken from the query itself. **A file written before the fix** carries a 61-name header over 57-value rows. Verified by reading one: the header has 61 names, the first data row has 57 values, and from position 6 onward every column is labelled with the name of the column before it. The column headed `reach_id` holds pellet numbers; the one headed `causal_reach` holds outcome strings such as `displaced_sa`; the one headed `max_extent_pixels` holds durations. Such a file is not regenerated until a sync succeeds, because `export_csv` runs only after a successful sync (`:854`), and syncs fail while the insert bug above stands.
 
 ### `mousereach-reach-export`
 
@@ -484,7 +459,7 @@ Six values are nevertheless missing, for a different and worse reason: **the row
 
 ### `mousereach-features-csv`
 
-(Update 2026-11-19: `mousereach-features-csv` is retired and now runs `mousereach-results --level reach`, the per-reach export of the FILED results -- see docs/RESULTS_EXPORT.md. What follows describes the retired code.) `export/features_csv.py` globbed `*_grasp_features.json` (`:16`). Nothing in the pipeline writes a file with that name — kinematics writes `{video}_features.json`. The command always prints "No *_grasp_features.json files found!" and exits (`:18-21`). Its row dictionary (`:38-77`) has 30 columns, of which 5 are the never-computed fields of §5.11; the other 25 are fields the extractor does populate.
+(`mousereach-features-csv` is retired and now runs `mousereach-results --level reach`, the per-reach export of the FILED results -- see docs/RESULTS_EXPORT.md. What follows describes the retired code.) `export/features_csv.py` globbed `*_grasp_features.json` (`:16`). Nothing in the pipeline writes a file with that name — kinematics writes `{video}_features.json`. The command always prints "No *_grasp_features.json files found!" and exits (`:18-21`). Its row dictionary (`:38-77`) has 30 columns, of which 5 are the never-computed fields of §5.11; the other 25 are fields the extractor does populate.
 
 ### `kinematics/analysis/odc_sci_exporter.py`
 
@@ -494,9 +469,9 @@ Reads the features file (`:109-110`). Six of its columns read keys that the feat
 
 ## 9. Human corrections, and one path that cannot fire
 
-`extract` calls `resolve_truth_layers` (`:220-225`), which resolves each segment's outcome and each reach independently by ground truth > human review > algorithm, the highest layer that gave a decided answer winning (a ground-truth outcome of "uncertain" is no answer: `causal_review_io.gt_outcome_is_answer`) -- the human review read once from every copy of the video's review, newest answer per segment (`causal_review_io.effective_review`, the read the review tools use) -- and can replace the reach list itself when ground truth marks its reach set exhaustive (`:275-282`). Provenance lands in `outcome_source` and `reach_source`. A reviewer's causal-reach pick is applied by its FRAMES in the final reach list: when ground truth has replaced the detected reaches (and renumbered them), the reach covering the frames the person picked is the causal reach, and if no reach in the final list covers them the reach assignment answers (`_apply_outcome_layers`, since 2026-11-20; before, the pick's old id was applied to the new list and could credit a neighbouring reach).
+`extract` calls `resolve_truth_layers` (`:220-225`), which resolves each segment's outcome and each reach independently by ground truth > human review > algorithm, the highest layer that gave a decided answer winning (a ground-truth outcome of "uncertain" is no answer: `causal_review_io.gt_outcome_is_answer`) -- the human review read once from every copy of the video's review, newest answer per segment (`causal_review_io.effective_review`, the read the review tools use) -- and can replace the reach list itself when ground truth marks its reach set exhaustive (`:275-282`). Provenance lands in `outcome_source` and `reach_source`. A reviewer's causal-reach pick is applied by its FRAMES in the final reach list: when ground truth has replaced the detected reaches (and renumbered them), the reach covering the frames the person picked is the causal reach, and if no reach in the final list covers them the reach assignment answers (`_apply_outcome_layers`).
 
-> **Update 2026-11-18:** the two paragraphs below describe older code. `resolve_truth_layers` now accepts the review file itself (used when its name matches the video), reads every copy of the review through `review_dirs` plus `extra_review_dirs` (the run's own folder), and merges them newest answer per segment, so no review location is silently skipped. And if truth layering raises or reports a problem, `extract()` raises `KinematicsProblem` and writes nothing (section 11); there is no fallback to the review-only path or to the raw algorithm output.
+> the two paragraphs below describe older code. `resolve_truth_layers` now accepts the review file itself (used when its name matches the video), reads every copy of the review through `review_dirs` plus `extra_review_dirs` (the run's own folder), and merges them newest answer per segment, so no review location is silently skipped. And if truth layering raises or reports a problem, `extract()` raises `KinematicsProblem` and writes nothing (section 11); there is no fallback to the review-only path or to the raw algorithm output.
 
 That resolver takes a **directory** as `primary_dir` and looks for `<dir>/<video>/<video>_causal_review.json` or `<dir>/<video>_causal_review.json` (`truth_resolver.py:72-88`). But every production caller passes a **file** path: `resolve_review_path` returns the review file itself (`review/causal_review_io.py:83-90`) and the watcher (which the Run Pipeline tab's "Run chosen videos..." runs) and `reprocess_to_current.py` hand that straight in as `review_path`; the CLI builds `Path(_rd) / f"{video_name}_causal_review.json"` (`kinematics/cli.py:123`) and does the same. The lookup then builds paths like `.../X_causal_review.json/X_causal_review.json`, `is_file()` returns false, and that layer is silently skipped.
 
@@ -504,7 +479,7 @@ The practical damage is limited, because the resolver also checks `Paths.TRIAGE_
 
 If `resolve_truth_layers` raises, the code prints a line and falls back to the older review-only path, which does accept a file (`:226-239`); if that raises too it prints a second line and continues with the raw algorithm output.
 
-**A re-run for kinematics only applies every person's answer and keeps the rest as filed (since 2026-11-21; it was a hold from 2026-11-17).** Because the decisions above are worked out again on every run, a filed video re-run only for its kinematics (a new extractor version, or an answer saved after filing) could come out with different reaches, outcomes or causal reaches than were filed. In such a re-run the watcher hands `extract` the filed features file (`keep_filed=`), and per pellet: a person's answer that applies now (ground truth > deep review > triage, on a pellet whose frames did not change; a ground-truth "uncertain" is no answer) decides the outcome and the causal reach whether or not the filed results had it; an outcome or causal reach no person decides stays as filed (found again by frames), so no algorithm re-decides a filed video. The reach list is the filed reaches file with a person's reaches applied. Nothing is ever held for a difference: what differs from the filed results is listed in `FeatureExtractor.changes_from_filed` and in the watcher's processing log ("differs from the filed results: ..."). A re-cut that voided a person's answer is not asked again on such a re-run either: the filed decision stands on that pellet. (Before 2026-11-21 any difference not explained by an answer the version scan counted as "owed" held the run -- `KinematicsProblem` -- and the person's answer was then never applied.) Rule and reasons: `kinematics/core/filed_decisions.py` (`settle_against_filed`); operator view: `docs/PIPELINE_AS_BUILT.md`, "Update 2026-11-21: a person's answer is always applied".
+**A re-run for kinematics only applies every person's answer and keeps the rest as filed.** Because the decisions above are worked out again on every run, a filed video re-run only for its kinematics (a new extractor version, or an answer saved after filing) could come out with different reaches, outcomes or causal reaches than were filed. In such a re-run the watcher hands `extract` the filed features file (`keep_filed=`), and per pellet: a person's answer that applies now (ground truth > deep review > triage, on a pellet whose frames did not change; a ground-truth "uncertain" is no answer) decides the outcome and the causal reach whether or not the filed results had it; an outcome or causal reach no person decides stays as filed (found again by frames), so no algorithm re-decides a filed video. The reach list is the filed reaches file with a person's reaches applied. Nothing is ever held for a difference: what differs from the filed results is listed in `FeatureExtractor.changes_from_filed` and in the watcher's processing log ("differs from the filed results: ..."). A re-cut that voided a person's answer is not asked again on such a re-run either: the filed decision stands on that pellet. Rule and reasons: `kinematics/core/filed_decisions.py` (`settle_against_filed`); operator view: `docs/PIPELINE_AS_BUILT.md`, "a person's answer is always applied".
 
 ---
 
@@ -514,7 +489,7 @@ If a segment boundary is in the wrong place, or a segment is renumbered, these c
 
 | What depends on it | Where | What goes wrong |
 |---|---|---|
-| **Which outcome is attached to which segment** | `pair_segments_by_number` in `feature_extractor.py` | (Update 2026-11-18.) Paired by `segment_num`; any mismatch other than the reaches file's one extra trailing segment raises `KinematicsProblem` and nothing is written. Before 2026-11-18 the two lists were zipped by position. |
+| **Which outcome is attached to which segment** | `pair_segments_by_number` in `feature_extractor.py` | Paired by `segment_num`; any mismatch other than the reaches file's one extra trailing segment raises `KinematicsProblem` and nothing is written. |
 | **Every millimetre value in the segment** | `:292`, then `:406`, `:606`, `:689`, `:884`, `:1048`, `:1246` | `ruler_pixels` is measured over a stable stretch *of that segment*. Move the boundary and you move the frames the SABL/SABR medians come from. |
 | **Every segment-level measurement** | `:784`, `:688`, `:964` | `attention_score`, all six body/posture values, and both quality values are computed over `df.iloc[start_frame:end_frame+1]`, with the pellet's first and last frame from `reach_file_segment_span` (since 2.6.0; before, the window took in the next pellet's first frame). |
 | **The pellet-position values** | `_compute_pellet_positioning` | The assessment window runs from the segment start to the frame before the first reach's start (since 2.6.0; before, it included the reach's start frame). A segment that begins too early measures the *previous* pellet's position; one with no reaches measures a fixed 30 frames from wherever it begins. |
@@ -532,15 +507,15 @@ Two things segments do **not** control. Reach frame windows are never clipped to
 | Failure | What happens | Where |
 |---|---|---|
 | Anything inside the extended feature block raises | No longer produces a file: `extract()` raises `KinematicsProblem` naming the reach, no features file is written and the watcher holds the video as failed. The archive step refuses a features file still carrying `_extended_features_error` (from an older extractor) | `_extract_reach_features`, `KinematicsProblem` in `feature_extractor.py`; `refuse_filing_with_failed_measures` in `orchestrator.py` |
-| Truth layering raises, or a review copy, the ground-truth file or the reach assignment file cannot be read | No longer produces a file: `extract()` raises `KinematicsProblem` listing each problem (it used to print a line and fall back to the review alone, then to the algorithm's answers) | `extract` in `feature_extractor.py`; `resolve_truth_layers(applied=...)['problems']` in `truth_resolver.py` |
-| The video was re-cut after answering -- by a person in the segment fixer, or by the segmenter when its new cuts replaced different ones (`segmenter_recut_at` in the segments file) -- and a pellet whose earlier answer still stands (its frames did not move) was kept aside by a save (`unmatched_answers`, where no reader applies it) and has not been answered on the new cuts | No file: `extract()` raises `RecutVoidedAnswers` (a `KinematicsProblem`) naming the pellets. An answer the re-cut VOIDED (its pellet's frames moved, or no record of its cuts) does NOT raise this since 2026-11-21: it is dropped, and the algorithm's call is written for that pellet (owner ruling 2026-11-21; from 2026-11-18 it raised and the pellet was asked again). The watcher sends the video to triage with those pellets flagged (`review_gate.route_recut_voided_to_triage`), a hold, not a failure. Since 2026-11-18 the pellets answers are matched to are taken from the segments file (`causal_review_io.pellet_span` / `current_pellets`), the same frames the review gate and window use, never from the reaches file's segment list, which ends each segment one frame later. An answer given before the re-cut on a pellet whose frames the re-cut did not change is not voided: it is applied as the person's (owner ruling 2026-11-18; see REVIEW_TOOLS.md, "A re-cut voids the answers given before it") | `extract` in `feature_extractor.py`; `resolve_truth_layers(applied=...)['recut_voided']`; `causal_review_io.answer_survives_recut` |
-| The reaches file and the outcomes file do not describe the same pellets: the outcomes file has a pellet the reaches file has no segment for, a reach segment before the last outcome has no outcome, more than one reach segment comes after the last outcome, a file has no segment list, a segment has no number, or a number is listed twice | No file (since 2026-11-18): `KinematicsProblem` naming the pellets -- re-run the video from reach detection. The two were paired by position before, so a pellet's reaches could be measured against another pellet's outcome with nothing said. The one difference that is normal, the reaches file's extra last segment (after the last cut, not a pellet), is left out as before | `pair_segments_by_number` in `feature_extractor.py` |
+| Truth layering raises, or a review copy, the ground-truth file or the reach assignment file cannot be read | Produces no file: `extract()` raises `KinematicsProblem` listing each problem | `extract` in `feature_extractor.py`; `resolve_truth_layers(applied=...)['problems']` in `truth_resolver.py` |
+| The video was re-cut after answering -- by a person in the segment fixer, or by the segmenter when its new cuts replaced different ones (`segmenter_recut_at` in the segments file) -- and a pellet whose earlier answer still stands (its frames did not move) was kept aside by a save (`unmatched_answers`, where no reader applies it) and has not been answered on the new cuts | No file: `extract()` raises `RecutVoidedAnswers` (a `KinematicsProblem`) naming the pellets. An answer the re-cut VOIDED (its pellet's frames moved, or no record of its cuts) does NOT raise this: it is dropped, and the algorithm's call is written for that pellet. The watcher sends the video to triage with those pellets flagged (`review_gate.route_recut_voided_to_triage`), a hold, not a failure. The pellets answers are matched to are taken from the segments file (`causal_review_io.pellet_span` / `current_pellets`), the same frames the review gate and window use, never from the reaches file's segment list, which ends each segment one frame later. An answer given before the re-cut on a pellet whose frames the re-cut did not change is not voided: it is applied as the person's | `extract` in `feature_extractor.py`; `resolve_truth_layers(applied=...)['recut_voided']`; `causal_review_io.answer_survives_recut` |
+| The reaches file and the outcomes file do not describe the same pellets: the outcomes file has a pellet the reaches file has no segment for, a reach segment before the last outcome has no outcome, more than one reach segment comes after the last outcome, a file has no segment list, a segment has no number, or a number is listed twice | No file: `KinematicsProblem` naming the pellets -- re-run the video from reach detection. The two were paired by position before, so a pellet's reaches could be measured against another pellet's outcome with nothing said. The one difference that is normal, the reaches file's extra last segment (after the last cut, not a pellet), is left out as before | `pair_segments_by_number` in `feature_extractor.py` |
 | A person's segments file holds no usable cuts | No file: `KinematicsProblem` -- which of a person's answers still stand after their re-cut cannot be told | `resolve_truth_layers` in `truth_resolver.py` |
 | The reaches file was made on other cuts than the segments file beside it (a pellet's segment starts elsewhere) | No file: `KinematicsProblem` -- re-run reach detection on the current cuts. A person's answers are matched to the segments file's pellets and would otherwise land on another pellet's reaches | `resolve_truth_layers` in `truth_resolver.py` |
 | Database sync fails, for any reason | `sync_file_to_database` returns `False` and never raises | `sync/database.py:857-858` |
 | Database sync fails, from the CLI | `except Exception: pass` — and the call cannot raise anyway, so nothing is printed either way | `kinematics/cli.py:143-144` |
 | Database sync fails, from the watcher | `logger.debug("Database sync skipped ... subject not in DB or DB unavailable")` — the wrong cause | `orchestrator.py:2126-2130`; the other watcher path (`:1166-1170`) logs nothing at all on a `False` return |
-| Feature extraction fails, from either watcher role | Since 2026-11-15: the row is marked `failed` ("not filed: no kinematics ...") and the video is NOT filed; before that it was logged as a warning and filed anyway | `BaseOrchestrator._make_features` / `_hold_without_kinematics` in `orchestrator.py` |
+| Feature extraction fails, from either watcher role | The row is marked `failed` ("not filed: no kinematics ...") and the video is NOT filed | `BaseOrchestrator._make_features` / `_hold_without_kinematics` in `orchestrator.py` |
 | The features file of a Pillar video still holds a pellet with no decided outcome (`triaged`, `uncertain` or none) when it is about to be filed | The row is marked `failed` ("not filed: a pellet is still undecided in its kinematics ...", pellets named) and the video is NOT filed; the failed-video retry runs it again through the review gate. Before, it was filed with `outcome: triaged` | `refuse_filing_with_undecided_pellet` in `orchestrator.py` |
 | `ruler_pixels` is 0 or negative | Every millimetre value in the segment becomes exactly `0.0`, not null | `:606`, `:689`, `:884`, `:1048`, `:1246` |
 
@@ -560,12 +535,12 @@ That document reports fill rates over the videos it scanned, using a parquet sna
 | `distance_to_interaction` | never computed | **Mis-classified — this is lost in transit.** The older outcome detector computes it (`outcomes/core/pellet_outcome.py:1645-1689`) into a `reach_features` dictionary that `find_causal_reach` returns and the caller never writes onto the record it builds at `:1591`. The extractor's `outcome_data.get('reach_features', {})` therefore always returns empty (`:387`). |
 | `max_extent_pixels`, `max_extent_ruler` | never computed | **Half right.** The current reach detector deliberately writes `None` (`reach/core/span_to_reaches.py:179-180`), and the audit's own corpus is current-stage-only, so 0% is correct there. In the wider table these columns are not empty — parts of the Processing corpus and of the Analyzed sample carry legacy values. Do not read "never computed" as "the column is empty everywhere". |
 | `max_extent_mm` | never computed | Derived from `max_extent_ruler`, so it follows it exactly (`:392-393`) |
-| `algo_causal_reach_id` | never computed | Copied from the segment (`:377`). Update 2026-11-18: filled from the reach assignment's pick on person-owned segments |
+| `algo_causal_reach_id` | never computed | Copied from the segment (`:377`). filled from the reach assignment's pick on person-owned segments |
 | `flagged_for_review` (reach level) | lost in transit | Outcome detection flags *segments*; the extractor keeps that as segment `outcome_flagged` and never copies anything onto the reach field at `:86` |
 | `flag_reason` (reach level) | lost in transit | Same; `SegmentFeatures` has no `flag_reason` field at all, so the reason string is dropped at the segment level too |
-| `segment_num` (features 0%) | lost in transit | The assignment at `:317` landed on 2026-08-20 in commit `5bac3b0`; every audited file predates it. It now reaches the features file on Processing reaches written after it, and reaches the database on none (§8) |
+| `segment_num` (features 0%) | lost in transit | The assignment at `:317` was added after every audited file was written; it reaches the features file on Processing reaches written since, and reaches the database on none (§8) |
 | `outcome_known_frame` (filled at the outcome stage, absent from features) | lost in transit | The extractor reads `interaction_frame` and `causal_reach_id` from the outcome record and nothing else |
-| `is_causal`, `label`, `segment_ifr`, `triage_reason` (from reach assignment) | lost in transit | Update 2026-11-18: the extractor opens `{video}_reach_assignments.json`; its causal reach becomes `causal_reach_id` and `segment_ifr` fills `interaction_frame`. `label` and `triage_reason` are still not carried (section 2) |
+| `is_causal`, `label`, `segment_ifr`, `triage_reason` (from reach assignment) | lost in transit | the extractor opens `{video}_reach_assignments.json`; its causal reach becomes `causal_reach_id` and `segment_ifr` fills `interaction_frame`. `label` and `triage_reason` are still not carried (section 2) |
 | `extended`, `reach_source` | not in the database | `extended` is in fact stored, as the `extended_features` JSON blob (`sync/database.py:595`, which the audit separately reports as filled); the audit is looking for a column named `extended`, which does not exist. `reach_source` genuinely has no column. |
 
 The audit's small `causal_reach` and `interaction_frame` fill rates come from legacy files, human reviews and ground truth only. Nothing the current algorithm produces contributes to either (§2).
@@ -576,8 +551,8 @@ The audit's small `causal_reach` and `interaction_frame` fill rates come from le
 
 * `REACH_KINEMATIC_DATA_DICTIONARY.md:89` defines `distance_to_interaction` as "`interaction_frame - apex_frame`, in frames". Nothing computes that; the value is read from a dictionary that is never written (§2).
 * `REACH_KINEMATIC_DATA_DICTIONARY.md:39-43` says tracking-quality gating is unnecessary because "numerically robust accumulation (`np.nansum`, `np.nanmean`, etc.) tolerates occasional NaN frames within a tracked reach". There are no NaN frames — DeepLabCut always emits a coordinate (whole videos checked, zero nulls). The conclusion happens to be defensible; the stated reason is not, and it obscures the real consequence, which is that low-confidence frames enter every trajectory measurement at full weight.
-* `feature_extractor.py:361` still initialises `segment_num=0` with the comment "Will be set by caller". As of 2026-08-20 that is true — `:317` sets it. The comment is now merely stale rather than wrong.
-* `sync/database.py:56-60` says the extractor "leaves it 0 on every reach". That stopped being true on 2026-08-20, and the change made on the strength of that comment is what broke the database insert (§8).
+* `feature_extractor.py` initialises `segment_num=0` with the comment "Will be set by caller"; the assignment later in the same function sets it.
+* `sync/database.py` says the extractor "leaves it 0 on every reach". That is not true: the extractor sets it (§8).
 
 ---
 
@@ -609,7 +584,7 @@ opening the code yourself.** Everything not listed survived two passes.
 
 ---
 
-## Update 2026-08-23: the algorithm's causal reach now reaches the data
+## the algorithm's causal reach now reaches the data
 
 Extractor 2.1.0. The extractor loads `{video}_reach_assignments.json`
 (auto-discovered beside the outcomes file; `assignments_path` overrides) and
@@ -666,7 +641,7 @@ change: the result differs only for a video whose legacy outcome file sits
 beside a reach assignment file, and such a video is re-run by hand if one is
 found.
 
-## Update 2026-11-19 (filed is final)
+## filed is final
 
 Kinematics are the one result a filed video may have recalculated (a newer extractor, or a person's
 review or ground truth the filed kinematics have not applied yet). That recalculation re-runs no
@@ -674,13 +649,12 @@ algorithm, no quality check, no hand-score comparison and no review gate: it nev
 or asks anyone anything. If the kinematics cannot be made from the filed cuts, reaches and outcomes
 without changing them, the recalculation is given up and the filed features file stays as it was
 (the video is listed on the machine's failed re-runs list with the reason). See
-docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
+docs/PIPELINE_AS_BUILT.md, "filed is final".
 
-## Update 2026-11-19: `session_flag` (top level of every features file)
+## `session_flag` (top level of every features file)
 
 `session_flag` is the note a person made with the review window's Flag Session button on this
 video's mouse+day session -- `{"session_key", "reason", "flagged_by", "flagged_at"}` -- or null when
 the session is not flagged. It is a marker only: nothing in MouseReach acts on it, and a reader
-should not leave a flagged session out or treat it differently because of it (lab decision
-2026-11-19). Written by the kinematics step from `<NAS>/Processing/Review/flagged_sessions.json`;
+should not leave a flagged session out or treat it differently because of it. Written by the kinematics step from `<NAS>/Processing/Review/flagged_sessions.json`;
 a filed video gets it through a kinematics-only recalculation when its session is flagged later.

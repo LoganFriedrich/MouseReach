@@ -1,10 +1,6 @@
 # Watcher database: what every field means
 
-Verified against: 05de530 (2026-09-14), plus the GPU-node guards of 2026-09-15
-(collage claims, finished-or-held children, Processing/Posed; see
-PIPELINE_AS_BUILT.md, "Update 2026-09-15")
-
-Update 2026-11-18: the file:line references below were taken from an older
+The file:line references below were taken from an older
 version of the code and many no longer match; find the code by the function,
 class or constant named beside each reference.
 
@@ -26,8 +22,7 @@ A node's live database is the `db_path` override in that machine's
 `~/.mousereach/config.json`, else `processing_root/watcher.db` -- but the
 fallback applies ONLY to a GPU PC (`watcher.mode` `dlc_pc`). On a processing
 server (`mode` `processing_server`) every login's settings must name the file
-in `watcher.db_path` -- or the lab profile for that machine must: since
-2026-11-20 a login whose settings file names no `db_path` uses
+in `watcher.db_path` -- or the lab profile for that machine must: a login whose settings file names no `db_path` uses
 `defaults.watcher.db_path` of the profile in lab_profiles.json whose
 `match.hostname` is this computer's name, and logs a warning saying so (the
 login's own file is not changed). A login whose settings do not and whose
@@ -40,8 +35,7 @@ it any more.
 `resolve_watcher_db_path` (watcher/db_location.py) is the only correct way to
 pick it. The CLI's `_resolve_db_path` calls it and prints its choice, and
 `mousereach-route-to-queue` uses it too, refusing to route when the file is
-missing (2026-09-14: that command used to open the zero-row decoy, so every
-state it set was lost).
+missing (opening the zero-row decoy would lose every state it set).
 
   nas_root/watcher_state/<hostname>/watcher.db   BACKUP, NOT STATE
       A plain copy of one node's live database (watcher/coordination.py:175),
@@ -62,9 +56,7 @@ state it set was lost).
       The processing server re-sends, at start and then every 30 minutes, every
       archived video whose row from IT (source_machine = its name) is missing or
       older than its own row, at most 50 per pass ("Sent N archived video(s) to
-      the shared record ..."). Before 2026-10-26 this ran only at start and only
-      for a video with no row from any machine, so a video a GPU PC had posed --
-      which has that PC's row -- was never re-sent.
+      the shared record ..."). A check only for a video with no row from any machine would never re-send a video a GPU PC had posed -- which has that PC's row.
 
       Tables `pipeline_collages` and `pipeline_videos`: LIVE CROSS-NODE
       COORDINATION between GPU nodes (watcher/coordination.py). Only
@@ -81,8 +73,7 @@ state it set was lost).
         claimed_at        when the holder took or last re-used the claim, on the
                           holder's clock
         completed_at, singles_created
-      Rules, each with its reason (full account in PIPELINE_AS_BUILT.md,
-      "Update 2026-09-15"):
+      Rules, each with its reason (full account in PIPELINE_AS_BUILT.md, "extra GPU nodes cannot re-pose finished videos, spin on collage claims, or touch Processing/Posed"):
         * No claim, no crop. A node that cannot reach this table crops nothing.
           WHY: without a claim two GPU nodes crop the same collage and pose
           every child twice.
@@ -101,26 +92,22 @@ state it set was lost).
         source_path, nas_path, discovered_at, dlc_completed_at, processed_at,
         staged_at, updated_at, error_message
       Written best-effort by GPU nodes as a video moves: 'dlc_queued' the
-      moment a cropped child is queued (since 2026-09-15; before that the
-      first write was 'dlc_running'), then 'dlc_running', 'dlc_complete',
+      moment a cropped child is queued, then 'dlc_running', 'dlc_complete',
       'processed', 'archived'. Read at a GPU node's startup by cross-node
       recovery, and by the claim takeover check above. A GPU node's 'archived'
       means that node staged or filed it, not that the analysis is finished.
-      (A GPU PC -- and, before 2026-11-18, the since-removed CPU pose pool --
-      writes 'archived' here when it HANDS the
+      (A GPU PC writes 'archived' here when it HANDS the
       pose on to Processing/Posed. Only the 'videos' table above, written at
       filing, means filed. mousereach-session-coverage reads it that way: an
       'archived' here is reported by where the pose is -- "taken in for
       analysis", "posed, waiting for analysis", or "handed on; not in Posed,
       review or Analyzed" -- never as "analysed".)
       Recovery moves a node's own row forward to match, but never replaces a
-      'triage' or 'deep_review' row with a record written before it (since
-      2026-10-22; before, an older 'archived' here cleared a newer hold).
+      'triage' or 'deep_review' row with a record written before it (an older 'archived' here never clears a newer hold).
       A working-state row is adopted only when the video's file is on this
       node; a source_path in ANOTHER machine's Single_Animal/.inflight/<host>/
       claim folder does not count, although the shared drive makes it exist
-      everywhere (since 2026-10-28; before, a restarting GPU node adopted and
-      re-posed every video the CPU pose pool, since removed, was holding).
+      everywhere.
 
 For reprocessing questions the processing server's live database decides. It is
 the only role with `reprocesses_partial` true (orchestrator.py:433); GPU nodes
@@ -142,7 +129,7 @@ Identity and provenance
                           parsed out of video_id; see config.AnimalID and
                           config.FilePatterns. tray_type P=Pillar (the only
                           tray that is segmented), E=Easy, F=Flat
-                          (analyzed session-only since 2026-10-23: no
+                          (analyzed session-only: no
                           segmentation, a session file instead of
                           per-pellet kinematics).
 
@@ -160,8 +147,7 @@ State
   state                   see section 4. NOT NULL, default 'discovered'.
   claimed_by              hostname holding a multi-machine claim, else NULL
   error_message           why it failed, or for 'unresolvable' the owning host
-                          (the CURRENT error: reaching 'archived' clears it, and since
-                          2026-10-22 each watcher start clears it on archived rows;
+                          (the CURRENT error: reaching 'archived' clears it, and each watcher start clears it on archived rows;
                           the history is in processing_log). One exception: an
                           'archived' row whose message starts "re-run of a filed
                           video failed" is a filed video whose re-run failed for
@@ -200,15 +186,13 @@ Timestamps (ISO strings, on the writing machine's clock)
   queue, re-run, re-posed, retired to 'unresolvable', failed, re-cut --
   moves the time into previously_filed_at and clears archived_at in the same
   write; filing again sets a new archived_at. A move between the filed states
-  (marked outdated, un-marked, locked, unlocked) keeps the time. Since
-  2026-11-24; before that archived_at was never cleared, and rows from then
-  were corrected once with `python -m mousereach.watcher.filing_time --apply`.
+  (marked outdated, un-marked, locked, unlocked) keeps the time. Rows written before this rule can be corrected with `python -m mousereach.watcher.filing_time --apply`.
   So: "is it filed now?" = archived_at set. "Has it ever been filed?" =
   archived_at or previously_filed_at (db.last_filed_at), which is what the
   watcher's own re-run decisions read.
   It is NOT when a reprocess_scope was assigned; nothing records that, so a
   scope cannot be dated from the row.
-  previously_filed_at (TEXT, added 2026-11-24) the filing time the row had
+  previously_filed_at (TEXT) the filing time the row had
   when it last left the filed state; kept when it is filed again. Not copied
   to watcher_central.db (that record's own line in processing_log says it).
 
@@ -225,8 +209,7 @@ Version tracking (added by migration, db.py:331)
                           version scan does not mark such a row again while
                           the fingerprint is unchanged.
   reprocess_scope         which stage to re-run, set when state='outdated':
-                            'full'          needs a NEW pose on a GPU. Since
-                                            2026-08-24 this means only "no pose
+                            'full'          needs a NEW pose on a GPU. This means only "no pose
                                             from the declared model exists
                                             anywhere in the archive".
                             'segmentation'  re-run every post-DLC stage against
@@ -237,8 +220,7 @@ Version tracking (added by migration, db.py:331)
                             (db.last_filed_at set) reuses every algorithm output
                             and skips the quality triage and the hand-score
                             check; the review gate still runs and asks only
-                            about segments no person answered (since
-                            2026-11-03; PIPELINE_AS_BUILT.md).
+                            about segments no person answered (PIPELINE_AS_BUILT.md).
                           The scope stays on the row while the re-run is under
                           way. A 'kinematics' scope on a filed row is read back
                           when the run is picked without a start stage (the
@@ -316,8 +298,7 @@ Version tracking (added by migration, db.py:331)
                           carrying a reason. That is the whole point of the
                           column: nothing else distinguishes "a person said
                           re-run this" from "the scanner noticed a version".
-                          ONE scanner mark carries a reason too (since
-                          2026-11-21): "a person's answer is not in the filed
+                          ONE scanner mark carries a reason too: "a person's answer is not in the filed
                           features file: <pellets>" -- the content check found
                           a person's answer the filed results lack although
                           the manifest says it was applied
@@ -357,7 +338,7 @@ processing_log: append-only, one row per step attempt
   in-memory back-off; WatcherDB.get_videos_held_by_failed_archive() lists
   them for mousereach-watch-status and the dashboard health line.
 
-  step 'quarantine_purge', status 'completed' (since 2026-11-18): the row of a
+  step 'quarantine_purge', status 'completed': the row of a
   quarantined single was taken away because mousereach-watch-quarantine
   --purge --delete deleted its file (its source collage exists; the message
   names it). The log line stays after the videos row is gone. Only the row on
@@ -380,8 +361,7 @@ videos.state, with the legal next states (db.VIDEO_TRANSITIONS):
   archiving     -> archived, processed, failed, unresolvable
   archived      -> outdated, crystallized, unresolvable
   outdated      -> dlc_queued, processing, failed, archived, unresolvable
-  crystallized  -> nothing; only mousereach-uncrystallize unlocks it (since
-                   2026-11-15 force_state, mark_failed and mark_unresolvable
+  crystallized  -> nothing; only mousereach-uncrystallize unlocks it (force_state, mark_failed and mark_unresolvable
                    refuse it, and no
                    route, return or divert moves a crystallized video).
                    The row is this machine's copy of the lock; the lock every
@@ -416,14 +396,13 @@ READ THIS BEFORE INTERPRETING A STATE
   'processed' on the processing server means analysed, passed the review
   gate, and waiting to be filed.
 
-  'archiving' (since 2026-11-15) is written BEFORE the files move into the
+  'archiving' is written BEFORE the files move into the
   filed folder. A row left in it means a filing attempt was interrupted; the
   next watcher start puts it back to 'processed', and the next filing attempt
   records 'archived' if that run's files are already in the filed folder. A
   failed attempt that leaves the files in Processing goes back to 'processed'.
 
-  'failed' with an error starting "not filed: no kinematics" (since
-  2026-11-15) means the analysis ran but the features file could not be
+  'failed' with an error starting "not filed: no kinematics" means the analysis ran but the features file could not be
   written; the video is NOT filed, its files stay in Processing, and the
   processing server's failed-video retry runs it again.
 
@@ -442,8 +421,7 @@ READ THIS BEFORE INTERPRETING A STATE
   or a reach whose measures failed (docs/PIPELINE_AS_BUILT.md, "kinematics
   that are not the true result are not written").
 
-  'processing' can also mean "analysed, and HELD for its hand scores": since
-  2026-10-28 the hand-score comparison runs after the analysis and before the
+  'processing' can also mean "analysed, and HELD for its hand scores": the hand-score comparison runs after the analysis and before the
   review gate, and a video whose session has no hand scores yet stays in
   'processing', with its files in the local Processing folder, until the next
   import of its sheet (watcher/hand_scores.py). If that import has none, the
@@ -453,18 +431,17 @@ READ THIS BEFORE INTERPRETING A STATE
   kind 'hand_scores_missing' once the import came without them), and the
   processing log has one row for the wait: step 'hand_score_check', status
   'waiting', and one more, status 'missing', when it turns red. They do not
-  count against max_local_pending. (From 2026-10-26 to 2026-10-28 the wait
-  happened in 'processed', before filing.)
+  count against max_local_pending.
 
   On a GPU node, a row can also be 'archived', 'triage' or 'deep_review' with
   source_path '(no file on this node)' for a video this node never cropped or
-  posed. Since 2026-09-15 a GPU node checks the shared drive before it poses a
+  posed. A GPU node checks the shared drive before it poses a
   collage child or a dropped single: an archive manifest means 'archived', a
   bundle in a review queue (or its .incoming build folder) means that queue's
   state, and the row is recorded that way instead of being queued for DLC.
   The processing log says why (step 'crop', 'adopt' or 'dlc', status 'skipped').
 
-  processing_log step 'dlc', status 'aborted' (since 2026-09-15): a pose was
+  processing_log step 'dlc', status 'aborted': a pose was
   stopped part-way because a program listed in watcher.pause_while_running
   opened (the message is the reason, e.g. "recorder.exe is running"). The row
   went back to 'dlc_queued' with the same current_path, error_count was NOT
@@ -489,15 +466,14 @@ READ THIS BEFORE INTERPRETING A STATE
 
   'unresolvable' means this node has no file for this video. Nothing went wrong
   with the data. It is deliberately not 'failed', which is a retry state and
-  which reads to people as a verdict about the animal's data. One case added
-  2026-09-15: a GPU node's stage step finds the video already in
+  which reads to people as a verdict about the animal's data. One case: a GPU node's stage step finds the video already in
   Processing/Posed and nothing of it left locally ("already in NAS staging ...
   left for the processing server"). This node may well have staged it and been
   stopped before recording that; files in Posed are never taken as proof, so
   the row is not 'archived' either.
 
   More 'unresolvable' reasons, for singles dropped into
-  Unanalyzed/Single_Animal (since 2026-09-15; watcher/single_claim.py):
+  Unanalyzed/Single_Animal (watcher/single_claim.py):
     * "gone from the shared singles folder before this node took it: ..."
       (single_claim.LEFT_FOLDER_REASON). Another GPU node claimed the video
       first (the reason names it), or somebody removed the file. Only rows
@@ -526,7 +502,7 @@ READ THIS BEFORE INTERPRETING A STATE
       again while another node still held it. It is never re-driven. A person
       deletes the second copy.
 
-  processing_log step 'single_claim', status 'completed' (since 2026-09-15):
+  processing_log step 'single_claim', status 'completed':
   this node removed its claimed copy of a single
   (Single_Animal/.inflight/<host>/<stem>.mp4) after the video's next copy was
   confirmed: staged, archived, or in a review bundle. The message names the
@@ -561,7 +537,7 @@ collages.state (db.COLLAGE_TRANSITIONS):
   failed -> validated, recording_issue
   recording_issue -> validated
 
-  'recording_issue' (since 2026-11-18): the recording itself failed (empty, a
+  'recording_issue': the recording itself failed (empty, a
   fraction of a second, unreadable) and was moved to
   Processing/Review/_Problematic with a <name>.recording_issue.json reason
   file; it is never cut. validation_error holds the reason. Every node's scan

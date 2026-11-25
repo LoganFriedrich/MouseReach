@@ -53,11 +53,11 @@ def move_reach_start(r: Dict, frame: int) -> None:
     """Set a reach's start to ``frame`` (a person's correction).
 
     The algorithm's start is kept as ``original_start`` the first time a person
-    moves it -- independently of the end: before 2026-11-18 it was recorded only
-    while the reach was not yet marked corrected, so a reach whose end was moved
-    first never kept its original start. A reach a person added has no
+    moves it -- independently of the end: recording it only
+    while the reach was not yet marked corrected would lose it for a reach whose
+    end was moved first. A reach a person added has no
     algorithm start to keep. duration_frames is counted from the frames, both
-    included (it was end - start, one frame short)."""
+    included (not end - start, which is one frame short)."""
     if r.get('original_start') is None and r.get('source') != 'human_added':
         r['original_start'] = r['start_frame']
     r['human_corrected'] = True
@@ -82,8 +82,8 @@ def gt_reach_record(r: Dict, verified_by: str, verified_at: str) -> Dict:
     ``original_start_frame`` / ``original_end_frame`` (the names the
     ground-truth readers use, e.g. performance.metrics) carry the algorithm's
     frames from ``original_start`` / ``original_end``, which is where this
-    window records them. Before 2026-11-18 the export read keys of those
-    output names, which nothing writes, so both were always empty.
+    window records them (not keys of those output names, which nothing
+    writes).
     duration_frames is counted from the frames (end - start + 1)."""
     def _orig(new_key, old_key):
         v = r.get(new_key)
@@ -1590,9 +1590,9 @@ class ReachAnnotatorWidget(QWidget):
     def _playback_interval(self) -> int:
         """Milliseconds between frames, for the CURRENT speed.
 
-        The speed multiplier used to be missing from this sum entirely: the
-        interval was 1000/fps whatever the buttons said, so speed took effect
-        only through frame-skipping. That silently made every speed below 1x
+        The speed multiplier is part of this sum: with the
+        interval at 1000/fps whatever the buttons said, speed would take effect
+        only through frame-skipping, which silently makes every speed below 1x
         a no-op, because the skip is int(speed) and int(0.25) is 0.
         """
         return max(1, int(1000 / ((self.fps or 60.0) * self.playback_speed)))

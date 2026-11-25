@@ -22,8 +22,7 @@ def _rec(span, reach=None, outcome="displaced_sa", **answers):
     return {"segment_num": 17, "segment_span": {"start": span[0], "end": span[1]},
             "human": {"outcome": outcome,
                       "causal_reach": ({"start": reach[0], "end": reach[1]} if reach else None),
-                      # Its first/last frame checked by the person (owner rule
-                      # 2026-11-19; causal_review_io.CAUSAL_BOUNDS_KEY).
+                      # Its first/last frame checked by the person (causal_review_io.CAUSAL_BOUNDS_KEY).
                       "causal_reach_bounds": ({"start": reach[0], "end": reach[1]}
                                               if reach else None)},
             "answers": answers or {"outcome_pick": outcome}}
@@ -62,7 +61,7 @@ def test_matching_notes_are_put_in_the_reviewers_words():
 
 
 def test_the_review_tool_records_a_reach_outside_and_says_it_goes_to_reseg(monkeypatch):
-    # Since 2026-11-24 (owner rule "if it doesn't make sense, put it in front
+    # ("If it doesn't make sense, put it in front
     # of the reviewer again"): a causal reach outside the segment is RECORDED,
     # and the video goes to re-segmentation on its own
     # (tests/test_reach_outside_goes_to_resegmentation.py); the person is told.

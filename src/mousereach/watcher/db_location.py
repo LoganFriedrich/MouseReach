@@ -56,7 +56,7 @@ under that folder is a guess, so it is refused like an unreadable file. Every Wi
 machine has its own settings file, but they share the processing folder. A
 login whose settings cannot be read, or whose settings say "processing
 server" without naming the database (a reviewer's login set up from a
-profile, say), used to get ``<processing_root>/watcher.db`` -- on a server
+profile, say), must not get ``<processing_root>/watcher.db`` -- on a server
 whose watcher writes an overridden file, an old decoy. Commands run from that
 login (crystallize, uncrystallize, process-animal, the dashboard's Reprocess
 outdated) then read and wrote the decoy without a word: a publication lock

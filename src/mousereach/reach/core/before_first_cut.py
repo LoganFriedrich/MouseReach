@@ -1,15 +1,15 @@
 """
 before_first_cut.py - a reach that starts before the first cut belongs to NO pellet.
 
-WHY (owner decision D2-3, 2026-11-19): "a reach that starts before the first
-cut belongs to NO pellet." The first cut is where the first pellet's window
+WHY: a reach that starts before the first
+cut belongs to NO pellet. The first cut is where the first pellet's window
 begins; before it no pellet is presented, so a reach then cannot have touched
-pellet 1. The reach step used to attach such a reach to the NEAREST segment
-(always segment 1) and flag that segment ("reach_start_outside_all_segments")
--- a flag nothing read, so the reach was counted, measured and exported as one
-of pellet 1's reaches.
+pellet 1. Attaching such a reach to the NEAREST segment
+(always segment 1) and flagging that segment ("reach_start_outside_all_segments")
+would count, measure and export it as one of pellet 1's reaches, since
+nothing reads the flag.
 
-Now every place that maps reaches to pellets keeps it out:
+So every place that maps reaches to pellets keeps it out:
 
   * the reach step writes it into the reaches file's own top-level list,
     ``reaches_before_first_cut`` (never inside a segment), so outcome
@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 
 BEFORE_FIRST_CUT_KEY = "reaches_before_first_cut"
 
-# The flag the reach step used to put on segment 1 for such a reach.
+# The flag an older reach step put on segment 1 for such a reach.
 OLD_FLAG_REASON = "reach_start_outside_all_segments"
 
 
@@ -72,8 +72,8 @@ def person_credited(reach: Dict[str, Any]) -> bool:
     human_review / ground_truth, or -- older files, which have no
     causal_reach_source -- the pellet's outcome_source is a person's).
 
-    WHY it stays with its pellet: what a person said is correct (owner
-    decision 2026-11-19). A person who named a reach starting a few frames
+    WHY it stays with its pellet: what a person said is correct.
+    A person who named a reach starting a few frames
     before the first cut as pellet 1's causal reach has said that reach is
     pellet 1's. The kinematics step keeps that answer too: the person's pick
     is matched by its frames, and with the reach out of segment 1 it is added

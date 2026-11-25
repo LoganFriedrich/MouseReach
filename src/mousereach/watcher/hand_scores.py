@@ -39,8 +39,7 @@ goes to triage, deep review or on to kinematics and filing:
             scores arrive, and each disagreement is listed for a person:
             watcher/filed_hand_scores.py.)
 
-WHY before triage and not before filing (moved 2026-10-28; from 2026-10-26
-it was the last step before filing): checked at filing, a video with a
+WHY before triage and not before filing: checked at filing, a video with a
 triage question went to the queue, was answered, came back, and only then
 met the hand score -- and a disagreement sent it to the queue a second time.
 Checked before the gate, a person sees every question about a video in one
@@ -91,7 +90,7 @@ of the same name holding:
     "last_successful_import": {cohort id: when its last sheet import ended}
     "sheets_seen":            [the cohort ids that have a sheet]
     "full_import_at":         when the last import of every sheet ended
-Times are ISO 8601 (2026-10-26T20:05:00), in the same clock as the watcher's
+Times are ISO 8601 (2000-01-01T20:05:00), in the same clock as the watcher's
 own (local time, no zone); one that cannot be read, or a zone mixed with
 none, counts as not known. A cohort with an import is judged by its own
 import time. A cohort with
@@ -136,7 +135,7 @@ AGREES = "agrees"
 DISAGREES = "disagrees"
 WAITING = "waiting"
 NOT_CHECKED = "not_checked"
-# RETIRED 2026-11-20 (owner rule: "Just trust what is written down"):
+# RETIRED:
 # check() never returns this any more. It was the verdict for a video whose
 # calls matched ANOTHER tray's row better than its own, which was then held
 # outside the review queues. Kept so outcomes files and attention lists
@@ -167,8 +166,8 @@ DECISION_LABELS_RIGHT = "labels_right"
 #   * it beats the video's own row by at least LABEL_MIN_MARGIN pellets, counted
 #     only where the two rows differ: (pellets the algorithm agrees with the
 #     other row on and not the own row) minus (the reverse).
-# WHY these numbers (the data behind them is in the lab's work record,
-# 2026-11-18): when the label is right, the algorithm disagrees with its own
+# WHY these numbers (the data behind them is in the lab's work record):
+# when the label is right, the algorithm disagrees with its own
 # row on no pellet in most videos and on at most two in nearly all, and one
 # tray's row of an animal often looks like its other trays' (a mouse that
 # retrieves nearly everything gives near-identical rows) -- so agreement with
@@ -277,7 +276,7 @@ def label_mismatch(video_id: str, calls: Dict[int, int],
     compared, answered or not: the question is which tray the recording is,
     not whether one pellet's call is right.
 
-    WHY this exists (owner ruling 2026-11-18): when the calls disagree with
+    WHY this exists: when the calls disagree with
     the video's own row on many pellets but match another tray of the same
     animal and day on nearly all, the file name or the sheet has the trays
     swapped. No review answer can fix that -- a person in triage would be
@@ -498,8 +497,8 @@ def settings() -> dict:
     settings file that exists but cannot be read, or a shared pipeline folder
     that cannot be reached, RAISES (config.lab_setting with strict=True), so
     check() raises and the watcher holds the video as a check that could not
-    run -- listed in red for a person. WHY: this used to answer {} for those
-    too, and every video then went on to filing as "no hand-scores file
+    run -- listed in red for a person. WHY: answering {} for those
+    too would send every video on to filing as "no hand-scores file
     configured", never compared; a section that is merely unreadable is not
     a section that is absent."""
     from mousereach.config import lab_setting
@@ -758,8 +757,8 @@ def check(video_id: str, folder: Path) -> Verdict:
     hand = dict(hand)
 
     # A video is checked against ITS OWN row only: the name a person gave it is
-    # trusted (owner rule 2026-11-20: "Just trust what is written down"). The
-    # label-mismatch hold that used to stop a video whose results matched
+    # trusted ("just trust what is written down"). The
+    # label-mismatch hold that stopped a video whose results matched
     # ANOTHER tray's row better than its own is retired; such a video goes on
     # like any other, and a disagreement with its own row goes to triage as
     # usual. label_mismatch() is kept only to describe the rows in the
@@ -1086,7 +1085,7 @@ def write_attention(nas_root: Path, hostname: str, waits: Dict[str, dict]) -> Op
                 })
                 continue
             if w.get("label_mismatch"):
-                # RETIRED 2026-11-20: nothing sets this any more (check()
+                # RETIRED: nothing sets this any more (check()
                 # never returns LABEL_MISMATCH, and a hold restored from
                 # before the retirement comes back as a plain hold).
                 # The results match another tray's hand scores (label_mismatch):

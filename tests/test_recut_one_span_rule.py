@@ -1,12 +1,12 @@
 """One definition of a pellet's frames, and one re-cut rule, for the review
 gate, the review window and the results step.
 
-Rule (owner ruling 2026-11-18, narrowing R2: "If resegmenting doesn't alter,
+Rule ("If resegmenting doesn't alter,
 then it's fine to keep"): an answer given before a person's re-cut stands
 when its pellet's frames are exactly the same on the cuts it was given on and
 on the current cuts. If they moved at all, or the files do not show which cuts
 it was given on, it is void -- never carried by overlap or by number -- and
-dropped (owner ruling 2026-11-21): its pellet takes the call of the algorithms
+dropped: its pellet takes the call of the algorithms
 re-run on the new cuts and goes to triage only if they flag it. An answer
 given after the re-cut always stands.
 
@@ -179,9 +179,8 @@ def test_an_unmoved_pellets_answer_is_kept_by_the_gate_and_the_results_step(run)
 
 
 def test_an_unmoved_pellet_keeps_its_answer_while_a_moved_ones_is_dropped(run):
-    """Owner ruling 2026-11-21: pellet 2's frames moved, so its earlier
-    answer is void and simply dropped -- not asked again (feb7c62 asked it
-    again) -- and it takes the re-run algorithm's call."""
+    """Pellet 2's frames moved, so its earlier
+    answer is void and simply dropped -- not asked again -- and it takes the re-run algorithm's call."""
     folder, pose = run
     _review(folder, _answer(1, BEFORE), _answer(2, BEFORE, outcome="displaced_sa"))
     seg_doc = json.loads((folder / f"{VID}_segments.json").read_text(encoding="utf-8"))
@@ -214,7 +213,7 @@ def test_a_pellet_moved_by_one_frame_is_voided_and_dropped(run):
     was 100-198, is 100-199. Its earlier answer is void and dropped -- the
     gate passes the video (the algorithm flagged nothing) and the results
     step writes the algorithm's call -- while pellet 1 (0-99, unmoved) keeps
-    its answer. Until 2026-11-21 pellet 2 was asked again."""
+    its answer. Pellet 2 is not asked again."""
     folder, pose = run
     one_frame = [0, 100, 199, 300]
     _replace_cuts(folder, one_frame)
@@ -256,7 +255,7 @@ def test_without_the_replaced_cuts_on_file_an_earlier_answer_is_dropped(run):
 
 
 def test_a_moved_pellets_answer_is_dropped_and_the_pellet_asked_only_if_flagged(run):
-    """Owner ruling 2026-11-21. The voided answer flags nothing and holds
+    """The voided answer flags nothing and holds
     nothing: the gate passes the video and the results step writes the
     algorithm's call. The pellet goes to triage only when the re-run
     algorithm flags it -- the same gate rule as any new video."""
@@ -428,7 +427,7 @@ def test_the_same_answer_given_again_after_the_recut_counts(run, monkeypatch):
 def test_a_voided_answer_carried_by_a_save_stays_void(run, monkeypatch):
     """A save that leaves the voided pellet unanswered carries the old answer
     along as a record with its own (pre-cut) time: still void, never applied,
-    and not asked (dropped, owner ruling 2026-11-21)."""
+    and not asked (dropped)."""
     folder, _ = run
     monkeypatch.setattr(io, "durable_review_path", lambda stem: None)
     _review(folder, dict(_window_record(2, "untouched", cuts=OLD_CUTS), reviewer="reviewer_a",

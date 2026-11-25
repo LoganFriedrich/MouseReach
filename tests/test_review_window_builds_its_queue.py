@@ -80,7 +80,7 @@ def queue(tmp_path, monkeypatch):
                                                     "question": "sure?"}}}]}),
         encoding="utf-8")
     # Ground truth that answers the flagged pellet: nothing for a person, the
-    # return scan releases it (MRR-03d, 2026-11-19).
+    # return scan releases it.
     b = _bundle(q, HAS_GT, [_placeholder(1, 100), _placeholder(2, 200)])
     (b / f"{HAS_GT}_unified_ground_truth.json").write_text(json.dumps({
         "segmentation": {"boundaries": [{"index": i, "frame": f}

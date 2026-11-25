@@ -5,8 +5,8 @@ joins the per-video reaches with the per-segment cascade outcomes and commits a
 causal reach only when the IFR-join pick and the pellet-displacement pick agree
 (otherwise the segment is left for triage). This module is the importable
 entrypoint the watcher's pipeline paths call so causal-reach attribution is
-produced automatically -- previously it ran only in the manual review staging
-path, so auto-processed videos never got a ``_reach_assignments.json``.
+produced automatically, so auto-processed videos get a ``_reach_assignments.json``
+too, not only videos in the manual review staging path.
 
 Reads the already-computed ``{stem}_segments.json`` / ``{stem}_reaches.json`` /
 ``{stem}_pellet_outcomes.json`` from ``processing_dir`` plus the DLC pose h5, and

@@ -59,7 +59,7 @@ def test_escalate_says_the_record_was_not_updated(setup):
 
 
 def test_flag_session_moves_nothing_so_there_is_no_record_to_update(setup):
-    """Flag Session is only a note since 2026-11-19: no move, no state."""
+    """Flag Session is only a note: no move, no state."""
     w, deep, infos = setup
     crw.CausalReviewWidget._flag_session(w)
     assert not (deep / VID).exists()

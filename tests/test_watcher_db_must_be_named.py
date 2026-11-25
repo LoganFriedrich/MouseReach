@@ -152,7 +152,7 @@ def test_the_watcher_will_not_start_on_an_unnamed_database(login, monkeypatch, c
     assert "db_path" in capsys.readouterr().err
 
 
-# ---- a login without db_path takes the machine's own profile (2026-11-20) ----
+# ---- a login without db_path takes the machine's own profile ----
 
 def _profiles(tmp_path, monkeypatch, host_in_profile, db, match_key="hostname"):
     """A lab profiles file in tmp_path naming ``db`` for ``host_in_profile``,

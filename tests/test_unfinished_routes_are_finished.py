@@ -187,7 +187,7 @@ def test_a_routed_question_is_written_into_the_bundle(env, monkeypatch):
         encoding="utf-8"))["segments"][0]
     assert seg["flagged_for_review"] is True and seg["flag_reason"] == "bench check"
     # The filed copy stays, unflagged, until the new run replaces it (filed is
-    # final, 2026-11-19).
+    # final).
     assert not json.loads(filed.joinpath(f"{VID}_pellet_outcomes.json").read_text(
         encoding="utf-8"))["segments"][0].get("flagged_for_review")
 

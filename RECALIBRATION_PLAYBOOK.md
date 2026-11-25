@@ -54,7 +54,7 @@ snapshot diffs, not a recalibration.
 
 Convention for MouseReach:
 
-- (Update 2026-11-18.) Master's own `pyproject.toml` version already
+- Master's own `pyproject.toml` version already
   carries `-dev`, so a `-dev` suffix does not mark a recalibration.
   Mark a recalibration by its branch name (below), and on ship bump the
   changed stage's own version constant (see "On final ship").
@@ -71,7 +71,7 @@ On final ship:
 - Squash/merge the feature branch to master.
 - Bump version to the target release (`2.4.0` → `2.5.0`, dropping
   `-dev`).
-- (Update 2026-11-18.) `pipeline_versions.json` declares one version
+- `pipeline_versions.json` declares one version
   per STAGE, not the package version: `segmenter`, `reach_detector`,
   `outcome_detector`, `assignment`, `kinematic_extractor`. Each is
   compared with the constant the code stamps into its output files:
@@ -296,7 +296,7 @@ The `displaced_outside` class is an example of an acceptable gap
 
 ### Nose-referenced reach metrics
 
-(Update 2026-11-18.) The pre-v8 extent (`max_hand_x - boxr_x`) is no
+The pre-v8 extent (`max_hand_x - boxr_x`) is no
 longer computed: the current reach detector (v8, 8.1.0) leaves
 `max_extent_pixels` and `max_extent_ruler` null, and `max_extent_mm` is
 null on every current reach. The text below describes that old definition.
@@ -318,7 +318,7 @@ the apparatus (right slit edge). This creates two issues:
 Proposed redesign (separate ticket, separate version bump):
 - Redefine `extent = max_t distance(nose(t), hand(t))` over the reach
   window. Always non-negative. 2-D Euclidean.
-- (Update 2026-11-18.) Done, and settled the other way: reach paths are
+- Done, and settled the other way: reach paths are
   anchored at `start_frame - 1` to the midpoint of the nose and BOXL and
   at `end_frame + 1` to the midpoint of the nose and BOXR
   (`kinematics/core/anchored_path.py`, `ANCHOR_FRACTION_FROM_NOSE = 0.5`),

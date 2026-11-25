@@ -481,7 +481,7 @@ def test_adopt_ignores_an_old_model_pose_and_current_archived_rows(env):
 
 
 def test_adopt_never_takes_an_archived_row_whose_manifest_names_the_old_model(env):
-    """Filed is final (2026-11-19): a pose turning up for a filed video nobody
+    """Filed is final: a pose turning up for a filed video nobody
     asked to re-pose re-runs nothing."""
     _row(env.db, VID, "archived")
     (env.archive / f"{VID}_processing_manifest.json").write_text(
@@ -864,7 +864,7 @@ def test_scan_full_only_marks_only_rows_that_need_a_new_pose(tmp_path, monkeypat
     sc._manifest_cache = {}
     summary = sc.scan(mark_outdated=True, adopt_orphans=False, full_only=True)
     assert summary["adopted"] == 0
-    # Filed is final (2026-11-19): neither the stale segmenter (a) nor the
+    # Filed is final: neither the stale segmenter (a) nor the
     # old pose (b) marks a filed video at all.
     assert [f for f in sc.db.forced if f[1] == "outdated"] == []
     assert summary["filed_final_kept"] == 2

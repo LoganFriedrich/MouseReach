@@ -462,7 +462,7 @@ def test_no_coordinator_means_no_crop(env, monkeypatch, caplog):
 def test_a_coordinator_that_fails_to_start_is_recorded_and_crops_nothing(
         env, monkeypatch, caplog):
     """The real constructor: a failed start must leave a recorded reason, not
-    just a None that the collage handler used to read as 'crop anyway'."""
+    just a None that the collage handler could read as 'crop anyway'."""
     import mousereach.watcher.coordination as coordination
     import mousereach.watcher.work_priority as wp
     from mousereach.config import WatcherConfig

@@ -156,7 +156,7 @@ def classify_queue(queue_root: Optional[Path]) -> dict:
             out["already"].append(stem)
             continue
         # Every pellet answered is complete WHOEVER cut the video. WHY first:
-        # this used to come after the hand-cut test, so a bundle whose cuts a
+        # after the hand-cut test, a bundle whose cuts a
         # person had re-set AND whose every pellet a person had answered, but
         # which was sent here for a reason other than segmentation (a quality
         # hold, a flagged session), was "held back" here, while the review

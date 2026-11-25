@@ -80,7 +80,7 @@ from .causal_review_io import (
 )
 
 # The flag-session and escalate handlers log their failures here; it was
-# never defined, so a failure there raised NameError instead (2026-10-24).
+# never defined, so a failure there raised NameError instead.
 logger = logging.getLogger(__name__)
 
 
@@ -137,8 +137,8 @@ _FLAG_REASON_LABELS = {
 def segment_answered(seg, records) -> bool:
     """A person's saved answer covers this segment (matched by its frames,
     restore_review_for_segments). It stands whatever the algorithm has said
-    since: a person's answer is what happened in those frames. Until
-    2026-10-24 a changed algorithm call re-opened it, and reviewers were asked
+    since: a person's answer is what happened in those frames. A changed
+    algorithm call must not re-open it, or reviewers would be asked
     again about pellets they had answered -- e.g. answered "displaced_sa", then
     a newer detector could not decide and the pellet came back, although the
     thing that was unsure had already been answered by a human reviewer.
@@ -161,10 +161,8 @@ def _seg_doc(bundle, stem: str):
     """The bundle's segments document, or None. Answers are counted by the
     frames they match in it (triage_status.resolved_segments).
 
-    WHY it lives here: it used to sit in review/queue_index, a SQLite list of
-    videos waiting in the triage queue that nothing read any more (the window
-    lists the queue folder itself). That module is gone; this helper was the
-    only part of it still in use."""
+    WHY it lives here: the window lists the queue folder itself, with no separate
+    queue index."""
     p = Path(bundle) / f"{stem}_segments.json"
     try:
         return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
@@ -230,7 +228,7 @@ def ground_truth_answered(stem, dirs, current_segments, human: bool) -> set:
 
 def _let_claim_go(bundle) -> None:
     """Release this window's review claim on ``bundle`` (review_claims,
-    MRR-02d: one review window per video). Never raises."""
+    one review window per video). Never raises."""
     if bundle is None:
         return
     try:
@@ -242,8 +240,8 @@ def _let_claim_go(bundle) -> None:
 
 def _claim_for_pick(window, b) -> bool:
     """Claim bundle ``b`` before it is handed to the reviewer of ``window``;
-    False when another review window holds it (review_claims, MRR-02d: two
-    windows were handed the same video). The bundle the window already shows
+    False when another review window holds it (review_claims: two
+    windows must not be handed the same video). The bundle the window already shows
     is let go first, so a window holds one claim at a time."""
     from . import review_claims
     cur = getattr(window, "_bundle_dir", None)
@@ -275,7 +273,7 @@ def _record_note(report) -> str:
     record the video's new state (route_to_queue's ``report``); '' when it
     did. WHY: the database is opened through the reviewer's own login, and
     one that cannot be written (wrong file, no write access, no row for the
-    video) used to fail silently while the message said the video moved."""
+    video) must not fail silently while the message says the video moved."""
     if not report or report.get("state_recorded", True):
         return ""
     return ("\n\nNote: the watcher's record was NOT updated ("
@@ -937,7 +935,7 @@ The notes box travels with the video.
                 f"manifest's path ({manifest.get('canonical_video_path')}) and "
                 f"no {stem}.mp4 inside the bundle folder ({bundle_dir}).")
             return
-        # One review window per video (review_claims, MRR-02d): the bundle
+        # One review window per video (review_claims): the bundle
         # left is let go, this one claimed. A video another window has open is
         # still opened when it was asked for by name -- the person is told.
         prev = getattr(self, "_bundle_dir", None)
@@ -988,8 +986,8 @@ The notes box travels with the video.
         except Exception:
             reason = ""
         base = "padding:6px; border-radius:3px; font-size:12px;"
-        # WHY every recorded reason is shown: the banner used to show a reason
-        # only when it named segmentation or "qc", and told the reviewer "no
+        # WHY every recorded reason is shown: a banner that shows a reason
+        # only when it names segmentation or "qc" tells the reviewer "no
         # routing reason was recorded" for every other one -- the quality
         # triage that could not run, a session a reviewer flagged (with their
         # note), a reason typed on the routing command. The reason is the
@@ -1126,8 +1124,7 @@ The notes box travels with the video.
         and crash it here (OpenGL fault / evented-model stack overflow). With a
         static full-video layer, navigation just moves the playhead to the
         segment's reach -- nothing to churn. A new video swaps the layers' data
-        once (the stack overflow was the pillar circle's redraw loop, removed
-        2026-10-23).
+        once (the pillar circle's redraw loop is not used, as it overflowed the stack).
         """
         import cv2
 
@@ -1295,7 +1292,7 @@ The notes box travels with the video.
             return {"start": int(cr["start"]), "end": int(cr["end"])}
         # Triaged / miss: open on the MOST-LIKELY candidate reach -- the same one
         # the question panel highlights -- so the playhead and the suggested reach
-        # agree (previously this used the LAST reach, which often disagreed).
+        # agree (not the LAST reach, which often disagrees).
         ml = self._most_likely_reach(seg)
         if ml is not None:
             return {"start": int(ml["start"]), "end": int(ml["end"])}
@@ -1485,8 +1482,8 @@ The notes box travels with the video.
         # call a new segment.
         labels = bool(self._deep_review)
         # On the next video the SAME layer gets the new points (see the video
-        # layer in _load_video) -- and a video with no points empties it, where
-        # it used to leave the previous video's dots on screen.
+        # layer in _load_video) -- and a video with no points empties it, so
+        # the previous video's dots do not stay on screen.
         if self.points_layer is not None and self.points_layer in self.viewer.layers:
             self.points_layer.data = points_data
             # Re-take the list of dots on screen NOW, before the colours are set.
@@ -1576,10 +1573,10 @@ The notes box travels with the video.
         self._restore_notes = []
         # EVERY copy -- the bundle's, the one beside the video, and the
         # durable copy -- and for each segment the newest statement a person
-        # made about its frames (merge_review_copies). WHY: this used to take
-        # the first copy that had any records and never read the durable one.
-        # A bundle opened without a working copy then started empty, and the
-        # save overwrote the durable copy's earlier answers with "not
+        # made about its frames (merge_review_copies). WHY: taking
+        # the first copy that has any records and never reading the durable one
+        # would start a bundle opened without a working copy empty, and the
+        # save would overwrite the durable copy's earlier answers with "not
         # reviewed" placeholders.
         copies = review_copies(self._video_stem, candidates)
         # recut_keys: when a person set these cuts and which cuts they
@@ -1616,7 +1613,7 @@ The notes box travels with the video.
         # Triage walks only the pellets still OPEN when the video loads. A video
         # comes back (the nightly hand-score check) for new pellets, but its
         # pellet file still flags the ones a person answered before, and "Next"
-        # used to walk those too, showing the earlier answers -- "the thing that
+        # would walk those too, showing the earlier answers -- "the thing that
         # was unsure has already been answered". A pellet
         # answered in this session stays in the walk (it was open at load), so
         # Prev reaches it.
@@ -1629,7 +1626,7 @@ The notes box travels with the video.
                              len(self._triaged_indices) - len(still_open))
             self._triaged_indices = still_open
         # ...and never a pellet ground truth already answered on these same
-        # frames (owner rule 2026-11-19: a person's answer about the correct
+        # frames (a person's answer about the correct
         # pellet is never asked again; triage_status.gt_resolved_segments, the
         # rule the release check applies). A bundle with ground truth is shown
         # at all only when some flagged pellet is still open
@@ -2485,8 +2482,8 @@ The notes box travels with the video.
         layout.addLayout(jump_row)
 
         # The causal reach's first and last frame, ALWAYS shown and always
-        # checked by the person when a reach is named (owner rule 2026-11-19:
-        # "a causal answer always includes the person checking that reach's
+        # checked by the person when a reach is named ("a causal answer always
+        # includes the person checking that reach's
         # start/end, even if not asked"). Filled with the picked reach's frames;
         # the person corrects them if needed; naming the reach confirms them.
         # Saved as human.causal_reach_bounds (causal_review_io.CAUSAL_BOUNDS_KEY).
@@ -2503,7 +2500,7 @@ The notes box travels with the video.
         b_end.setRange(0, max(0, self.n_frames - 1))
         b_end.setMaximumWidth(80)
         bounds_row.addWidget(b_end)
-        # No separate "Checked" tick (owner, 2026-11-20): naming a reach IS the
+        # No separate "Checked" tick: naming a reach IS the
         # person's statement that it is this reach with these frames; a reach
         # whose frames are wrong is corrected here or entered by hand. The box
         # is kept, hidden, only so older code paths that set it still work.
@@ -2808,8 +2805,8 @@ The notes box travels with the video.
         to the reach list with these frames (truth_resolver). Either way the
         frames the person typed are kept as ``typed`` for the record.
 
-        Until 2026-10-26 any detected reach touching the typed frames by a
-        single frame was taken instead, so an answer could land on the wrong
+        A detected reach touching the typed frames by a
+        single frame is not taken instead, as an answer could land on the wrong
         reach."""
         s, e = int(start), int(end)
         r = typed_reach_match(s, e, all_reaches)
@@ -2835,9 +2832,9 @@ The notes box travels with the video.
             return None
         # A saved answer put back on screen and left as it was is NOT a new
         # answer: the stored record is kept as it is -- its reviewer, its time,
-        # and anything the panel cannot show. WHY: Next / Prev / Save used to
-        # re-collect the panel and store it as the person's answer, so merely
-        # stepping past an answered pellet could rewrite it (a reach restored
+        # and anything the panel cannot show. WHY: re-collecting the panel on Next / Prev / Save
+        # and storing it as the person's answer would let merely
+        # stepping past an answered pellet rewrite it (a reach restored
         # by an id a re-run had renumbered; an outcome the list did not offer).
         restored = getattr(self, "_restored_panel", None)
         if restored is not None and restored[0] == rec.get("segment_num"):
@@ -2853,10 +2850,10 @@ The notes box travels with the video.
             # A causal reach outside this segment's frames: the person saw that
             # reach touch the pellet, so the CUTS are in doubt, not the answer.
             # It is recorded as given, and the video goes to re-segmentation on
-            # its own (owner rule 2026-11-24: "if it doesn't make sense, put it
+            # its own ("if it doesn't make sense, put it
             # in front of the reviewer again"): the return scan and the review
             # gate route it there (causal_review_io.reach_outside_answers).
-            # Refusing it, as before, left the person to remember to Escalate.
+            # Refusing it would leave the person to remember to Escalate.
             show_warning(f"{problem}\n\nYour answer is recorded. Because of it this "
                          "video will go to re-segmentation automatically once you "
                          "save; after the cuts are fixed it comes back to triage.")
@@ -3009,7 +3006,7 @@ The notes box travels with the video.
         # so the video stays in triage until someone picks one. WHY: saved as it
         # was -- the algorithm's 'triaged' in the outcome and nothing marking it
         # open -- it counted as an answer and the video was filed with a pellet
-        # nobody decided (2026-10-26; causal_review_io.is_answered).
+        # nobody decided (causal_review_io.is_answered).
         if human_outcome in UNDECIDED_OUTCOMES:
             answers["reviewed"] = False
 
@@ -3288,13 +3285,13 @@ The notes box travels with the video.
         """Record a note on this video's whole mouse+day session: who, when,
         and the notes box as the reason. Then save the review. Nothing else.
 
-        WHAT IT DOES NOT DO (lab decision 2026-11-19, D5-10 -- "flags are there
+        WHAT IT DOES NOT DO ("flags are there
         so we could in theory find them. I don't know that we need to
         necessarily have a predestined role for them"): it moves no video,
         holds none, sends none to re-segmentation, and leaves none out of
-        anything. Until then the button also moved the video on screen to the
-        re-segmentation queue, while its name promised to mark the whole
-        session (D4-8, D7-14); neither is what a flag is for. The person stays
+        anything. The button does not move the video on screen to the
+        re-segmentation queue, nor mark the whole
+        session; neither is what a flag is for. The person stays
         on this video and goes on reviewing it.
 
         Where the note is found: flagged_sessions.json in the review root (the
@@ -3307,7 +3304,7 @@ The notes box travels with the video.
         root = self._review_root()
         if not bundle or root is None:
             # No queue bundle on screen (a video opened with Browse): nothing
-            # is recorded. WHY: the note used to fall back to the video's own
+            # is recorded. WHY: a note must not fall back to the video's own
             # folder -- for a video opened by hand possibly a filed folder,
             # where nobody reads it and nothing the review tools do may write.
             show_info("No bundle loaded: nothing was flagged or moved.")
@@ -3343,7 +3340,7 @@ The notes box travels with the video.
 
         ``db`` is the watcher's own database, so a move records the video's
         new state there ('deep_review') and the folder and the database agree.
-        WHY: Escalate and Flag Session used to move the bundle with no
+        WHY: Escalate must not move the bundle with no
         database, leaving the row at 'triage' while the video sat in deep
         review. When the database cannot be opened (``db`` None) the move still
         happens and ``note`` tells the person the state was not updated."""
@@ -3389,7 +3386,7 @@ The notes box travels with the video.
                   + (f" -- {note}" if note else ""))
         db, db_note = self._watcher_db_for_move()
         # The window has the mp4 open; release it so the move can take it
-        # (on Windows an open file cannot be moved, and the route used to go
+        # (on Windows an open file cannot be moved, and the route would go
         # on without it, leaving the video in the triage folder).
         self._release_video_file()
         try:
@@ -3457,8 +3454,8 @@ The notes box travels with the video.
 
         A session flag suppresses nothing here: flagging diverts the video to
         the re-segmentation queue (_flag_session), and the flag record is kept
-        as provenance only. (It used to hide every flagged session's videos,
-        so the queue read as empty.)
+        as provenance only. (It does not hide every flagged session's videos,
+        or the queue would read as empty.)
 
         In the re-segmentation queue ground truth hides nothing. WHY: a video
         leaves that queue only through its clear marker (Clear here, or the
@@ -3473,7 +3470,7 @@ The notes box travels with the video.
             # Ground truth is a person's answer. Hidden only when it (with the
             # review) leaves no flagged pellet open -- the return scan then
             # releases the bundle (triage_status reads ground truth inside the
-            # bundle, owner decision MRR-03d 2026-11-19). A pellet the ground
+            # bundle). A pellet the ground
             # truth does not answer on unchanged frames is still a question,
             # so such a bundle is shown and only those pellets are walked.
             # (Hiding every bundle with ground truth left one with an open
@@ -3495,8 +3492,8 @@ The notes box travels with the video.
         """True if this bundle waits for its segmentation to be fixed (failed,
         missing or unreadable segments, and no person cleared it) -- those go
         to deep review, not to triage. The SAME rule the return scan applies
-        (triage_status.held_for_segmentation); the window used to have its own
-        copy, which offered a bundle with an unreadable segments file that the
+        (triage_status.held_for_segmentation); the window must not have its own
+        copy, which would offer a bundle with an unreadable segments file that the
         scan then moved to deep review under the reviewer."""
         from .triage_status import held_for_segmentation
         stem = b.name
@@ -3512,7 +3509,7 @@ The notes box travels with the video.
         exists -- the ONE rule the gate and the return scan use
         (triage_status.bundle_triage). A missing assignments file skips only
         the touched-without-causal test, never the algorithm's own flags (this
-        copy used to answer "nothing to triage" then, hiding a flagged bundle
+        copy must not answer "nothing to triage" then, hiding a flagged bundle
         the scan would never release). Cached per session: the algo data is
         static, so a bundle's triage status never changes within a run, which
         keeps repeated 'next video' pool scans cheap."""
@@ -3554,8 +3551,8 @@ The notes box travels with the video.
     def _review_pool_paths_unfiltered(self, pending_dir, root):
         """Every bundle folder in the queue folder, by name only.
 
-        WHY a plain listing: this used to read the queue index and, when that
-        was empty, open every bundle's files to decide which still need review
+        WHY a plain listing: reading a queue index and, when that
+        is empty, opening every bundle's files would take to decide which still need review
         -- minutes over the NAS for a deep queue, at every launch. The index was stale (one entry, for a bundle long gone; only a
         one-off catch-up job ever pushed to it), and a partly filled index would
         have hidden the rest of the queue. A video is in the queue because its
@@ -3859,8 +3856,8 @@ The notes box travels with the video.
             f"-> {out_path.name}"
         )
 
-        # Deep review: answering and releasing used to be separate acts, and
-        # the second was skipped often enough that finished bundles sat in the
+        # Deep review: answering and releasing as separate acts would let
+        # finished bundles sit in the
         # queue with no path out. When this save leaves EVERY segment answered
         # (is_answered -- the one definition; a pellet saved with no outcome
         # picked is still open, although the algorithm's "triaged" sits in its

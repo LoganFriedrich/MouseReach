@@ -2,9 +2,9 @@
 
 WHY THIS EXISTS. Every value in seconds (a segment's length, the time to the first
 reach, the gap between reaches) and every speed per second is a count of frames
-divided by the frame rate. The kinematics used to divide by a constant 30 that was
-written into the code as an assumption. Videos recorded at another rate then carry
-every such value off by the ratio of the two rates, silently: a 60 frames-per-second
+divided by the frame rate. Dividing by a constant 30 written into the code as an assumption
+would carry every such value off by the ratio of the two rates on videos recorded
+at another rate, silently: a 60 frames-per-second
 recording reads twice as long, and its speeds per second half as fast, as they were.
 A rate is a fact about each recording, so it is read from each recording.
 

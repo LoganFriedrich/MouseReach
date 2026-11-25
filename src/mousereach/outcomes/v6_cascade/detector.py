@@ -4,7 +4,7 @@ Production entry point for the v6 cascade outcome detector.
 Takes (dlc_df, segments, reaches) and returns the standard
 pellet_outcomes dict that the rest of the pipeline expects.
 
-This is a thin wrapper around the 30 cascade stages (0-29 + 98 + 99).
+This is a thin wrapper around the 33 cascade stages (0-29, 6b, 98 and 99).
 The stages themselves are deterministic rule-based classifiers --
 no model artifact required.
 
@@ -219,10 +219,10 @@ def detect_outcomes_v6_cascade(
             dlc_df, segments, reaches, video_id=video_id, video_dir=video_dir)
     finally:
         # Always close the CV gate's cached VideoCapture on the way out --
-        # success, held-for-review, or exception. The cache used to be
-        # released only on the watcher's ARCHIVE path, so a video the gate
-        # ROUTED TO REVIEW kept its mp4 open until the next video evicted it,
-        # and the routing move failed with "being used by another process",
+        # success, held-for-review, or exception. Releasing the cache
+        # only on the watcher's ARCHIVE path would let a video the gate
+        # ROUTED TO REVIEW keep its mp4 open until the next video evicted it,
+        # and the routing move would fail with "being used by another process",
         # leaving the mp4 behind in Processing (review bundles missing their
         # mp4). Idempotent; the watcher's own
         # pre-archive release remains as a belt-and-braces second call.
@@ -299,7 +299,7 @@ def _detect_outcomes_v6_cascade_impl(
     # Whether the video checks could run. WHY recorded: without the video,
     # the CV-artifact gate and Stage 98 do nothing, so a displaced_sa call
     # is committed unchecked -- a different answer from the same pose. The
-    # outcomes file used to give no sign of which it was; now it says, and the
+    # outcomes file says which it was, and the
     # watcher refuses to run a Pillar tray's cascade without its video.
     from mousereach.outcomes.v6_cascade.cv_artifact_gate import resolve_video
     cv_video = "found" if resolve_video(video_dir, video_id) else "missing"

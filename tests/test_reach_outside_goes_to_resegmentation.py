@@ -2,7 +2,7 @@
 re-segmentation.
 
 A person who saw a reach touch the pellet, outside that pellet's frames as the
-video is cut, has shown that the cuts are wrong (owner rule 2026-11-24: "if it
+video is cut, has shown that the cuts are wrong ("if it
 doesn't make sense, put it in front of the reviewer again"). The matching drops
 such an answer, so before this the pellet stayed open: the bundle waited in
 triage for an answer the window refused, or the results step refused it later.

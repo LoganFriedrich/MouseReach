@@ -6,7 +6,7 @@ Thank you for your interest in contributing to MouseReach!
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/LoganFriedrich/MouseReach.git
+   git clone <repository URL>
    cd MouseReach
    ```
 

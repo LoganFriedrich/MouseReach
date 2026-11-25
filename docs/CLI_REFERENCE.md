@@ -788,9 +788,13 @@ gets exactly the same routing the pipeline uses itself.
 
 What it does, in order:
   1. finds the video's results in the configured Analyzed tree,
-  2. moves the video's bundle into the queue with a routing manifest
-     (review_gate.route_to_queue), updating the watcher database -- all or
-     nothing (below),
+  2. puts a COPY of the video's bundle into the queue with a routing
+     manifest (watcher/filed_copy_route.py, then review_gate.route_to_queue),
+     updating the watcher database -- all or nothing (below). The filed
+     results stay in Analyzed, unchanged, until the video's new run is filed
+     and replaces them ("filed is final": a person's
+     command may reopen a filed video; the filed copy is never taken away
+     for it, and nothing automatic reopens a filed video),
   3. optionally flags specific segments (flagged_for_review=True with the
      given reason, triage_cleared cleared) in the BUNDLE's
      {video}_pellet_outcomes.json -- that is what the triage review tool
@@ -806,10 +810,10 @@ between the move and the flag.
 THE FILED FOLDER IS NEVER CHANGED BY A ROUTE THAT DOES NOT HAPPEN
 -----------------------------------------------------------------
 The flags are written only after the move has succeeded, into the bundle's
-copy. WHY: they used to be written into the FILED outcomes file first; a
+copy. WHY: writing them into the FILED outcomes file first would let a
 route that then failed (a file held open, so every file went back), or was
-refused because the video is held, left the filed results carrying review
-flags although nothing had been routed. A failed or refused route now leaves
+refused because the video is held, leave the filed results carrying review
+flags although nothing had been routed. A failed or refused route leaves
 every filed file byte for byte as it was. If the move succeeds and the flag
 cannot be written, the video is in the queue and is reported FAIL "question
 not recorded" (exit code 1): route it again to ask.
@@ -840,9 +844,9 @@ The database is resolved exactly as the daemon resolves it
 <processing_root>/watcher.db on a GPU PC; a processing server whose settings
 name no watcher.db_path, or settings that cannot be read, are refused) and
 printed as "[watcher db] <path>", like every
-other watcher command. This command used to open a bare WatcherDB(), which
-ignores the db_path override: every state write went to an unused decoy
-database while the bundles moved on disk, and the live database never learned
+other watcher command. This command must not open a bare WatcherDB(), which
+ignores the db_path override: every state write would go to an unused decoy
+database while the bundles moved on disk, and the live database would never learn
 of any of it.
 
 Routing is REFUSED (exit 1, nothing flagged, nothing moved) when that database
@@ -885,8 +889,7 @@ when the durable review store already holds it byte for byte -- is
 deleted; ground truth, hand-set cuts,
 clear markers and a review the store does not hold byte for byte are never carried
 into the deep-review bundle and never deleted: they stay where they are,
-with a note, listed under "Folders left for a person" in the GUI's Review
-Queues tab (and in the dashboard's "Needs your attention" panel).
+with a note, listed in the dashboard's "Needs your attention" panel.
 
 A VIDEO ALREADY HELD IN A QUEUE IS NOT MOVED -- ITS QUESTION GOES IN ITS BUNDLE
 --------------------------------------------------------------------------------
@@ -894,7 +897,7 @@ A video whose watcher state is 'triage' or 'deep_review', or that has a bundle
 in either queue (published, or still being built in the queue's .incoming
 folder), is not moved and its filed copy is not touched; it is reported as
 "held" (held: true with --json). WHY: the held bundle is the video's live copy,
-and it can hold a person's answers and cuts. Routing used to take the OLDER
+and it can hold a person's answers and cuts. Routing must not take the OLDER
 filed results and move them into that bundle, replacing the held run's video,
 pose, results -- and a review a person had saved there -- with the filed ones.
 
@@ -1569,11 +1572,10 @@ usage: mousereach-quick-summary [-h]
 
 Quick summary: the filed results per session, plus overall totals.
 
-Redirected 2026-11-19 to ``mousereach-results --level session``
-(export/results.py). WHY: this command read only the local Processing folder,
-which filing empties, so after filing it found nothing; and it counted a
-session's success rate over every segment, a segment with no pellet
-included. It now writes the session-level export of the FILED results
+Delegates to ``mousereach-results --level session``
+(export/results.py). WHY: reading only the local Processing folder finds
+nothing after filing empties it, and counting a session's success rate over
+every segment would include a segment with no pellet. It writes the session-level export of the FILED results
 (retrieved / pellets presented) and prints the overall totals from it.
 
 options:

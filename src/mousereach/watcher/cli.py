@@ -133,7 +133,7 @@ def check_nas_root(nas_root, origin: str):
             return None
     except OSError as e:
         # Path.exists raises for a network error (WinError 64 and the like)
-        # rather than answering False; that used to crash the watcher's start.
+        # rather than answering False; that would crash the watcher's start.
         return f"NAS root could not be read: {nas_root} ({e})"
 
     detail = (
@@ -186,7 +186,7 @@ def _maybe_print_help(usage: str):
     as ``mousereach-watch --dryrun`` started the REAL watcher instead of the
     preview. The usage text is the list of options each command accepts, so
     anything starting with "-" that it does not name stops the command before
-    it does anything (2026-10-22)."""
+    it does anything."""
     args = sys.argv[1:]
     if "-h" in args or "--help" in args:
         print(usage.strip())
@@ -273,8 +273,8 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         sys.exit(1)
 
     # Print startup banner
-    # Determine mode label. An unknown role is refused here: a typo in
-    # watcher.mode used to start a pose-only node without a word.
+    # Determine mode label. An unknown role is refused here: a mistyped
+    # watcher.mode would otherwise run a node with the wrong job and no warning.
     from mousereach.watcher.standalone import (
         KNOWN_ROLES, analyses_and_files, poses, role_label)
     if config.mode not in KNOWN_ROLES:
@@ -341,7 +341,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
 
     # A SHARED DRIVE THAT IS AWAY AT START: wait for it, instead of failing the
     # check below and exiting. WHY: a watcher started during an outage -- at
-    # login, by its scheduled task, by a person -- used to crash here (a
+    # login, by its scheduled task, by a person -- would crash here (a
     # network error out of the first look at the drive), and nothing started it
     # again once the drive was back. A drive that answers but has no such
     # folder is a SETTING and is refused below as before; the stop flag is read
@@ -391,7 +391,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
     if poses(config.mode):
         # A GPU node needs: the shared pipeline root, DLC config, ffmpeg, GPU.
         # NAS_ROOT is what every shared path hangs off; a lab that configured
-        # only nas_root (the documented setting) used to be refused here for
+        # only nas_root (the documented setting) is not refused here for
         # lacking the older nas_drive.
         if not Paths.NAS_ROOT:
             problems.append("NAS root not configured (nas_root in ~/.mousereach/config.json)")
@@ -472,7 +472,7 @@ from ~/.mousereach/config.json; run mousereach-setup to configure).
         logger.warning(f"Single-instance guard unavailable ({e}); continuing")
 
     # A STOP REQUEST LEFT BEHIND. The loop exits on its first turn when
-    # watcher_stop.flag exists, so a forgotten flag used to make this start
+    # watcher_stop.flag exists, so a forgotten flag would make this start
     # end at once with a single INFO line -- and a scheduled task reported
     # success. Refuse instead, loudly, naming the file and its age, with a
     # non-zero exit code. The flag is NOT deleted: the update procedure relies
@@ -997,8 +997,8 @@ other state the command says what to do instead and exits with code 1.
             from_step = args[i + 1]
 
     # Get video_id if provided. The word after --from-step is the step, not
-    # the video (it used to be taken as the video id, so the documented
-    # "--from-step dlc_complete <video>" looked up a video named dlc_complete).
+    # the video (it is not the video id, or the documented
+    # "--from-step dlc_complete <video>" would look up a video named dlc_complete).
     video_id = None
     for i, arg in enumerate(args):
         if arg.startswith('--') or (i > 0 and args[i - 1] == '--from-step'):
@@ -1106,8 +1106,8 @@ def _retry_parked_collage(name) -> int:
     """mousereach-watch-reprocess --collage NAME: give one failed collage its
     retries back (WatcherDB.retry_parked_collage). Returns the exit code: 0
     when it was changed, 1 when not (and says why). WHY a per-collage retry:
-    the only remedy used to be raising watcher.max_retries for the whole
-    machine and restarting, which retried every failed video on it too."""
+    the alternative is raising watcher.max_retries for the whole
+    machine and restarting, which retries every failed video on it too."""
     if not name:
         print("Usage: mousereach-watch-reprocess --collage COLLAGE_FILE", file=sys.stderr)
         return 1
@@ -1625,7 +1625,7 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
     # a single", or the collage they were cut from would be sent to be cut
     # (and posed) a second time.
     # Named held_for_pose, not "claimed": the queueing loop below has its own
-    # "claimed" (the file this run claims), and the shared name used to hide
+    # "claimed" (the file this run claims), and a shared name would hide
     # this dict there.
     held_for_pose = {}
     if single_dir:
@@ -1717,9 +1717,9 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
 
     # The database must already exist, and is checked BEFORE the person is
     # asked to confirm. WHY: WatcherDB() creates a missing file, so a wrong
-    # path (a db_path override not yet in place, a new machine) used to queue
+    # path (a db_path override not yet in place, a new machine) would queue
     # every video into an empty decoy the watcher never reads -- and the
-    # videos were copied into the DLC queue with no record of them. Only
+    # videos would be copied into the DLC queue with no record of them. Only
     # mousereach-watch (and the Watcher Control panel) creates the database.
     try:
         db_path = _resolve_db_path()
@@ -1822,8 +1822,8 @@ Single_Animal pre-cropped videos and Multi-Animal collages).
         # Claim, then copy to DLC_Queue. WHY the claim: the watcher's own
         # intake claims a shared single (renames it into
         # Single_Animal/.inflight/<this machine>/) before copying it, so no
-        # other GPU node can take the same video. This command used to copy
-        # without claiming, so two nodes could pose one video. The watcher on
+        # other GPU node can take the same video. This command claims before
+        # copying, or two nodes could pose one video. The watcher on
         # this machine keeps the claim alive and removes the claimed copy once
         # the video has moved on, exactly as for its own claims.
         if dlc_queue:
@@ -3053,7 +3053,7 @@ Handle DB rows whose video file this node cannot find anywhere.
             #     folder or another node's claim folder. WHY: the sweep
             #     records what it finds against a WORKING state, and a working
             #     state with a filed or posed path sent a GPU node's hand-off
-            #     step to move those files (it used to search everywhere).
+            #     step to move those files (it must not search everywhere).
             #   * processing server: the posed folder IS where it works a
             #     posed video from, and a filed video marked for a re-run
             #     ('outdated', or one being filed, 'archiving') is worked
@@ -3098,8 +3098,8 @@ def _retry_unresolvable(db, unresolvable, dry_run: bool) -> int:
     """--retry: put back an 'unresolvable' video whose file this GPU node now
     holds. Returns how many were (or would be) put back.
 
-    WHY so narrow: it used to search everywhere (the filed folder and the
-    posed folder included) and force 'dlc_queued' on any machine. On the
+    WHY so narrow: searching everywhere (the filed folder and the
+    posed folder included) and forcing 'dlc_queued' on any machine would fail. On the
     processing server no work step selects 'dlc_queued', so the row was
     stranded there; on a GPU node a filed or posed copy is refused for pose
     and parked again. Now:

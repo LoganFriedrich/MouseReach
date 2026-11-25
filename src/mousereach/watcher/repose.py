@@ -4,11 +4,10 @@ WHY THIS EXISTS
 ---------------
 When pipeline_versions.json declares a new DLC model, archived videos with no
 pose from that model are marked state='outdated', reprocess_scope='full' by
-the version scan. Until 2026-09-12 that was a dead end: the node that runs
-the scan usually has no GPU, nothing carried the video to a node that does,
-and when a GPU node was fed the video by hand and staged the new pose into
-Processing/Posed, the staged-pose scan ignored it because the video
-already had a row. Every such video cost one hand step on each machine.
+the version scan. Without this it would be a dead end: the node that runs
+the scan usually has no GPU, and nothing would carry the video to a node that does
+(a staged pose in Processing/Posed is ignored by the staged-pose scan
+because the video already has a row).
 
 THE SHAPE: PULL, OVER SHARED STORAGE
 ------------------------------------
@@ -275,7 +274,7 @@ def resolve_request_video(video_id: str, body: dict) -> Optional[Path]:
 
     Runs on the GPU node that consumes the request, so nothing inside
     Processing/Posed is accepted -- not a request path that points there
-    (requests published before 2026-09-15 could), not a search hit. WHY:
+    (older requests could), not a search hit. WHY:
     Posed is the processing server's intake; copying from it poses a video
     that is at that moment being taken in (watcher/locate.py docstring). The
     request then waits RETRY_S and is served from the archive once it lands."""
@@ -1002,8 +1001,7 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
         copies that pose AND the archived results folder down and re-runs
         every post-DLC stage. Rows already narrowed for another reason
         (a kinematics-only bump, say) are left exactly as they are.
-      * row 'archived' (filed) -> left as it is: filed is final (lab rule
-        2026-11-19), and a filed video is re-posed only on a person's
+      * row 'archived' (filed) -> left as it is: filed is final, and a filed video is re-posed only on a person's
         command, which parks its row 'outdated' / 'full' first.
       * row 'failed' -> named once; a person decides.
 
@@ -1034,7 +1032,7 @@ def adopt_staged_reposes(db, staging_dir: Optional[Path], *,
                                f"(mousereach-watch-reprocess) to take the pose")
             continue
         if state == "archived":
-            # FILED IS FINAL (lab rule 2026-11-19): a pose that turns up for a
+            # FILED IS FINAL: a pose that turns up for a
             # filed video nobody asked to re-pose never re-runs its
             # algorithms. Before the rule a filed video whose manifest named
             # another model was narrowed to a re-run here, automatically.

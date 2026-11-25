@@ -260,13 +260,12 @@ def parse_subject_id(video_name: str) -> Optional[str]:
     - CC = cohort (2 digits)
     - SS = subject within cohort (2 digits)
 
-    This used to match ``CNT(\d{4})`` and nothing else, so every non-CNT video
-    returned None and sync_file_to_database gave up before it had even asked
+    Matching only ``CNT(\d{4})`` would return None for every non-CNT video
+    and sync_file_to_database would give up before even asking
     whether the subject was known. ASPA is a project in exactly the way CNT is a
     project -- mousedb models projects, and ASPA videos are analysed by the same
     pipeline and filed to Analyzed/ASPA -- so hardcoding one project's prefix
-    quietly excluded a whole project's results from the database. 61 ASPA videos
-    on this node had been processed, filed, and silently skipped.
+    quietly excludes a whole project's results from the database.
 
     Parsing is delegated to AnimalID.parse, the same decomposition the rest of
     the pipeline uses to route a video to its project folder, so the sync and the
@@ -548,10 +547,10 @@ class DatabaseSyncer:
         --------------------------------
         Videos may be recorded and shipped every day while the tracking
         spreadsheet that names the animals is filled in "eventually" -- days
-        or weeks later. Until 2026-08-28 this sync refused any video whose
-        animal the spreadsheet import had not yet created, and dropped the
-        results SILENTLY (a debug-level "subject not in DB"). One failing
-        sheet import could make an entire cohort's processed data vanish for
+        or weeks later. Refusing any video whose
+        animal the spreadsheet import has not yet created, and dropping the
+        results SILENTLY, would let one failing
+        sheet import make an entire cohort's processed data vanish for
         weeks, and sessions of a project with no sheet import had nowhere to
         land. The machine data must never wait on the hand data.
         The video filename already says who the animal is, so the animal is
@@ -648,9 +647,8 @@ class DatabaseSyncer:
         try:
             with open(path, 'r') as f:
                 data = json.load(f)
-            # A reach that starts before the first cut belongs to no pellet (owner
-            # decision D2-3): a features file filed before 2026-11-19 lists it
-            # under pellet 1, so it is taken out of pellet 1 here, on reading --
+            # A reach that starts before the first cut belongs to no pellet: an older
+            # features file lists it under pellet 1, so it is taken out of pellet 1 here, on reading --
             # the filed file itself is never changed.
             from mousereach.reach.core.before_first_cut import split_before_first_cut
             data = split_before_first_cut(data)
@@ -893,13 +891,11 @@ class DatabaseSyncer:
                     FROM reach_data
                     ORDER BY subject_id, session_date, video_name, segment_num, reach_num
                 """))
-                # Take the header from the query itself. These used to be two
-                # independent lists -- the SELECT above and ALL_COLUMNS -- and
-                # they drifted: segment_num was dropped from
-                # ALL_COLUMNS while the SELECT kept it, so the written header had
-                # 61 names over 57-value rows and every column from index 5 on
-                # was mislabelled. The column headed causal_reach held outcome
-                # strings. Downstream analyses read this file.
+                # Take the header from the query itself: two
+                # independent lists (the SELECT above and ALL_COLUMNS) can
+                # drift, leaving a header with more names than the rows have
+                # values and every column after the drift mislabelled.
+                # Downstream analyses read this file.
                 header = list(result.keys())
                 rows = result.fetchall()
 

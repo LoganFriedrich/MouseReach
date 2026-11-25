@@ -120,8 +120,8 @@ from .causal_review_io import (
 # LAZY: the GUI parts (PEP 562 -- loaded on first use)
 # =============================================================================
 # The widgets and their UI pieces load napari, Qt, vispy, pandas, scipy and
-# more (about 2,600 modules and several seconds). They used to be imported
-# here, so EVERY import of this package loaded them -- including the
+# more (about 2,600 modules and several seconds). They must not be imported
+# here, or EVERY import of this package would load them -- including the
 # watcher's, which only needs causal_review_io / triage_status: a headless
 # daemon loaded a whole GUI stack (several seconds) to call a path
 # helper, and a widget that failed to import took the watcher's review paths

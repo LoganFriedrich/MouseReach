@@ -1350,7 +1350,7 @@ class WatcherControlWidget(QWidget):
             # Merge into the existing backup settings, never replace them:
             # the panel edits only these three; the scope (sync_dirs), the
             # time limit and the poll timings are set in the config file, and
-            # Save used to wipe them -- after which the nightly backup copied
+            # Save must not wipe them, or the nightly backup would copy
             # the default, larger scope.
             bkp = existing.get("backup")
             bkp = dict(bkp) if isinstance(bkp, dict) else {}

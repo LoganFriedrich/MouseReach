@@ -143,9 +143,9 @@ def test_archived_pose_is_not_pose_present_live_model_folder_is(tmp_path):
 
 def test_scan_never_reposes_or_reruns_a_filed_video_for_a_new_model(
         tmp_path, monkeypatch, no_review):
-    """End to end through scan(): both manifests name the OLD model. Before
-    the 2026-11-19 rule (filed is final) STEM went for a GPU re-pose and
-    STEM_B was re-run from segmentation; now neither is marked, and both are
+    """End to end through scan(): both manifests name the OLD model. Without
+    the "filed is final" rule STEM would go for a GPU re-pose and
+    STEM_B be re-run from segmentation; neither is marked, and both are
     counted as kept."""
     coh = _live_cohort(tmp_path)
     for vid in (STEM, STEM_B):

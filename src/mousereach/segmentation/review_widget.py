@@ -999,8 +999,7 @@ class BoundaryReviewWidget(QWidget):
             self.goto_spin.blockSignals(False)
     
     # --- Playback -----------------------------------------------------
-    # Added 2026-09-13: this was the one review tool that could not play at
-    # all, only step. Deliberately the same shape as the causal review tool's
+    # Playback is deliberately the same shape as the causal review tool's
     # implementation rather than a new one.
 
     def _playback_interval(self) -> int:
@@ -1389,8 +1388,8 @@ class BoundaryReviewWidget(QWidget):
                                 original_boundaries, username)
         # Which cuts the person explicitly accepted or moved, keyed by frame
         # (hand_cuts.BOUNDARY_CALLS_KEY). A video in the re-segmentation queue
-        # leaves it only when EVERY cut is such a call (owner decision MRR-08d,
-        # 2026-11-19); a cut this screen never had accepted or set is not one.
+        # leaves it only when EVERY cut is such a call;
+        # a cut this screen never had accepted or set is not one.
         from mousereach.review.hand_cuts import BOUNDARY_CALLS_KEY
         reviewed = list(getattr(self, "boundaries_reviewed", None) or [])
         if not isinstance(reviewed, list):

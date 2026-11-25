@@ -2,12 +2,12 @@
 
 A triage bundle whose segmentation failed and whose ground truth INSIDE the
 bundle certifies the whole video is not diverted to re-segmentation (the gate
-would pass it clean). Before 2026-11-19 the release check counted only ground
+would pass it clean). A release check that counted only ground
 truth it found through the ground-truth index, not ground truth inside a
 bundle, so its triaged pellets stayed open, the window hid it (it has ground
 truth) and the return scan could only list it for a person.
 
-Owner decision MRR-03d (2026-11-19): a person's answer about the correct
+A person's answer about the correct
 pellet is always true. The release check now reads ground truth inside the
 bundle, so such a bundle is RELEASED by the ordinary rule, and a listing an
 older scan wrote is taken off.

@@ -152,7 +152,7 @@ def feature_columns() -> List[str]:
 
 
 # ============================================================================
-# CAUSAL-ATTRIBUTION FEATURES (additive, 2026-04-30)
+# CAUSAL-ATTRIBUTION FEATURES (additive)
 #
 # These layer on top of the baseline features above. They encode the
 # event-anchored decision rules:

@@ -1180,7 +1180,7 @@ class PelletOutcomeDetector:
                             flag_reason = f"Pellet displaced (max: {max_disp_dist:.2f}), returned to pillar, then disappeared - likely retrieved"
                         elif not pellet_visible_at_end:
                             # v3.0: Pellet disappeared at end of segment after displacement.
-                            # New DLC (2026-03-27) tracks pellet more reliably, so disappearance
+                            # The current DLC model tracks pellet more reliably, so disappearance
                             # is a stronger signal of retrieval than with old DLC. If eating was
                             # detected or pellet was grabbed by paw, reclassify as retrieved.
                             # Validation: 6/16 retrieved->displaced_sa errors had vis_end=False.
@@ -1467,7 +1467,7 @@ class PelletOutcomeDetector:
                                     outcome = 'untouched'
                                     confidence = 0.85
 
-                                    # NOTE (2026-06-23): no flag here. We are in the
+                                    # NOTE: no flag here. We are in the
                                     # branch where the pellet ENDED ON THE PILLAR
                                     # (end_distance < 0.20) with no sustained
                                     # displacement, no paw nearby during the spike, no
@@ -1476,9 +1476,9 @@ class PelletOutcomeDetector:
                                     # conditions is DLC jitter, not an interaction -- the
                                     # pellet never actually left (it could not have
                                     # returned to the pillar if it had). Flagging it for
-                                    # review previously triaged ~230 correctly-untouched
-                                    # segments (~57% of all outcome triage) on tracking
-                                    # noise; the outcome was already 'untouched'. Commit
+                                    # review would triage correctly-untouched
+                                    # segments on tracking
+                                    # noise; the outcome is already 'untouched'. Commit
                                     # untouched; do not flag.
 
                 elif end_distance > 0.25:

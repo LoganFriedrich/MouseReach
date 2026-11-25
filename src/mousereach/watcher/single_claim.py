@@ -5,7 +5,7 @@ WHY THIS EXISTS
 People drop cut single-animal videos into Unanalyzed/Single_Animal
 (``Paths.SINGLE_ANIMAL_OUTPUT``) whenever they like -- the point is to get them
 off the recording PCs at once -- while several GPU nodes poll that folder.
-Every node that saw a video used to copy it into its own DLC queue and pose
+Without a claim, every node that sees a video copies it into its own DLC queue and poses
 it. Two nodes, one video: two GPU runs, two staged poses, and
 duplicate processing downstream. Nothing in the folder said "taken".
 
@@ -19,10 +19,10 @@ to  <Single_Animal>/.inflight/<hostname>/<stem>.mp4
 A rename within one share is one operation on the file server: exactly one
 node's rename finds the file, and every other node's fails with "file not
 found" and leaves the video to the winner. A check-then-write marker file is NOT
-atomic: the processing server's ``Processing/Posed/.claims`` markers were
-that until 2026-10-22, with a half-second sleep and a read-back that narrowed
--- never closed -- the window in which two nodes both write a marker and both
-believe they won. They are now an exclusive create (watcher/claim_marker.py). The re-pose
+atomic: the processing server's ``Processing/Posed/.claims`` markers are
+an exclusive create (watcher/claim_marker.py), not a half-second sleep and a read-back, which
+narrows -- never closes -- the window in which two nodes both write a marker and both
+believe they won. The re-pose
 queue (watcher/repose.py) claims its requests by rename into its own
 ``.inflight`` for the same reason.
 
@@ -79,9 +79,9 @@ A node holds only what it is about to start. A node that cuts a recording keeps
 ``KEEP_AHEAD`` of the cut videos for itself and puts the rest straight into
 the singles folder, unclaimed, for any node -- itself included -- to take the
 ordinary way (``publish_to_front_door``). A node that pauses for a recording
-gives back every claimed video it has not started. WHY: a node used to keep
-all eight videos of every recording it cut, and kept them through a whole
-recording day, while the other GPU nodes had nothing to do.
+gives back every claimed video it has not started. WHY: a node that kept
+all eight videos of every recording it cut through a whole
+recording day would leave the other GPU nodes with nothing to do.
 
 The claim also sets the file's modified time to now. WHY: a rename keeps the
 modified time, and for a video copied onto the share last week that is

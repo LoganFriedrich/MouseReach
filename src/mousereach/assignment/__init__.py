@@ -13,7 +13,7 @@ Production entry point: ``mousereach.assignment.run.assign_reaches_for_video``
 (v2, requires the DLC pose). The watcher, ``pipeline/run_all.py``,
 ``pipeline/reprocess_to_current.py`` and ``mousereach-assign-reaches`` all go
 through it. ``assign_reaches_v1`` stays importable for provenance only --
-nothing in the pipeline or the command line tools has called it since 2026-08.
+nothing in the pipeline or the command line tools calls it.
 """
 from .v1 import VERSION as V1_VERSION
 from .v1 import assign_reaches_v1

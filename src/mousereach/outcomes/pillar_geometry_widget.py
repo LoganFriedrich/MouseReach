@@ -509,7 +509,7 @@ class PillarGeometryAnnotatorWidget(QWidget):
 
         self.pillar_circle_layer.data = [circle]
 
-        # Update info (no longer auto)
+        # Update info (the circle is set by hand)
         center_y = (circle[0, 1] + circle[1, 1]) / 2
         center_x = (circle[0, 2] + circle[1, 2]) / 2
         radius = (circle[1, 1] - circle[0, 1]) / 2
@@ -707,9 +707,8 @@ class PillarGeometryAnnotatorWidget(QWidget):
 
 
 # Standalone execution: python -m mousereach.outcomes.pillar_geometry_widget
-# (The old napari plugin hook that stood here, @napari.hookimpl, belongs to a
-# plugin system napari no longer has: it made the module fail to import at all,
-# and nothing registered it. Removed 2026-10-24.)
+# (No napari plugin hook, @napari.hookimpl, belongs here: it belongs to a
+# plugin system napari no longer has, and would make the module fail to import.)
 if __name__ == '__main__':
     import napari
     viewer = napari.Viewer()

@@ -31,10 +31,10 @@ from mousereach.config import Paths, AnimalID, ConfigurationError
 
 # Which configured folder each default comes from: (Paths attribute, subfolder).
 # WHY these are looked up at call time and not as module constants: the archive
-# default used to be built at import (Paths.ANALYZED_OUTPUT / "Multi-Animal"),
-# and on a machine without a MouseReach config that is None / str, so merely
+# default built at import (Paths.ANALYZED_OUTPUT / "Multi-Animal")
+# is None / str on a machine without a MouseReach config, so merely
 # IMPORTING the cropper -- and with it mousereach.video_prep.core, the prep
-# window and every test that touches either -- crashed with a TypeError that
+# window and every test that touches either -- would crash with a TypeError that
 # said nothing about setup. Looking the folder up when a function actually
 # needs it keeps behaviour identical on a configured machine, lets an
 # unconfigured one import the module (and pass explicit folders), and turns a
@@ -346,8 +346,8 @@ def copy_to_dlc_queue(
 ) -> int:
     """Hand the mp4s of ``source_dir`` to the pose step (``hand_to_pose``).
 
-    Kept under its old name for scripts that call it. It no longer copies or
-    moves anything into a DLC queue (``dest_dir`` and ``move`` are ignored):
+    Kept under this name for scripts that call it. It does not copy or
+    move anything into a DLC queue (``dest_dir`` and ``move`` are ignored):
     the only way into a DLC queue is a watcher's claim (``hand_to_pose`` says
     why). Returns how many videos are now waiting for a pose in the shared
     singles folder (handed on, or already there)."""
@@ -370,9 +370,9 @@ def archive_collages(
     child still in the pipeline, held in a review queue or not yet cut stays
     where it is. Returns how many collages moved.
 
-    WHY: ``mousereach-prep --archive`` used to move EVERY collage of the folder
+    WHY: ``mousereach-prep --archive`` must not move EVERY collage of the folder
     after cropping, whatever its children's state: a collage whose children
-    had failed, were held in a review queue, or had not been cut at all left
+    had failed, were held in a review queue, or had not been cut at all would leave
     the intake folder, and nothing could cut it again from there."""
     from .collage_provenance import (retire_completed_collages, build_downstream_index,
                                      build_complete_stems)

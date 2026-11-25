@@ -10,7 +10,7 @@ Guard application order (per the validated 4.0 deploy config):
 2. vanish guard (on displaced stages in DISPLACED_VANISH_GUARD_CLASSES)
 3. SA-presence guard (on ALL stages)
 
-Validated 2026-07-02 against train + gen corpora.
+Validated against train + gen corpora.
 """
 from __future__ import annotations
 

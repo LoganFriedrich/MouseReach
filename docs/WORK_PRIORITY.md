@@ -4,10 +4,8 @@ Assumes no knowledge of the codebase. If you only want to know *how to make one
 kind of session go first*, read "One order for the whole lab" and stop.
 
 One order decides both what the processing machines pick up next AND which video
-the human review tools hand a reviewer next. Until 2026-09-13 those disagreed:
-the order was a separate copy on each machine, and the review tools read no
-order at all, so a reviewer was handed a uniformly random video while the
-machines worked strictly by preference.
+the human review tools hand a reviewer next, so the machines and the reviewers
+never disagree about which video matters most.
 
 ---
 
@@ -51,7 +49,7 @@ the rest of PROJECT_A, then PROJECT_B, then everything else. (`PROJECT_A` and
 `PROJECT_B` are placeholders for your own project codes.) Easy and Flat trays are left
 until a machine has nothing else to do.
 
-**Session lists (since 2026-10-22).** A study usually needs particular sessions --
+**Session lists.** A study usually needs particular sessions --
 one animal's tray run on one day -- spread over many cohorts and recordings. Put
 them in a text file in the shared pipeline folder, one session per line
 (`20220101_A01_P3` or the pipeline's `20220101_ASPA0101_P3`; lines starting with
@@ -65,8 +63,7 @@ effect within a minute, like edits to the order.
 
 Pressing Save writes **`priority_order.json` at the root of the shared pipeline
 folder**, beside `pipeline_versions.json`. Save changes only what the boxes show:
-anything else in the file -- notes, or hand-written selectors -- is kept (until
-2026-10-22 a Save rewrote the file from the boxes alone and wiped them). If the
+anything else in the file -- notes, or hand-written selectors -- is kept. If the
 file holds hand-written `order` / `idle_only` selectors, they take precedence over
 the boxes, and the status line says so. A key the file holds that this version does
 not understand is named there too, never silently ignored. Every machine reads that one file, so
@@ -79,8 +76,7 @@ between. The triage review tool and the re-segmentation tool, when they choose w
 video to show next. The re-segmentation queue. And the order in which videos a
 reviewer has cleared re-enter the pipeline, which matters because only ten of
 them go back per cycle. And which re-pose requests a graphics-card machine takes
-from the shared queue (since 2026-10-22; they were taken alphabetically, so the
-oldest project's videos went first whatever the order said). Everywhere, work the
+from the shared queue. Everywhere, work the
 order names as "not taken on until nothing else is waiting" (Easy and Flat by
 default) comes after everything else, whatever group it belongs to -- in queue
 listings and in the review tools' choice of the next video too.
@@ -141,7 +137,7 @@ That is deliberate, and it is the fix for two real failures:
 * **The stampede.** Intake is visited before the pipeline that drains it. If
   both waited for an idle node, then on an idle node intake would win every
   cycle and copy a whole `max_local_pending` worth of deferred videos onto local
-  disk before analysing one of them. (Since 2026-10-21 `max_local_pending`
+  disk before analysing one of them. (`max_local_pending`
   defaults to 2, so a node holds only what it is about to start in any case.) With intake deferred and the pipeline not,
   one deferred video is taken in and the next cycle finishes it.
 
@@ -155,9 +151,8 @@ That is deliberate, and it is the fix for two real failures:
 "Do not take on new low-priority work" is the policy. "Refuse to finish
 low-priority work already on your disk" never was.
 
-**A person clearing an Easy or Flat video is the intended exception.** (Since
-2026-10-23 Easy and Flat videos are never held for a person, so this applies
-only to ones already in a queue before then.) When a
+**A person clearing an Easy or Flat video is the intended exception.** (Easy and Flat videos are never held for a person, so this applies
+only to ones already sitting in a queue.) When a
 reviewer clears an E/F video in a review queue, the return scan puts it back
 into `Processing/` on the processing server, and from there it is work already
 on the disk: it is finished at once, ahead of the idle-only wait. That is
@@ -174,8 +169,7 @@ Deferred work already on the disk is still picked **last within its bucket** by
 A running watcher re-reads the order at most once a minute, and writes it to its
 log the first time and again whenever it changes (`Work priority (changed) -- ...`),
 so the log shows when an edit took effect. `mousereach-watch --dry-run` prints the
-policy it would resolve, in plain words. (Until 2026-10-22 the order was read once
-when the watcher started, and an edit waited for a restart.)
+policy it would resolve, in plain words.
 
 ---
 

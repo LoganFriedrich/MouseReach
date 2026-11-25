@@ -212,7 +212,7 @@ def test_a_folder_that_left_while_open_is_not_recreated(tmp_path):
 
 
 def test_a_deep_review_bundle_with_cuts_not_all_accepted_is_not_released(tmp_path):
-    """Owner decision MRR-08d (2026-11-19): a video leaves re-segmentation only
+    """A video leaves re-segmentation only
     when every cut was explicitly accepted or set -- on this screen, the
     boundaries it marks reviewed."""
     from mousereach.review.resegmented import resegmented_since_entry

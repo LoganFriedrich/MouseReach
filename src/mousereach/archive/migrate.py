@@ -350,9 +350,8 @@ def _update_watcher_db_paths(
     Returns the number of rows updated (or that would be updated).
     """
     # The one shared resolver (watcher/db_location): the configured
-    # watcher.db_path first. This used to try <processing_root>/watcher.db
-    # FIRST and the override only when that was missing -- on a machine with
-    # an override and an old default file beside it, it rewrote the old file.
+    # watcher.db_path first, so on a machine with an override and an old default
+    # file beside it the old file is not rewritten.
     from mousereach.watcher.db_location import resolve_watcher_db_path
     try:
         db_path = Path(resolve_watcher_db_path())

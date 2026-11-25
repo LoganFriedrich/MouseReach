@@ -69,7 +69,7 @@ def _queued(tmp_path, routed_at, seg_extra=None, gt_bounds=None):
     seg = {"boundaries": [10, 20, 30]}
     seg.update(seg_extra or {})
     # A fixer save records every cut as a person's explicit call
-    # (hand_cuts.BOUNDARY_CALLS_KEY, owner decision MRR-08d).
+    # (hand_cuts.BOUNDARY_CALLS_KEY).
     if seg.get("boundary_source") == "human":
         seg.setdefault("boundary_calls", [{"frame": f, "action": "accepted"}
                                           for f in seg["boundaries"]])

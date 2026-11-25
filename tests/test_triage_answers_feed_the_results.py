@@ -1,6 +1,6 @@
 """What a person said in triage is what the results use.
 
-WHY (owner decisions 2026-11-19, D5-6 extension and D5-3): what a human said
+WHY: what a human said
 is the correct result for every step after it, and nothing downstream works
 out again what a person decided.
 

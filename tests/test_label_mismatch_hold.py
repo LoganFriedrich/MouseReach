@@ -1,4 +1,4 @@
-"""The label-mismatch hold is RETIRED (owner rule 2026-11-20: "Just trust what
+"""The label-mismatch hold is RETIRED ("just trust what
 is written down"). A video whose results match ANOTHER tray's hand scores
 better than its own is no longer held: it is compared with its OWN row, like
 every video, and goes on as named -- a disagreement goes to triage as an
@@ -6,7 +6,7 @@ ordinary bench disagreement. hand_scores.label_mismatch() itself is kept (it
 describes the rows in a sheet-error decision recorded while the hold existed),
 so its rule is still tested.
 
-Still true from 2026-11-18: a triage bundle held over its hand scores is
+Still true: a triage bundle held over its hand scores is
 compared again when the scores change: a corrected sheet must not leave a
 person looking at old scores and disagreements that no longer exist, and an
 unanswered bundle whose only questions went away must go back to the pipeline

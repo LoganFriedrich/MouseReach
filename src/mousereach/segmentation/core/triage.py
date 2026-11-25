@@ -232,7 +232,7 @@ def classify_segments(segments_path: Path, check_gt: bool = True) -> Tuple[str, 
         return "failed", f"Could not read segments file: {e}"
 
     # Cuts a person made or confirmed are never judged by their spacing or
-    # count (causal_review_io.cuts_taken_as_made; owner, 2026-11-23).
+    # count (causal_review_io.cuts_taken_as_made).
     from mousereach.review.causal_review_io import cuts_taken_as_made
     if cuts_taken_as_made(data):
         return "good", "Cuts made or confirmed by a person"
@@ -404,7 +404,7 @@ def classify_segments_graduated(segments_path: Path) -> Tuple[str, str, dict]:
         return "failed", f"Could not read segments file: {e}", {}
 
     # Cuts a person made or confirmed are never judged by their spacing or
-    # count (causal_review_io.cuts_taken_as_made; owner, 2026-11-23).
+    # count (causal_review_io.cuts_taken_as_made).
     from mousereach.review.causal_review_io import cuts_taken_as_made
     if cuts_taken_as_made(data):
         return "auto_approved", "Cuts made or confirmed by a person", {
@@ -849,10 +849,10 @@ def scan_and_reject_unsupported_trays(
 def cli_reject_unsupported():
     """``mousereach-reject-tray`` -- retired: moves nothing.
 
-    It used to move Easy and Flat videos out of the pipeline into
-    Unanalyzed/Unsupported_Tray_Type, where nothing processed them again, so
-    videos sat parked there unprocessed. Easy and
-    Flat are processed now (last, by the work order; never segmented or held),
+    Moving Easy and Flat videos out of the pipeline into
+    Unanalyzed/Unsupported_Tray_Type, where nothing processes them again,
+    would park them there unprocessed. Easy and
+    Flat are processed (last, by the work order; never segmented or held),
     so this command only says so. The options are still accepted so an old
     script calling it does not break.
     """

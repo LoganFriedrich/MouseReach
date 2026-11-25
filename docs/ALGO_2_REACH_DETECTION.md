@@ -2,9 +2,7 @@
 
 Describes: `src/mousereach/reach/v8/`, `src/mousereach/reach/core/`, `src/mousereach/reach/cli.py`, `src/mousereach/reach/review_widget.py`, `compute_reach_apex` in `src/mousereach/lib/causal_attribution.py`, and the two places that call reach detection (`src/mousereach/reach/core/batch.py`, `src/mousereach/review/staging.py`)
 
-Verified against: b65fcf0 (2026-08-23)
-
-Update 2026-11-18: the file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
+The file:line references below were taken from an older version of the code and many no longer match; find the code by the function, class or constant named beside each reference.
 
 Observations in this document were measured on the live working folder `<nas_root>\Processing` (every reach file stamped `8.1.0` there) unless another source is named.
 
@@ -50,7 +48,7 @@ Two places call `detect_video_reaches`:
 - **`reach/core/batch.py:163`**, inside `process_single`. This is the busy one. It is reached from `process_batch` (`batch.py:244`, which is what `mousereach-detect-reaches` runs), from both watcher pipelines (`watcher/orchestrator.py`, the two places that import `reach.core.batch.process_single`; the Run Pipeline tab's "Run chosen videos...", `pipeline/run_all.py`, reaches it only through the watcher's own handlers, `watcher/run_one.py`), and from `pipeline/reprocess_to_current.py`.
 - **`review/staging.py:304`**, building a review bundle.
 
-Both then call `ReachDetector.save_results` (`batch.py:168`, `staging.py:305`). The napari "Run Pipeline" tab used to be a third caller with its own processor (`pipeline/core.py`); it was removed, and the tab now runs one pass of the watcher, which goes through `process_single` like every other watcher run. `span_to_reaches` itself writes nothing to disk.
+Both then call `ReachDetector.save_results` (`batch.py:168`, `staging.py:305`). The napari "Run Pipeline" tab is not a third caller: it runs one pass of the watcher, which goes through `process_single` like every other watcher run. `span_to_reaches` itself writes nothing to disk.
 
 ---
 
@@ -154,11 +152,11 @@ Limits worth writing down:
 
 **Where the boundaries come from.** `geometry.load_segments` (`:141-146`) reads the key `boundaries`, falling back to `validated_boundaries`, and otherwise returns an empty list. The outcome stage reads the same file with a *different* reader (`outcomes/core/batch.py:90-104`) that also understands a `segmentation.boundaries[].frame` shape. Every segments file in the working folder uses the plain `boundaries` key, so the two readers currently agree — but a file in that third shape would give the outcome stage 21 boundaries and give reach detection zero, silently.
 
-**Segment convention** (`segments_from_boundaries`, `:269-293`): each boundary frame **starts** a segment, so the number of segments equals the number of boundaries, and the last segment runs to the end of the video. `seg_start` is inclusive, `seg_end` is exclusive — segment *n*'s `end_frame` is exactly segment *n+1*'s `start_frame`, and the last segment's `end_frame` equals `total_frames`. This is the only exclusive end in the pipeline's files. Every other window (reaches, pellets, outcome segments, the features file) is first-and-last-frame inclusive, and a reader turns this one into that convention through `causal_review_io.reach_file_segment_span`. A pillar-tray video's segments file has 21 boundaries, so its reach file has 21 segments. (Update 2026-11-18.) Easy and Flat tray videos are not segmented: their segments file holds the single boundary `[0]`, so the reach file has ONE segment, from frame 0 (inclusive) to `total_frames` (exclusive), covering the whole video.
+**Segment convention** (`segments_from_boundaries`, `:269-293`): each boundary frame **starts** a segment, so the number of segments equals the number of boundaries, and the last segment runs to the end of the video. `seg_start` is inclusive, `seg_end` is exclusive — segment *n*'s `end_frame` is exactly segment *n+1*'s `start_frame`, and the last segment's `end_frame` equals `total_frames`. This is the only exclusive end in the pipeline's files. Every other window (reaches, pellets, outcome segments, the features file) is first-and-last-frame inclusive, and a reader turns this one into that convention through `causal_review_io.reach_file_segment_span`. A pillar-tray video's segments file has 21 boundaries, so its reach file has 21 segments. Easy and Flat tray videos are not segmented: their segments file holds the single boundary `[0]`, so the reach file has ONE segment, from frame 0 (inclusive) to `total_frames` (exclusive), covering the whole video.
 
 A reach belongs to the segment containing its **start** frame (`_segment_index_for_span_start`, `:296-312`).
 
-**Frames before the first boundary belong to no segment.** In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment. Since 2026-11-19 a reach that STARTS before the first cut belongs to no pellet (owner decision 2026-11-19): it is written into the reaches file's own top-level list `reaches_before_first_cut` (its id, frames and apex; no reach number, no segment) and into no segment, and no segment is flagged for it. Every reader that maps reaches to pellets -- outcome detection's input, reach assignment, the ground-truth layering, kinematics and the exports -- also takes such a reach out of segment 1 when it reads a file written before 2026-11-19 (`reach/core/before_first_cut.py`). Never dropped. (Before, it was attached to the nearest segment by frame distance -- always segment 1 -- and that segment got `flagged_for_review: true` with `flag_reason: "reach_start_outside_all_segments"`, a flag nothing read. Files written then still carry that flag; the readers named above handle them.)
+**Frames before the first boundary belong to no segment.** In a typical file the first boundary comes some way into the recording, so the lead-in frames before it are outside every segment. A reach that STARTS before the first cut belongs to no pellet: it is written into the reaches file's own top-level list `reaches_before_first_cut` (its id, frames and apex; no reach number, no segment) and into no segment, and no segment is flagged for it. Every reader that maps reaches to pellets -- outcome detection's input, reach assignment, the ground-truth layering, kinematics and the exports -- also takes such a reach out of segment 1 when it reads an older file (`reach/core/before_first_cut.py`). Never dropped. (Older files attached such a reach to the nearest segment by frame distance -- always segment 1 -- and that segment got `flagged_for_review: true` with `flag_reason: "reach_start_outside_all_segments"`, a flag nothing read; the readers named above handle them.)
 
 **Every reach in a flagged segment gets the review note, not just the orphan.** `:165-168` tests the segment's flag, not the individual span. So most reaches that carry the note can be ordinary reaches that happened to share a segment with an orphan.
 
@@ -176,7 +174,7 @@ Reach *boundaries* are immune: the model never sees segments, so moving a bounda
 - **`n_reaches`** on the segment, and the `reaches_per_segment_mean` / `_std` in the summary.
 - **`is_first_reach`, `is_last_reach`, `n_reaches_in_segment`** in the kinematics output — the extractor derives all three from the position of the reach within the reach file's per-segment list (`kinematics/core/feature_extractor.py:307-320`). It does not recompute them.
 - **`ruler_pixels`, and therefore every millimetre value for that segment.** `compute_segment_geometry` (`geometry.py:89-125`) takes the median x and y of `SABL` and of `SABR` over the middle of *that segment's* frame range (preferring frames where both corners are tracked above 0.9 confidence, but only if more than 50 such frames exist), then measures the distance between those two median points. That distance is the 9 mm reference. The kinematics extractor uses the reach file's per-segment `ruler_pixels` for its conversions (`feature_extractor.py:262`, `:277`, `:292`, `:312`). A wrong boundary changes the frames the scale is measured over.
-- **Which pellet the reach is scored against.** Since 2026-11-18 the kinematics extractor pairs each reach segment with the outcome segment of the same `segment_num` (`feature_extractor.pair_segments_by_number`); before that it zipped the two lists by position. A pellet one file has and the other does not (other than the one trailing stretch below), or a number listed twice, now holds the video (`KinematicsProblem`) instead of pairing a pellet's reaches with another pellet's outcome. The outcomes file carries no frames, so two files with the same numbers made on different cuts are not caught here; the review gate's stale-output checks catch that.
+- **Which pellet the reach is scored against.** The kinematics extractor pairs each reach segment with the outcome segment of the same `segment_num` (`feature_extractor.pair_segments_by_number`); before that it zipped the two lists by position. A pellet one file has and the other does not (other than the one trailing stretch below), or a number listed twice, now holds the video (`KinematicsProblem`) instead of pairing a pellet's reaches with another pellet's outcome. The outcomes file carries no frames, so two files with the same numbers made on different cuts are not caught here; the review gate's stale-output checks catch that.
 
 Two consequences of how the two files are built:
 
@@ -234,7 +232,7 @@ Shipped files also carry a top-level `triage_reason`, added by that later triage
 | `n_reaches` | Real count. |
 | `reaches` | Array (below), sorted by start frame. |
 | `flagged_for_review` | `true` only when an orphan reach was attached here. |
-| `flag_reason` | `null`, or `"reach_start_outside_all_segments"` in files written before 2026-11-19 (no longer produced). |
+| `flag_reason` | `null`, or `"reach_start_outside_all_segments"` in older files (no longer produced). |
 
 ### Per reach
 
@@ -250,7 +248,7 @@ Filled with real values:
 | `apex_frame` | Frame of maximum nose-to-`RightHand` distance within the reach. |
 | `source` | `"algorithm"` from the detector; `"human_added"` for a reach a person adds in the napari reach review screen (`review_widget.py:1849`). |
 | `human_corrected` | `false` from the detector; set `true` by the napari reach review screen when a person moves a boundary (`review_widget.py:1700`, `:1728`); written into this file when that screen saves. |
-| `review_note` | `null`, or `"reach_start_outside_all_segments"` for **every** reach in a flagged segment (files written before 2026-11-19). |
+| `review_note` | `null`, or `"reach_start_outside_all_segments"` for **every** reach in a flagged segment (older files). |
 
 **Written and empty on every reach the current detector produces** — verified across every reach in the shipped `8.1.0` files, where each of these is `null` on every reach:
 
@@ -283,9 +281,9 @@ Filled with real values:
 - **`mousereach-advance-reaches` crashes immediately.** `cli.py:173` calls `advance_videos(args.input, require_validation=not args.force)`, but `advance.advance_videos` is defined as `(input_dir, output_dir, verbose)` (`advance.py:45-49`). Verified: `TypeError: advance_videos() got an unexpected keyword argument 'require_validation'`. Note also that `advance.py:86` **moves files** with `shutil.move`, which contradicts the single-folder architecture described in the comment at `core/__init__.py:163-165` and in the command's own help text.
 - **`_run_detection` in the napari reach widget would run the wrong algorithm — but nothing calls it.** `review_widget.py:1059-1080` instantiates the dead v6 `ReachDetector` and would overwrite `{video}_reaches.json` with v6 output. It is not connected to any button, signal or menu; a repository-wide search for `_run_detection` finds only its own definition (plus an unrelated one in the outcomes widget). It is dead code and should be deleted rather than wired up.
 - **`mousereach-review-reaches` is not the napari tool.** `cli.py:180-194` documents it as launching a GUI, but it calls `_review.interactive_review` (`_review.py:157`), a text prompt loop in the terminal. The napari widget is `reach.review_widget:ReachAnnotatorWidget`, reached through the napari plugin manifest (`napari.yaml:40-41`), the dashboard, or the unified review widget.
-- **The review window's edits keep `duration_frames` exact (fixed 2026-11-18).** The detector writes `end - start + 1` (`span_to_reaches.py:162`). Before 2026-11-18 the review window recomputed it as `end - start` when a person moved a start, moved an end or added a reach, so every human-touched reach carried a duration one frame short. It now counts both ends (`move_reach_start`, `move_reach_end` in `review_widget.py`). The kinematics no longer trust a stored value either: since extractor 2.6.0 they count each reach's frames themselves (`causal_review_io.reach_duration_frames`).
+- **The review window's edits keep `duration_frames` exact.** The detector writes `end - start + 1` (`span_to_reaches.py:162`). Recomputing it as `end - start` when a person moves a start, moves an end or adds a reach would leave every human-touched reach one frame short, so the review window counts both ends (`move_reach_start`, `move_reach_end` in `review_widget.py`). The kinematics no longer trust a stored value either: since extractor 2.6.0 they count each reach's frames themselves (`causal_review_io.reach_duration_frames`).
 - **A human-added reach gets a guessed apex.** `review_widget.py:1833` sets `apex_frame` to the midpoint of the new reach, not the nose-to-hand maximum the detector uses. Its `reach_id` is `max_id + 1` (`:1830`), so it does not sit in temporal order with the rest.
-- **Ground-truth export keeps the pre-correction frames (fixed 2026-11-18).** The window records the algorithm's frames as `original_start` / `original_end`, each the first time a person moves that end, whichever end moves first. Before, only the first end moved was recorded. The export (`gt_reach_record`) writes them as `original_start_frame` / `original_end_frame`, the names the ground-truth readers use. Before 2026-11-18 it read keys of those output names, which nothing writes, so both fields were always `null`. A field stays `null` for an end nobody moved.
+- **Ground-truth export keeps the pre-correction frames.** The window records the algorithm's frames as `original_start` / `original_end`, each the first time a person moves that end, whichever end moves first. The export (`gt_reach_record`) writes them as `original_start_frame` / `original_end_frame`, the names the ground-truth readers use. Reading keys of those output names, which nothing writes, would leave both fields `null`. A field stays `null` for an end nobody moved.
 
 ## Stale documentation inside the code
 
@@ -303,7 +301,7 @@ Treat these as wrong, not as history:
 
 **No test exercises the v8 detector, its feature builder, or its post-processing.** There is no test for `extract_features`, `probabilities_to_reaches`, either trim, `apex_split_at_trough`, `build_video_reaches`, or the segment-filing rules.
 
-The repository is not untested in general: there are suites for outcomes, segmentation, tray motion and the version simulator. (Update 2026-11-18: the `tests/` directory now holds the main suite, about 300 test files.) None of them test the detector's own decisions; the few that import reach code replace the detector with a stand-in. (The reach-matching evaluation suite lived under the improvement subsystem, which has moved out of this repo as an accessory.)
+The repository is not untested in general: there are suites for outcomes, segmentation, tray motion and the version simulator. (the `tests/` directory now holds the main suite, about 300 test files.) None of them test the detector's own decisions; the few that import reach code replace the detector with a stand-in. (The reach-matching evaluation suite lived under the improvement subsystem, which has moved out of this repo as an accessory.)
 
 ## How performance is measured, when it is measured
 
@@ -315,19 +313,11 @@ Note that the improvement framework (now a separate accessory tool) carries a *d
 
 ---
 
-## Update 2026-08-23
-
-No detector behaviour changed. Downstream of this document's subject: the
-kinematics extractor (2.1.0) now consumes the reach-assignment file, so the
-per-reach `causal_reach` field it emits is populated by the algorithm rather
-than only by human review -- see KINEMATICS_FIELDS.md. Watcher failure logging
-around extraction and sync is now countable.
-
-## Update 2026-11-19 (filed is final)
+## filed is final
 
 A new version of this algorithm is used only for videos that are not filed yet. A filed video's
 result from this step is final: the version scan never marks a filed video to run this step again,
 and a filed video's kinematics-only re-run never recomputes it (if the filed output is missing, that
 re-run is given up and the filed results stand). To see how a new version would do on filed videos,
 use the evaluation tools (or bring-current without finalize); they write outside Analyzed and never
-replace a filed file. See docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".
+replace a filed file. See docs/PIPELINE_AS_BUILT.md, "filed is final".

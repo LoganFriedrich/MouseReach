@@ -1,7 +1,7 @@
 """A filed video re-run only because a downstream calculation changed re-runs
 none of the four algorithms, no quality triage, no hand-score comparison and
--- since the lab decision of 2026-11-19 ('triage has nothing to do with
-kinematics'; filed is final) -- no review gate either
+-- since 'triage has nothing to do with
+kinematics' and filed is final -- no review gate either
 (orchestrator.filed_rerun_reuses_analysis). An output it would have to
 recompute ends the re-run instead, and the filed results stand.
 
@@ -177,7 +177,7 @@ def rig(tmp_path, monkeypatch):
 def test_a_filed_kinematics_only_rerun_runs_no_algorithm_triage_or_hand_score_check(rig):
     rig.file_it()
     calls = rig.run("kinematics")
-    assert calls == ["kinematics"]                    # no gate either (2026-11-19)
+    assert calls == ["kinematics"]                    # no gate either
     assert rig.orch.db.get_video(VID)["state"] == "processed"
 
 
@@ -418,7 +418,7 @@ def test_a_kept_kinematics_scope_with_a_missing_output_recomputes_nothing(rig, m
         (rig.folder / f"{VID}_reaches.json").write_text("{}", encoding="utf-8")
         raise RuntimeError("reach step crashed after writing")
     monkeypatch.setattr(reachb, "process_single", _reach_writes_then_crashes)
-    # Filed is final (2026-11-19): the missing reaches file is never
+    # Filed is final: the missing reaches file is never
     # recomputed for a filed video; the re-run is given up instead.
     calls = _run_from_row(rig)
     assert calls == ["restored"]

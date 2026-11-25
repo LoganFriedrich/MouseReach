@@ -4,7 +4,6 @@
 
 Comprehensive integration tests for the `mousereach.watcher` package.
 
-- **Test Count:** 39 tests across 6 test classes
 - **Dependencies:** Uses tempdir + in-memory SQLite (no real video files or DLC models required)
 - **Coverage:** Database, validators, router, transfer, state manager, orchestrator
 

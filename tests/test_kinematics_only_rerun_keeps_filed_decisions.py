@@ -1,12 +1,12 @@
 """A kinematics-only re-run of a filed video recomputes measurements, applies
 EVERY person's answer that applies now, and keeps every outcome and causal
 reach no person decides as filed. It is never held for a difference from the
-filed results (owner rule 2026-11-21: "a human's answer is always applied,
+filed results ("a human's answer is always applied,
 including to filed videos; filed is final only protects filed results from
 algorithm re-runs"; kinematics/core/filed_decisions.settle_against_filed).
-Until 2026-11-21 such a run was held whenever a change was not explained by an
-answer the version scan counted as not yet applied -- and the answer was then
-never applied (66 filed videos).
+Holding such a run whenever a change is not explained by an
+answer the version scan counted as not yet applied would leave the answer
+never applied.
 
 WHY: the extractor works the decisions out again from the filed files (reaches,
 outcomes, assignment, every review copy, the ground truth). When the rules
@@ -483,7 +483,7 @@ def test_complete_ground_truth_that_leaves_a_reach_out_is_applied(dirs):
 
 
 def test_a_filed_kinematics_only_rerun_passes_no_owed_kinds(rig):
-    """Since 2026-11-21 every person's answer is applied on a filed video's
+    """Every person's answer is applied on a filed video's
     kinematics-only re-run, so the watcher no longer passes which kinds are
     owed (filed_decisions.settle_against_filed)."""
     seen = rig.run("kinematics")
@@ -493,7 +493,7 @@ def test_a_filed_kinematics_only_rerun_passes_no_owed_kinds(rig):
 
 def test_the_watcher_applies_ground_truth_the_filed_manifest_already_records(
         dirs, tmp_path, monkeypatch):
-    """Owner rule 2026-11-21: ground truth a person made is applied to a filed
+    """Ground truth a person made is applied to a filed
     video on a kinematics-only re-run, even when the version scan would not
     call it owed (here the filed manifest's record is not consulted at all:
     the watcher counts every person's answer as owed)."""

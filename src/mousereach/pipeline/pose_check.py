@@ -3,10 +3,10 @@
 WHY THIS EXISTS
 ---------------
 A pose file that does not load as a pose table, or lacks the points the
-steps need, used to be found only when segmentation failed on it -- and a
+steps need, would be found only when segmentation failed on it -- and a
 segmentation failure is sent to the re-segmentation queue, where a person
 sets cuts by hand. Nothing a person can do there fixes a pose. Its quality
-check ("Could not read DLC file", "Missing SABL or SABR") was sent to a
+check ("Could not read DLC file", "Missing SABL or SABR") would be sent to a
 review queue the same way. Only what a person can fix in the review window
 may hold a video in a queue; a bad pose is a problem of the POSE step, and
 the remedy is a new pose.
@@ -23,7 +23,7 @@ is marked for a new pose (state 'outdated', scope 'full'): the existing
 re-pose round trip asks a GPU node for a pose from the current model. Every
 other case -- a filed video whose unusable pose is the current model's own,
 a video not filed yet, and how many unusable poses before a video is listed
-red -- is an open lab decision; until it is made the video goes on exactly
+red -- is not decided here: the video goes on exactly
 as it did before this check existed (orchestrator._new_pose_requestable).
 
 WHAT "USABLE" MEANS

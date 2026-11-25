@@ -1,6 +1,6 @@
 """A critical finding no person can fix starts the video completely over.
 
-Lab decisions 2026-11-19 (D2-10, D2-7, D2-11 and both corrections): an
+An
 unusable pose, or a step output that is missing or unreadable, restarts the
 video from a NEW CUT of its multi-animal recording, then pose and every later
 step. Everything MouseReach made for the failed attempt is deleted; the

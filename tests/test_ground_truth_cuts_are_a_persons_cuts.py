@@ -1,6 +1,6 @@
 """Cuts a person determined in the ground-truth tool are the video's cuts.
 
-WHY (owner decision D5-6): what a person said is the correct result for every
+WHY: what a person said is the correct result for every
 step after it. A ``<video>_unified_ground_truth.json`` whose cuts are ALL
 determined is a person's segmentation; it used to be read only to evaluate the
 segmenter, so reaches, outcomes, reach assignment and kinematics were computed
