@@ -1944,6 +1944,40 @@ It waits up to 10 minutes for the shared record to be readable (it waited 30 s u
 which a scheduled run could exceed and fail with "database is locked": on a slow share an ordinary
 write can hold the file for minutes). A once-a-day report has no reason to give up sooner.
 
+### Update 2026-11-24: the filing time means "filed now"
+
+A row's filing time (`archived_at`) is set only while the video is filed: state 'archived',
+'outdated' or 'crystallized' (`db.FILED_STATES`). Whatever takes a video out of the filed state --
+a route to a review queue (`mousereach-route-to-queue`, the version scan's mislabel divert, an
+escalation), a re-run, a re-pose, retiring the row to 'unresolvable', a failure, a person's reset or
+forced state -- moves the time into `previously_filed_at` and clears `archived_at` in the same
+write (`WatcherDB._filing_time_defaults` / `_filing_time_sql`, which every state change passes
+through). Filing again sets a new `archived_at`; `previously_filed_at` keeps the earlier one.
+Marking a filed video outdated, un-marking it, and locking or unlocking it for a publication are
+not new filings and keep the time (they used to stamp "now" when the row went back to 'archived').
+
+So a count of "filed videos" may read `archived_at`; the watcher's decisions that need "this video
+has been filed" (a kinematics-only re-run, putting a failed re-run back to 'archived' with its
+filing time, never starting a filed video over from a new cut, never finalizing over filed
+results, whether a new pose may be asked for) read `db.last_filed_at` -- `archived_at`, else
+`previously_filed_at` -- which is what `archived_at` alone meant before. Those decisions are
+unchanged. WHY: `archived_at` was never cleared, so 271 rows on the processing server (2026-11-24)
+read as filed with nothing filed: videos the old route-to-queue had MOVED out of Analyzed into
+triage (and some since escalated), re-posed videos whose re-run was held in triage, and retired
+rows whose files had gone to manual corrections.
+
+Rows written before the rule were corrected once with the tool's own command:
+`python -m mousereach.watcher.filing_time` (lists them) and `... --apply` (moves each one's time
+into `previously_filed_at`, writes a `filing_time` line to its processing log; no file moved, no
+review bundle touched, `updated_at` unchanged; a second run finds nothing). It uses the database's
+write lock like any state change. `watcher_central.db` does not carry the new column (it does not
+carry several local columns); the processing-log line travels with the video's next export.
+
+Answering a video that was moved into triage this way files it normally: the return scan returns
+it when every flagged pellet is answered, its run resumes after the outcomes (its outputs carry
+the declared or a compatible version, so nothing is re-cut), the checks run, and it is filed
+again with a new filing time. Tests: `tests/test_filing_time_means_filed_now.py` (one per path).
+
 ### Update 2026-11-24: an answer naming a reach outside its pellet sends the video to re-segmentation
 
 A person's answer whose causal reach lies wholly outside the frames of the pellet it was given
@@ -3929,7 +3963,7 @@ the ordinary pipeline pick), it reads the row:
 
 | The row says | The run |
 |---|---|
-| `reprocess_scope` = `kinematics`, the video has been filed before (`archived_at` set), and this watcher is not holding it for its hand scores | kinematics only: no algorithm, no quality triage, no hand-score check; the review gate still runs |
+| `reprocess_scope` = `kinematics`, the video has been filed before (`db.last_filed_at` set), and this watcher is not holding it for its hand scores | kinematics only: no algorithm, no quality triage, no hand-score check; the review gate still runs |
 | anything else (no scope, `segmentation`, `reach`, `outcome`, never filed, held for hand scores) | every stage and every check, as before |
 
 Only `kinematics` is carried over: a run from `segmentation`, `reach` or `outcome` recomputes an
@@ -4263,13 +4297,13 @@ A person can press **Re-run** for the video at any time; that marks it at once, 
 fingerprint says.
 
 **How the watcher decides "filed".** Two things must both be true: the row has been filed
-(`archived_at` set), AND the video's `<video>_features.json` and `<video>_processing_manifest.json`
+(`db.last_filed_at`: `archived_at`, or `previously_filed_at` while this re-run runs), AND the video's `<video>_features.json` and `<video>_processing_manifest.json`
 are in its filed folder (`Analyzed/<project>/<cohort>/`) right now. It does not matter which run
 failed: the version scan's re-run, a person's Re-run, a video a review queue returned after a
 person answered its questions, or a run the gate sent back because its outputs were out of step
 with the cuts (which wipes the re-run scope). WHY not the re-run scope or `archived_at` alone: a
-review return and a stale-outputs gate both wipe the scope, and `archived_at` is never wiped, so it
-means "was filed once", not "its filed results are there now".
+review return and a stale-outputs gate both wipe the scope, and "filed before" means "was filed
+once", not "its filed results are there now".
 
 **A video that does not pass that test is marked 'failed'**, exactly as before, listed by
 `mousereach-watch-status` for a person; its working files stay where they are, except that after
@@ -4771,7 +4805,7 @@ queue never deletes or overwrites a person's file".
   pipeline). Unusable (does not load as a pose table, no frames, or lacks SABL/SABR, plus
   BOXL/BOXR on a segmented tray) -> `_pose_is_unusable(video_id, why, pose_path)`, which logs a
   `pose_check failed` step and then acts only in the one settled case,
-  `_new_pose_requestable`: a filed video (row `archived_at` set and `repose.archived_video` found)
+  `_new_pose_requestable`: a filed video (row `db.last_filed_at` set and `repose.archived_video` found)
   whose unusable pose is from another model than the declared one (`repose.scorer_of(pose_path) !=
   repose.declared_scorer()`) is set `outdated` with `reprocess_scope='full'` and `mark_reason='pose
   unusable: ...'` (the existing re-pose round trip then publishes a request:

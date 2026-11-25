@@ -438,7 +438,11 @@ class WatcherAdapter:
         state = row.get("state", "unknown")
         timestamps = {}
         for col in ("discovered_at", "validated_at", "crop_completed_at",
-                    "dlc_completed_at", "processing_completed_at", "archived_at", "updated_at"):
+                    "dlc_completed_at", "processing_completed_at", "archived_at",
+                    # archived_at = filed NOW; previously_filed_at = the filing
+                    # time of a video that has left the filed state since
+                    # (watcher/filing_time.py).
+                    "previously_filed_at", "updated_at"):
             v = row.get(col)
             if v:
                 timestamps[col] = str(v)

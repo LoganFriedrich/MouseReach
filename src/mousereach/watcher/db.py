@@ -258,6 +258,36 @@ RESUME_POINT_STATES = frozenset(
     {"processing", "failed", "processed", "archiving"})
 HELD_AT_STEP_STATES = RESUME_POINT_STATES | {"triage", "deep_review"}
 
+# The states in which a video is FILED NOW: its results are in Analyzed and
+# are what the lab's database pulls. 'outdated' is filed (a re-run is owed,
+# the filed results stand until it replaces them); 'crystallized' is filed
+# and locked. The filing time, archived_at, is kept only while the row is in
+# one of these states: every change to any other state moves it into
+# previously_filed_at and clears it, in the same write
+# (WatcherDB._filing_time_defaults / _filing_time_sql). Filing sets it again.
+# WHY: archived_at used to be kept for ever once set, so rows routed back to a
+# review queue, re-posed, retired or failed went on reading as filed in every
+# count and report that used it (271 such rows on the processing server on
+# 2026-11-24). watcher/filing_time.py has the whole rule and the command that
+# applied it to rows written before it.
+FILED_STATES = frozenset({"archived", "outdated", "crystallized"})
+
+
+def last_filed_at(row) -> Optional[str]:
+    """When the video was last filed, whether or not it is filed now:
+    archived_at (filed now), else previously_filed_at (filed once, left the
+    filed state since). None for a video never filed.
+
+    For the watcher's decisions that depend on a video having BEEN filed (a
+    kinematics-only re-run, putting a failed re-run back to 'archived',
+    never starting a filed video over from a new cut, refusing to finalize
+    over filed results). These used to read archived_at, which was never
+    cleared and so meant exactly this; reading this keeps them unchanged.
+    A count of videos filed NOW reads archived_at (or the state), never this."""
+    if not row:
+        return None
+    return row.get('archived_at') or row.get('previously_filed_at') or None
+
 
 class WatcherDB:
     """
@@ -516,6 +546,9 @@ class WatcherDB:
             # restart, and the run would fall back to segmentation.
             ('videos', 'held_at_step', 'TEXT'),
             ('videos', 'resume_stage', 'TEXT'),
+            # The filing time a row had when it last LEFT the filed state
+            # (FILED_STATES says why archived_at is cleared then).
+            ('videos', 'previously_filed_at', 'TEXT'),
         ]
 
         with self._lock:
@@ -553,7 +586,7 @@ class WatcherDB:
     # force_state write BY THEMSELVES (to end a re-run scope or a resume point
     # with its round), with their types. See _ensure_video_columns.
     _ROUND_COLUMNS = (('reprocess_scope', 'TEXT'), ('resume_stage', 'TEXT'),
-                      ('held_at_step', 'TEXT'))
+                      ('held_at_step', 'TEXT'), ('previously_filed_at', 'TEXT'))
 
     @staticmethod
     def _read_video_columns(conn) -> set:
@@ -630,6 +663,82 @@ class WatcherDB:
         ended = {}
         self._end_of_round_defaults(conn, current_state, new_state, ended)
         return "".join(f"{column} = NULL, " for column in ended)
+
+    def _filing_time_defaults(self, conn, video_id: str, current_state: str,
+                              new_state: str, kwargs: dict) -> bool:
+        """Add to ``kwargs`` the writes that keep the filing time meaning
+        "filed now" (FILED_STATES says why); returns True when the timestamp
+        map must NOT stamp a new archived_at.
+
+          * leaving the filed state (new state outside FILED_STATES):
+            previously_filed_at <- the row's archived_at, archived_at <- NULL;
+          * moving between filed states ('archived' -> 'outdated' -> back,
+            locking/unlocking for a publication, a same-state force): not a
+            new filing, so the time the video was filed is kept.
+        A value the caller passed is never replaced -- the failed-re-run
+        restore passes the filing time it puts back. Without the
+        previously_filed_at column (it could not be added: a locked
+        database) the time is not cleared, so it is never lost."""
+        if 'archived_at' in kwargs:
+            return True
+        filed_from = current_state in FILED_STATES
+        if new_state in FILED_STATES:
+            return filed_from and new_state == 'archived'
+        known = self._ensure_video_columns(conn)
+        if 'previously_filed_at' not in known:
+            return False
+        row = conn.execute("SELECT archived_at FROM videos WHERE video_id = ?",
+                           (video_id,)).fetchone()
+        filed_at = row[0] if row else None
+        if filed_at:
+            kwargs.setdefault('previously_filed_at', filed_at)
+            kwargs['archived_at'] = None
+        return False
+
+    def _filing_time_sql(self, conn, new_state: str) -> str:
+        """The same rule as _filing_time_defaults, as "col = ..., " text for
+        the writers that set a state with their own UPDATE (mark_failed,
+        mark_unresolvable, reset_failed). In an UPDATE every right-hand side
+        reads the row as it was, so the time moves before it is cleared."""
+        if new_state in FILED_STATES:
+            return ""
+        if 'previously_filed_at' not in self._ensure_video_columns(conn):
+            return ""
+        return ("previously_filed_at = COALESCE(archived_at, previously_filed_at), "
+                "archived_at = NULL, ")
+
+    def move_stale_filing_times(self, apply: bool = False) -> List[Dict[str, Any]]:
+        """The rows that carry a filing time (archived_at) but are not in a
+        filed state -- rows written before the filing time followed the
+        state (watcher/filing_time.py). With ``apply``, each one's time is
+        moved into previously_filed_at and archived_at cleared, under the
+        write lock in one short transaction, and one 'filing_time' line is
+        written to its processing log. updated_at is left alone: the row's
+        state does not change. Returns the rows as found."""
+        states = tuple(sorted(FILED_STATES))
+        marks = ",".join("?" * len(states))
+        with self._state_write() as conn:
+            known = self._ensure_video_columns(conn)
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT video_id, state, archived_at FROM videos "
+                f"WHERE archived_at IS NOT NULL AND archived_at != '' "
+                f"AND state NOT IN ({marks}) ORDER BY video_id", states)]
+            if apply and rows:
+                if 'previously_filed_at' not in known:
+                    raise RuntimeError("the videos table has no previously_filed_at "
+                                       "column and it could not be added (database locked?)")
+                for r in rows:
+                    conn.execute(
+                        f"UPDATE videos SET previously_filed_at = archived_at, "
+                        f"archived_at = NULL WHERE video_id = ? AND archived_at IS NOT NULL "
+                        f"AND state NOT IN ({marks})", (r['video_id'], *states))
+        if apply:
+            for r in rows:
+                self.log_step(
+                    r['video_id'], 'filing_time', 'completed',
+                    message=(f"not filed now (state '{r['state']}'): filing time "
+                             f"{r['archived_at']} moved to previously_filed_at"))
+        return rows
 
     def _clear_scopes_outside_reruns(self) -> int:
         """Clear reprocess_scope on rows whose state is outside
@@ -980,6 +1089,11 @@ class WatcherDB:
                 # A re-run scope ends with its re-run and a resume point with
                 # its round (_end_of_round_defaults).
                 self._end_of_round_defaults(conn, current_state, new_state, kwargs)
+                # The filing time means "filed now" (FILED_STATES): leaving the
+                # filed state moves it to previously_filed_at; a move between
+                # filed states keeps it instead of stamping a new one.
+                keep_filed_time = self._filing_time_defaults(
+                    conn, video_id, current_state, new_state, kwargs)
 
                 # Build update
                 fields = ['state = ?', 'updated_at = ?']
@@ -995,7 +1109,7 @@ class WatcherDB:
                     'archived': 'archived_at',
                 }
 
-                if new_state in state_timestamp_map:
+                if new_state in state_timestamp_map and not keep_filed_time:
                     timestamp_field = state_timestamp_map[new_state]
                     fields.append(f'{timestamp_field} = ?')
                     values.append(self._now())
@@ -1080,6 +1194,11 @@ class WatcherDB:
                 # A re-run scope ends with its re-run and a resume point with
                 # its round (_end_of_round_defaults).
                 self._end_of_round_defaults(conn, current_state, new_state, kwargs)
+                # The filing time means "filed now" (FILED_STATES): leaving the
+                # filed state moves it to previously_filed_at; a move between
+                # filed states keeps it instead of stamping a new one.
+                keep_filed_time = self._filing_time_defaults(
+                    conn, video_id, current_state, new_state, kwargs)
 
                 # Build update (same as update_state but no validation)
                 fields = ['state = ?', 'updated_at = ?']
@@ -1095,7 +1214,7 @@ class WatcherDB:
                     'archived': 'archived_at',
                 }
 
-                if new_state in state_timestamp_map:
+                if new_state in state_timestamp_map and not keep_filed_time:
                     timestamp_field = state_timestamp_map[new_state]
                     fields.append(f'{timestamp_field} = ?')
                     values.append(self._now())
@@ -1732,6 +1851,8 @@ class WatcherDB:
                 # into 'failed', where the retry would read it back
                 # (_end_of_round_defaults); a run that fails keeps its own.
                 clears = self._end_of_round_sql(conn, row['state'], 'failed')
+                # Not filed any more: the filing time moves aside (FILED_STATES).
+                clears += self._filing_time_sql(conn, 'failed')
                 conn.execute(f"""
                     UPDATE videos
                     SET state = 'failed',
@@ -1792,6 +1913,8 @@ class WatcherDB:
                 # Outside every re-run and review round: scope and resume
                 # point end here (_end_of_round_defaults).
                 clears = self._end_of_round_sql(conn, row['state'], 'unresolvable')
+                # Not filed any more: the filing time moves aside (FILED_STATES).
+                clears += self._filing_time_sql(conn, 'unresolvable')
                 conn.execute(f"""
                     UPDATE videos
                     SET state = 'unresolvable',
@@ -1991,6 +2114,7 @@ class WatcherDB:
                 # with its round (RESUME_POINT_STATES): a reset to an earlier
                 # state is a fresh run with every step and check.
                 clears = self._end_of_round_sql(conn, 'failed', to_state)
+                clears += self._filing_time_sql(conn, to_state)
                 sets = "".join(f"{col} = ?, " for col in fields)
                 cur = conn.execute(f"""
                     UPDATE videos
