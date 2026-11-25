@@ -413,7 +413,7 @@ always wins (docs/REVIEW_TOOLS.md, "Check your answer"). The watcher keeps every
 pellet's hand score inside the video's own outcomes file when it compares the
 video (key `hand_scores` in `<video>_pellet_outcomes.json`), and the review
 window reads it from there -- so a reviewer needs no setting at all, and sees the
-very score the pipeline compared with. A video analysed before 2026-10-28 has no
+very score the pipeline compared with. A video analysed by a version without this feature has no
 kept scores until it is analysed again; for it the box never appears.
 
 **Where you see it.** The **Pipeline Dashboard** (first tab of `mousereach`)
@@ -612,7 +612,7 @@ holds the video or asks you anything. You can still reopen one filed video on
 purpose (`mousereach-route-to-queue`, the dashboard's Re-run); its filed results
 stay in Analyzed until the new run is filed and replaces them. To try a new
 algorithm version on filed videos, use the evaluation tools -- they never write
-into Analyzed. (docs/PIPELINE_AS_BUILT.md, "Update 2026-11-19 (filed is final)".)
+into Analyzed. (docs/PIPELINE_AS_BUILT.md, "filed is final".)
 
 `filing` says which folder under `Analyzed` each project's finished videos go
 in, and how its cohort folders are named -- for example every project of one
@@ -716,4 +716,3 @@ mousereach-export --help
 ---
 
 *MouseReach v2.16.0-dev*
-*Developed by Logan Friedrich*

@@ -1,6 +1,5 @@
 # MouseReach Installation & Setup Guide
 
-**Last Updated:** 2026-02-13
 **Tested On:** Windows 10/11 with NVIDIA GPU
 
 ---
@@ -15,8 +14,8 @@ conda activate mousereach
 # Install
 cd /path/to/MouseReach
 pip install -e .
-# sqlalchemy (the watcher's coordination database) is part of the plain install
-# since 2026-11-19. The sync extra adds only the file watcher used by mousereach-sync:
+# sqlalchemy (the watcher's coordination database) is part of the plain install.
+# The sync extra adds only the file watcher used by mousereach-sync:
 #   pip install -e ".[sync]"
 
 # Configure
@@ -769,7 +768,7 @@ cd \
 **3b.** Now download MouseReach from GitHub. Type this exactly and press **Enter**:
 
 ```
-git clone https://github.com/LoganFriedrich/MouseReach.git
+git clone <repository URL>
 ```
 
 You'll see progress messages as it downloads. When it's done, you'll have a
@@ -1153,12 +1152,3 @@ Useful commands (no environment activation needed):
 
 (`<env folder>` is the folder of the mousereach conda environment.)
 
----
-
-*Current version: MouseReach 2.16. The line below and its change list are the v2.3.0 history.*
-
-*MouseReach v2.3.0 - Last updated: 2025-01-21*
-
-**Changes in this version:**
-- Added "Multi-Machine Considerations" section explaining the shared pipeline folder
-- Added Appendix: Deploy the Watcher on the NAS PC

@@ -229,15 +229,12 @@ The root `USER_GUIDE.md` should:
 - Use tables for reference info
 - Use code blocks for examples
 
-### Version Info
+### No dates, no history
 
-Every major doc file should end with:
-
-```markdown
----
-
-*MouseReach vX.Y.Z | Updated YYYY-MM-DD*
-```
+Documents describe how the tool works now. Do not stamp them with a date or
+version, and do not narrate what changed ("used to", "since <date>", "fixed in");
+the repository history records changes. Name no person as the authority for a
+rule: state the rule and its reason.
 
 ### Keep In Sync
 
@@ -274,6 +271,3 @@ Before any release:
 | `src/mousereach/launcher.py` | Launcher header | Launcher changes |
 | `src/mousereach/state.py` | State manager header | State changes |
 
----
-
-*MouseReach Documentation Guide | Updated 2026-11-18*
