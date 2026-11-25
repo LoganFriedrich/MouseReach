@@ -304,7 +304,7 @@ def normalise_session(text: str) -> Optional[str]:
     session name" by the caller (``read_sessions_file`` puts it in ``bad``)
     rather than raising, because one unrecognised line must not stop a whole
     list from being read: ``encode_animal`` raises on an unknown id, and
-    passing a pipeline id to it used to abort every reader of the list."""
+    passing a pipeline id to it would abort every reader of the list."""
     m = _SINGLE.match((text or "").strip())
     if not m:
         return None

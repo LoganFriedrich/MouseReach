@@ -6,12 +6,11 @@ Every watcher works on files that live on one shared drive. When that drive goes
 away -- the file server restarts, the network drops, a PC's SMB client wedges --
 every call that touches it either fails with a network error or, worse, HANGS: a
 listing, a stat, an open can sit in Windows for many minutes before it gives up,
-and a cycle makes hundreds of them. In one such outage every graphics-card PC's
-watcher sat inside shared-drive calls for hours, never reaching the line that
-reads its stop flag; one PC read the version declaration as "not there" and
-stopped posing as if it were misconfigured; and the processing machine's watcher,
-restarted while the drive was away, crashed at startup and stayed down after the
-drive came back.
+and a cycle makes hundreds of them. In such an outage a watcher can sit inside shared-drive calls for hours, never
+reaching the line that reads its stop flag; a PC can read the version declaration
+as "not there" and stop posing as if it were misconfigured; and a watcher
+restarted while the drive is away can crash at startup and stay down after the
+drive comes back.
 
 An outage is a PAUSE, not an error. So:
 
@@ -237,7 +236,7 @@ def read_text_bounded(path, timeout: Optional[float] = None, what: Optional[str]
     """A small text file on the shared drive: its text, or None when the file is
     not there on a drive that answers. Raises SharedDriveUnavailable when the
     drive is away or does not answer in time -- so "away" can never be mistaken
-    for "not there" (which is how a dead drive used to stop a node's posing)."""
+    for "not there" (which would stop a node's posing on a dead drive)."""
     path = Path(path)
     label = what or ("read %s" % path.name)
     timeout = READ_TIMEOUT_S if timeout is None else timeout
@@ -515,8 +514,8 @@ def wait_for_shared_drive(nas_root, stop_requested: Callable[[], bool],
     (only when ``give_up_after`` ran out; the watcher passes none).
 
     WHY wait instead of failing: a watcher started during an outage -- by a
-    person, at login, by its scheduled task -- used to crash at the first
-    look at the drive, and nothing started it again once the drive was back.
+    person, at login, by its scheduled task -- would crash at the first
+    look at the drive, and nothing would start it again once the drive was back.
     Waits grow from ``first_wait`` to ``longest_wait`` seconds; the stop flag
     is read before every wait.
     """

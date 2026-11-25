@@ -34,8 +34,8 @@ def watcher_daemon_running() -> bool:
     Processing and the filed folder. "Cannot tell" is treated as running
     because the cost of waiting is nothing and the cost of racing is a split
     video. health.watcher_presence decides; a program of another Windows
-    login whose command line cannot be read is "cannot tell" (it used to be
-    skipped, so a watcher started by another login looked like none)."""
+    login whose command line cannot be read is "cannot tell" (skipping it
+    would make a watcher started by another login look like none)."""
     return _watcher_running_why()[0]
 
 

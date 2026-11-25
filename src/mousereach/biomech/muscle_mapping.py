@@ -7,7 +7,7 @@ between biomechanical simulation (force generation) and neuroanatomy
 (spinal innervation).
 
 Also defines qualitative muscle -> kinematic feature mappings for the
-simplified prediction pathway (Phase 3, no OpenSim needed).
+simplified prediction pathway (no OpenSim needed).
 
 Confidence tiers:
   HIGH   - Direct match to published mouse tracing data
@@ -135,7 +135,7 @@ def intact_joint_forces() -> Dict[str, Dict[str, float]]:
 
 
 # ---------------------------------------------------------------
-# Qualitative kinematic feature mappings (Phase 3 predictions)
+# Qualitative kinematic feature mappings (simplified predictions)
 # Maps MouseReach kinematic features to the muscles that drive them
 # ---------------------------------------------------------------
 
@@ -197,7 +197,7 @@ def predict_feature_shift(
     """
     Predict direction and magnitude of a kinematic feature shift under lesion.
 
-    This is the simplified Phase 3 prediction -- qualitative direction and
+    This is the simplified prediction -- qualitative direction and
     rough magnitude based on which muscles are affected, without running
     OpenSim.
 

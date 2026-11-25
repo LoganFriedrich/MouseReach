@@ -9,7 +9,7 @@ from mousereach.config import require_processing_root
 def main():
     """Run direct evaluation of ground truth files."""
     # --help answers before any work: generating the CLI reference runs every
-    # command with --help, and this one used to run instead (2026-10-22).
+    # command with --help, and a command that ignores --help runs instead.
     import argparse
     argparse.ArgumentParser(description=__doc__,
                             formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()

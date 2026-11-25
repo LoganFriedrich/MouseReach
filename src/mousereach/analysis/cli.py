@@ -204,10 +204,10 @@ Examples:
             df.to_excel(writer, sheet_name='Reaches', index=False)
 
             # Session- and mouse-level sheets, counted from PELLETS by the one
-            # results builder (export/results.py). WHY: these sheets used to be
-            # grouped from the reach rows, so "retrieval_rate" was the share
-            # of reaches whose pellet was retrieved (not retrieved / pellets
-            # presented) and a pellet nobody reached for dropped out of every
+            # results builder (export/results.py). WHY: counting from the
+            # reach rows would make "retrieval_rate" the share of reaches
+            # whose pellet was retrieved (not retrieved / pellets presented)
+            # and a pellet nobody reached for would drop out of every
             # count. Read from the same features files as the Reaches sheet.
             from mousereach.export.resolved import load_resolved_videos
             from mousereach.export.results import build_rows

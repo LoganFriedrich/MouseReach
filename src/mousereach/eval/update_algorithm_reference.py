@@ -232,7 +232,7 @@ def update_file(doc_path: Path, results) -> bool:
 def main():
     """CLI entry point: update ALGORITHM_REFERENCE.md with current eval data."""
     # --help answers before any work: generating the CLI reference runs every
-    # command with --help, and this one used to run instead (2026-10-22).
+    # command with --help, and a command that ignores --help runs instead.
     import argparse
     argparse.ArgumentParser(description=__doc__,
                             formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()

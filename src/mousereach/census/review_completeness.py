@@ -22,8 +22,8 @@ review was saved, and a recheck ("are you sure?") reopens a pellet in one copy o
 Each segment is judged on the NEWEST statement a person made about it in either
 copy (``causal_review_io.merge_review_copies``, the rule the review window uses):
 an answer in one copy is not undone by a placeholder in the other, and a later
-recheck reopens it. (This used to take the copy with MORE answers, so a reopened
-pellet still counted as answered here while the release check held it.)
+recheck reopens it. (Taking the copy with MORE answers instead would count a
+reopened pellet as answered here while the release check held it.)
 
 No lab paths appear in this module. All roots are parameters.
 """
