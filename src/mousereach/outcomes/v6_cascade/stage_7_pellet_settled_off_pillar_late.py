@@ -104,7 +104,7 @@ MIN_PRE_BOUT_ON_PILLAR_FRAMES = 1   # 1 of 2 immediate-pre frames
                                      # showing on-pillar
 MIN_POST_BOUT_OFF_PILLAR_FRAMES = 5
 
-# Immediate-after post-off check (2026-05-03): the chosen reach
+# Immediate-after post-off check: the chosen reach
 # itself must put the pellet off-pillar IMMEDIATELY after the reach
 # ends, not somewhere in the next 30 frames. The 30-frame post
 # window can be polluted by displacement from a SUBSEQUENT reach
@@ -115,7 +115,7 @@ POST_BOUT_IMMEDIATE_WINDOW = 10
 MIN_POST_BOUT_IMMEDIATE_OFF_FRAMES = 3
 
 # Causal-reach selection by pellet displacement across the reach.
-# Empirical 2026-05-02: across the corpus's GT-causal reaches, pellet
+# Empirical: across the corpus's GT-causal reaches, pellet
 # position median (30f pre vs 30f post) shifts by >= 1.7 radii on
 # every GT reach. Non-causal reaches almost always show < 0.3 radii
 # (p95 < 3 radii). Threshold 1.5 separates with a clean margin.
@@ -416,13 +416,13 @@ class Stage7PelletSettledOffPillarLate(Stage):
             & (~paw_past_y)
         )
 
-        # CAUSAL REACH (empirical 2026-05-02): the pellet actually MOVED
+        # CAUSAL REACH (empirical): the pellet actually MOVED
         # across the causal reach. Compute median pellet position in
         # 30-frame pre and 30-frame post windows for each reach; the
         # reach where pellet position changes by >= REACH_DISPLACEMENT_
         # THRESHOLD_RADII is the causal reach. Walk forward; first
         # match wins.
-        # Empirical (corpus 2026-05-02): GT reaches all have
+        # Empirical (corpus): GT reaches all have
         # displacement >= 1.7 radii; non-GT reaches p95 = ~3 but p50
         # is ~0.1 radii. Threshold 1.5 cleanly separates with margin.
         reaches_local: List[Tuple[int, int]] = []

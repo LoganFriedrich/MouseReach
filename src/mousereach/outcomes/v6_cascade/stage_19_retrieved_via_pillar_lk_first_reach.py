@@ -54,7 +54,7 @@ PAW_LK_THR = 0.5
 PELLET_LK_HIGH = 0.7
 ON_PILLAR_RADII = 1.0
 
-# 2026-05-03: this stage's "first GT reach" causal pick is wrong for
+# This stage's "first GT reach" causal pick is wrong for
 # retrieved cases where mouse continues to reach over empty pillar
 # after retrieval (GT picks the actual retrieval reach which may be
 # late). Disabled. Keeping for documentation.

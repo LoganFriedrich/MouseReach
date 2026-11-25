@@ -245,10 +245,10 @@ def write_clear_marker_once(path: Path, doc: dict) -> bool:
     clear-on-complete save, and the segmentation fixer's release after a
     save all use it.
 
-    WHY create-only and never make the folder: the marker used to be written
-    through a writer that creates missing folders, so a bundle that had left
+    WHY create-only and never make the folder: a writer that creates missing
+    folders would let a bundle that had left
     the queue (the return scan, or another window's release, moved it while a
-    window had it open) came back as a one-file folder -- a "cleared" video
+    window had it open) come back as a one-file folder -- a "cleared" video
     with no files, held for ever. And a marker already there (another window
     or machine released it first) is that person's record, not something to
     overwrite."""
@@ -367,8 +367,7 @@ def collect_provenance(video_dir: Path, video_stem: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# What a triage answer says about EVERY reach of its segment (owner rules
-# 2026-11-19)
+# What a triage answer says about EVERY reach of its segment 
 # ---------------------------------------------------------------------------
 # "Naming the causal reach of a segment ALSO answers every other reach in that
 # segment -- they all missed, whether or not a person watched them. 1 answered
@@ -486,8 +485,7 @@ def build_segment_record(
     With the span stored, a review is matched to the pellet whose frames it
     was actually about, never to whatever pellet now carries its number. A
     re-cut (a person's or the segmenter's) voids an answer given before it
-    unless its pellet's frames are exactly unchanged (owner ruling R2,
-    answer_survives_recut): the answer is then kept as a record only and its
+    unless its pellet's frames are exactly unchanged (answer_survives_recut): the answer is then kept as a record only and its
     pellet takes the re-run algorithms' call (asked only if they flag it),
     never re-attached to the new cuts by frame span.
 
@@ -542,16 +540,16 @@ def build_segment_record(
 # ---------------------------------------------------------------------------
 # Who answered each segment
 # ---------------------------------------------------------------------------
-# WHY per segment: a review file used to carry ONE "reviewer" and
-# "reviewed_at" for the whole file. One person saving a single answer in a
-# video another person had answered earlier then made the file credit the
+# WHY per segment: ONE "reviewer" and
+# "reviewed_at" for the whole file would let one person saving a single answer in a
+# video another person had answered earlier credit the
 # second person with every answer in it, the first person's included. Each
-# segment's record now carries its own "reviewer" and "reviewed_at", set only
+# segment's record carries its own "reviewer" and "reviewed_at", set only
 # when that segment's answer is new or changed in a save; an unchanged answer
 # keeps the values it had. The file-level fields stay as they were and mean
 # "who saved the file last, and when". Readers that need "who answered
 # segment N" use segment_reviewer(), which falls back to the file-level
-# fields for files written before this (2026-10-28).
+# fields for files written before this.
 
 # The parts of a record that ARE the person's answer. Not "algo" (it changes
 # when the algorithm is re-run), not human.agreed (it is derived from the
@@ -746,8 +744,8 @@ def save_causal_review(
     does not answer, the newest answer (or recheck) an earlier copy holds for
     its frames is kept in its place; an earlier answer matching no current
     segment is kept in ``unmatched_answers`` (carry_earlier_answers). WHY: the
-    durable copy used to be overwritten with whatever the window held, so an
-    answer the window had not loaded was replaced by a "not reviewed"
+    durable copy must not be overwritten with whatever the window held, or an
+    answer the window had not loaded would be replaced by a "not reviewed"
     placeholder and lost from every copy.
 
     Parameters
@@ -917,10 +915,10 @@ _TOUCHED_OUTCOMES = ("retrieved", "displaced_sa", "displaced_outside")
 # A reach a reviewer TYPES (the review window's "Undetected reach (enter frames
 # manually)" row) is the same as a detected reach only when that detected reach
 # covers at least this share of the typed frames. WHY one rule, in one place:
-# the window used to swap a typed reach for any detected reach touching it by a
-# single frame, while the results step matched by half the frames; a typed
-# reach between the two rules was recorded as one reach and resolved to another
-# (the causal reach was lost, or pointed to another reach). Both now call typed_reach_match.
+# a window that swaps a typed reach for any detected reach touching it by a
+# single frame, while the results step matches by half the frames, would record a typed
+# reach between the two rules as one reach and resolve it to another
+# (the causal reach lost, or pointed to another reach). Both call typed_reach_match.
 TYPED_REACH_COVER = 0.5
 
 # The longest a TYPED reach may be. A typed reach the detector missed is added
@@ -1038,8 +1036,8 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
     causal reach, and an ignore window may not cover that whole reach. A
     stored record of either shape is still matched; the results then use the
     reach assignment's causal reach for it (truth_resolver). WHY the review tool asks this at
-    the moment of answering: until 2026-10-23 it recorded such an answer, the
-    pipeline dropped it without a word, and the video came back asking the same
+    the moment of answering: recording such an answer would have the
+    pipeline drop it without a word, and the video come back asking the same
     question -- a reviewer could answer one segment again and again. Part of
     triage is checking the event happened to the pellet shown; when it did
     not, the answer is not saved and the video goes to deep review (the
@@ -1092,9 +1090,9 @@ def answer_problem(rec, human_segmentation: bool = False) -> Optional[str]:
                 "long. Check the two frame numbers and type them again."
                 % (typed[1] - typed[0] + 1, typed[0], typed[1]))
     if cr is not None and human.get("outcome") in _TOUCHED_OUTCOMES:
-        # A causal answer includes the reach's first and last frame (owner rule
-        # 2026-11-19; comment at REACH_CALLS_KEY): the reach's frames are what
-        # its kinematics are computed over. Since 2026-11-20 naming the reach
+        # A causal answer includes the reach's first and last frame (comment at
+        # REACH_CALLS_KEY): the reach's frames are what
+        # its kinematics are computed over. Naming the reach
         # IS the confirmation of its frames (no separate tick), so the review
         # window always records them; this message is reached only by a record
         # written some other way without them.
@@ -1181,10 +1179,10 @@ def pellet_span(boundaries, i) -> Tuple[int, int]:
     WHY one definition: the reach detector writes its own segment list into
     the reaches file with a different end -- a segment there ends AT the next
     cut, and it adds a last segment from the last cut to the end of the video
-    (reach_detector.py). The results step used to match answers against that
-    list while the window and the gate used this one, so the two disagreed by
+    (reach_detector.py). The results step must match answers against this
+    list like the window and the gate, or the two disagree by
     one frame on every pellet; under the re-cut rule (answer_survives_recut)
-    the gate passed a video as answered while the results step dropped every
+    the gate would pass a video as answered while the results step dropped every
     one of its answers and filed the algorithm's calls, with only a log line.
     The reaches file's list is still where each pellet's detected reaches are
     found (by number); never where a pellet's frames come from."""
@@ -1286,8 +1284,8 @@ def algo_files_on_other_cuts(seg_doc, reaches_doc) -> Optional[str]:
     took each pellet's algorithm outcome, causal reach and reach list from the
     old files BY SEGMENT NUMBER -- another pellet's. Answers were then given
     (and "agree with the algorithm" confirmed) against another pellet's
-    results: on one video re-cut 2026-09-01 and reviewed 2026-09-04, five
-    answers named reaches of the pellets two cuts earlier.
+    results: on a re-cut video, answers could name reaches of the pellets
+    two cuts earlier.
 
     Decided by frames when the reaches file records each segment's frames (the
     detector's nested format: its segments' starts are the cuts it ran on,
@@ -1386,7 +1384,7 @@ def cuts_taken_as_made(seg_doc) -> bool:
     of this video's segments: a person made the cuts (segmentation_is_human)
     or a person confirmed them (cuts_confirmed).
 
-    WHY (owner, 2026-11-23): a person's cuts on an irregular recording were
+    WHY: a person's cuts on an irregular recording were
     re-asked about segment length again and again. A person's word on the
     cuts is final; the checks that judge cuts by length or count are there to
     catch the segmenter's mistakes, not a person's decisions. Used wherever a
@@ -1446,7 +1444,7 @@ def cuts_set_at(seg_doc) -> Optional[str]:
     segmenter's re-cut -- new cuts it wrote over different ones
     (``segmenter_recut_at``, segmenter_recut_record).
 
-    WHY the segmenter's counts: owner ruling R2 -- a re-cut voids the answers
+    WHY the segmenter's counts: a re-cut voids the answers
     given before it, whoever made it. A triage return whose algorithm cuts are
     out of date resumes at segmentation and the segmenter cuts again; before
     this its new cuts recorded no time, and earlier answers were fitted onto
@@ -1611,7 +1609,7 @@ def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
     ones (cuts_set_at, segmenter_recut_record): the rule is the same for
     both.
 
-    The rule (owner ruling 2026-11-18, narrowing R2 of 2026-11-15: "If
+    The rule ("If
     resegmenting doesn't alter, then it's fine to keep"):
 
     - an answer given at or after the person's re-cut stands;
@@ -1622,8 +1620,7 @@ def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
     - if the frames moved at all, even by one frame, it is void: never
       re-homed by overlap or by number, kept in the file as a record, and
       DROPPED: its pellet takes the call of the algorithms re-run on the new
-      cuts and is asked again only if they flag it (owner ruling 2026-11-21;
-      recut_voided_segments says why);
+      cuts and is asked again only if they flag it (recut_voided_segments says why);
     - if the record does not show which cuts it was given on, it is treated
       as moved: void and dropped (RECUT_NO_RECORD).
 
@@ -1633,7 +1630,7 @@ def answer_survives_recut(rec, review_doc, recut: Optional[Recut]) -> bool:
     ``algo_boundaries``) -- otherwise the record does not show those cuts:
     no span, no replaced cuts on file, a span in another framing, or an
     answer given on still-older cuts -- and that same span must be a current
-    pellet. WHY both: before 2026-11-18 a save could re-stamp an old answer
+    pellet. WHY both: a save could re-stamp an old answer
     with the current pellet's frames while keeping its old time, so the span
     alone could make a moved pellet look unchanged; a span that is a pellet
     of the replaced cuts was stamped on them. WHY exact frames in one
@@ -1672,7 +1669,7 @@ def index_review_by_segment(review_doc, current_segments=None,
                             voided: Optional[list] = None):
     """Map each CURRENT segment number to the review record describing it.
 
-    Reviews used to be found by segment number alone. That number is an index
+    Reviews must not be found by segment number alone. That number is an index
     the segmenter hands out fresh on every re-cut, so after a re-segmentation
     the review of "segment 7" was applied to whatever the new segment 7 happened
     to be -- a human judgement stamped onto footage nobody looked at, recorded as
@@ -1822,8 +1819,8 @@ def index_review_by_segment(review_doc, current_segments=None,
                 % (old_num, rspan[0], rspan[1]))
             continue
 
-        # Two records for the SAME frames: the review tool used to restore a
-        # saved answer by segment number, so after a re-cut it filed an old
+        # Two records for the SAME frames: the review tool must not restore a
+        # saved answer by segment number, or after a re-cut it files an old
         # answer under the wrong number and the person's new answer for those
         # frames beside it. File order is not time order,
         # so "first wins" could apply the older answer -- or a left-blank
@@ -1874,7 +1871,7 @@ def recut_voided_segments(review_doc, current_segments=None,
     ASKED AGAIN. (The name is kept for its callers; see below for what it
     no longer covers.)
 
-    A VOIDED ANSWER IS DROPPED, NEVER RE-ASKED (owner ruling 2026-11-21).
+    A VOIDED ANSWER IS DROPPED, NEVER RE-ASKED.
     index_review_by_segment voids an answer given before a re-cut (a
     person's or the segmenter's) set the current cuts when its pellet's
     frames moved, or when the record does not show which cuts it was given
@@ -1885,7 +1882,7 @@ def recut_voided_segments(review_doc, current_segments=None,
     video. WHY: the person who re-cut judged the new footage of that pellet a
     different question from the one answered; asking every moved pellet
     again sent whole videos back to triage that the algorithms had no doubt
-    about. (feb7c62 asked every voided pellet again; this replaces that.)
+    about. (Asking every voided pellet again is not done.)
 
     What is still asked: an answer a save kept aside (``unmatched_answers``)
     whose pellet's frames the re-cut did NOT move (RECUT_UNCHANGED). The rule
@@ -1958,7 +1955,7 @@ def reach_outside_answers(review_doc, current_segments=None,
     it (index_review_by_segment: "it is about other footage"), so on its own
     it was lost without a word and its pellet stayed open -- the video waited
     in triage for an answer the window refuses, or the results refused it
-    later. The owner's rule (2026-11-24): if it doesn't make sense, put it in
+    later. The rule: if it doesn't make sense, put it in
     front of the reviewer again. A reach a person saw touch the pellet, outside
     that pellet's frames, means the cuts are wrong (a pellet presented before
     the first cut, a cut placed on the wrong side of the touch, cuts the window
@@ -2128,7 +2125,7 @@ def gt_outcome_is_answer(seg) -> bool:
     person looked and could not tell. That is no answer to the question "what
     happened to this pellet", so it does not outrank a lower layer's answer.
 
-    WHY one definition (2026-11-20): human answers are taken by precedence --
+    WHY one definition: human answers are taken by precedence --
     ground truth > deep review > triage, the highest that GAVE AN ANSWER wins,
     and a video is never held over the disagreement. The review gate counted a
     determined "uncertain" as settled while the kinematics applied it as the
@@ -2151,8 +2148,8 @@ def is_answered(rec) -> bool:
     Not answered: a record marked ``reviewed: False`` (a segment the reviewer
     never reached), and a pellet record whose outcome is still undecided. The
     review window saves a pellet whose outcome question was left on
-    "-- select outcome --" with the algorithm's "triaged" still in it; until
-    2026-10-26 that counted as an answer, so a video with a pellet nobody
+    "-- select outcome --" with the algorithm's "triaged" still in it; that
+    must not count as an answer, or a video with a pellet nobody
     decided left triage and was FILED (reaching the exports as
     "Undetermined"). A
     boundary record carries no pellet and needs no outcome.
@@ -2404,7 +2401,7 @@ def merge_review_into(doc, others):
 
     WHY: a machine that keeps a second copy of a review (the durable copy made
     when a bundle leaves its queue, the copy put back into a re-staged bundle)
-    used to REPLACE the older-looking file with the newer one by file time. An
+    would REPLACE the older-looking file with the newer one by file time. An
     "are you sure?" recheck, or an answer, that only the other copy held was
     lost. Merging statement by statement keeps the newest word a person gave
     about every pellet, whichever copy it is in.
@@ -3307,7 +3304,7 @@ def flag_session(video_stem: str, review_root: Path, reason: str = "",
     """Record a person's flag on the video's whole session (mouse+day):
     who, when and why.
 
-    A NOTE, nothing more (lab decision 2026-11-19, D5-10: "flags are there so
+    A NOTE, nothing more ("flags are there so
     we could in theory find them"). It holds no video, moves none, leaves none
     out and asks nobody anything. It is found later in every features file of
     the session (orchestrator.with_session_flag stamps it as
@@ -3427,8 +3424,8 @@ def update_corpus_index(
             "human_outcome": human.get("outcome"),
             "agreed": human.get("agreed", False),
             # --- everything below is what makes a lost review recoverable ---
-            # The index used to hold only the two fields above plus a path. When
-            # the file at that path was destroyed, what the reviewer actually
+            # An index holding only the two fields above plus a path is not enough: when
+            # the file at that path is destroyed, what the reviewer actually
             # decided -- which frames they looked at, which reach they picked --
             # was gone, and the index could not rebuild it. A pointer to a file
             # that no longer exists is not a record.
@@ -3454,7 +3451,7 @@ def update_corpus_index(
         index["last_updated"] = _get_timestamp()
 
     # Read, change and write under the shared-file lock (block comment above
-    # _lock_path). WHY: two reviewers saving at once used to read the same old
-    # index, and the second write dropped the first one's entries.
+    # _lock_path). WHY: two reviewers saving at once would read the same old
+    # index, and the second write would drop the first one's entries.
     _locked_update(index_path, change, lock_wait_s)
     return index_path

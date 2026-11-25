@@ -12,17 +12,16 @@ on the same cuts.
 Where a person's boundary calls are recorded: ``{stem}_segments.json`` saved
 by the segmentation fixer, with ``boundary_source == "human"`` and
 ``corrected_at``. The fixer saves the whole list of cuts the person accepted,
-and that file is the one the pipeline cuts the video by on the re-run. Since
-2026-11-19 (owner decision MRR-08d) a save counts only when EVERY cut in it is
+and that file is the one the pipeline cuts the video by on the re-run. A save counts only when EVERY cut in it is
 a person's explicit call -- accepted as placed, moved, or added -- by the
 ``boundary_calls`` record the fixer writes beside the cuts
 (hand_cuts.BOUNDARY_CALLS_KEY). The fixer refuses to save otherwise; a save
-made before that rule, with boundaries left unwalked, keeps the video in the
+with boundaries left unwalked keeps the video in the
 queue until a person walks the rest.
 
-A ground-truth file is NOT proof of re-segmentation (it used to be, when every
-one of its boundaries was determined). WHY: nothing writes ground-truth
-boundaries into the segments file, so on the re-run the segmenter cut the
+A ground-truth file is NOT proof of re-segmentation (though it would be, if every
+one of its boundaries were determined). WHY: nothing writes ground-truth
+boundaries into the segments file, so on the re-run the segmenter cuts the
 video again exactly as before and everything after it was computed on the
 cuts the person had replaced. Whether ground-truth boundaries should be
 written through as hand cuts is an open decision; until it is made, cuts
@@ -90,7 +89,7 @@ def entered_deep_review_at(bundle: Path, stem: str) -> Optional[str]:
     when the bundle is staged), and the bundle folder's creation time.
 
     WHY a fallback, and why the latest: with no readable ``routed_at`` the
-    rule used to accept ANY hand cut ever saved -- including the very cuts a
+    rule would accept ANY hand cut ever saved -- including the very cuts a
     video was sent back here to have fixed. Each fallback is a time at or
     after the video arrived, so the latest of them is the safe side: a cut
     saved after it is certainly a new one, and at worst a person confirms
@@ -143,8 +142,7 @@ def resegmented_since_entry(bundle: Path, stem: str) -> Tuple[bool, str]:
     if seg and seg.get("boundary_source") == "human":
         if after_entry(seg.get("corrected_at")):
             # Saved after it arrived -- but every boundary must be a
-            # person's explicit accept or move (owner decision MRR-08d,
-            # hand_cuts.BOUNDARY_CALLS_KEY). A save that left boundaries
+            # person's explicit accept or move (hand_cuts.BOUNDARY_CALLS_KEY). A save that left boundaries
             # unwalked does not let the video leave; the fixer lists it
             # again and carries the calls already made (carried_calls).
             from .hand_cuts import uncalled_reason
@@ -214,9 +212,9 @@ def needs_recut(bundle: Path, stem: str) -> Tuple[bool, str]:
 
     WHY one question for the segmentation fixer's list: every way out of the
     queue for a pillar video requires the proof above (the return scan, the
-    Clear button, the release button). The fixer used to list only bundles
+    Clear button, the release button). The fixer must not list only bundles
     that came for a segmentation reason and whose cuts were never set by
-    hand. Two kinds of bundle then had no way out at all: one whose cuts a
+    hand. Two kinds of bundle would then have no way out at all: one whose cuts a
     person had set on an EARLIER visit and that was sent back (its old hand
     cuts hid it, yet they no longer count), and one sent for another reason,
     such as a flagged session or a quality hold (no segmentation reason, so

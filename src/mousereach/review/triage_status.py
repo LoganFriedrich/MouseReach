@@ -54,7 +54,7 @@ def segmentation_failed(seg_doc: Optional[Dict[str, Any]]) -> bool:
     Cuts a person made or confirmed (causal_review_io.cuts_taken_as_made) are
     never failed: the confidence and reference-quality notes are the
     segmenter's account of ITS cuts, and a person's word on the cuts replaces
-    it (owner, 2026-11-23)."""
+    it."""
     if not seg_doc:
         return True
     from .causal_review_io import cuts_taken_as_made
@@ -454,8 +454,7 @@ def triage_status(directory: Path, video_id: str) -> TriageStatus:
     # the review tool skipped it because has_gt() said there was nothing to ask.
     # Nobody asked, nobody released, and it sat in the queue forever.
     # Ground truth INSIDE ``directory`` counts too (extra_dirs), the same files
-    # the gate reads (review_gate._gt_certification). WHY (owner decision
-    # MRR-03d, 2026-11-19: "an answer a human gives is always true so long as
+    # the gate reads (review_gate._gt_certification). WHY ("an answer a human gives is always true so long as
     # it was given about the correct pellet/segment"): a triage bundle can
     # carry the ground-truth tool's file, and the corpus index cannot see it
     # (it covers this machine's processing folder, not the shared queues).
@@ -529,7 +528,7 @@ def deep_review_cleared(directory: Path, video_id: str) -> bool:
     marker ``{video_id}_deep_review_cleared.json`` is in ``directory``. Never
     raises.
 
-    The marker ONLY. A ground-truth file used to count as a clear by its mere
+    The marker ONLY. A ground-truth file must not count as a clear by its mere
     presence -- even a progress save with nothing determined, and without
     anyone pressing Clear -- and the release then let the segmenter cut the
     video again exactly as before. The review gate applies the same test

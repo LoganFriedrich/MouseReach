@@ -148,8 +148,7 @@ class FixSegmentationWidget(QWidget):
         # What the person did with each cut, keyed by the cut's CURRENT frame
         # (never by its position in the list, which shifts when a cut moves
         # past another, is removed or is added). A cut is called once it has
-        # an entry here; Save refuses while any cut has none (owner decision
-        # MRR-08d, hand_cuts.BOUNDARY_CALLS_KEY).
+        # an entry here; Save refuses while any cut has none (hand_cuts.BOUNDARY_CALLS_KEY).
         self._calls: Dict[int, dict] = {}
         self._removed_calls: List[dict] = []
 
@@ -683,7 +682,7 @@ automatic.
                 # No segments file: the segmenter could not run on this video
                 # and the watcher sent it here to be cut by hand. WHY listed:
                 # every way out of the queue needs cuts a person saved here,
-                # and this tool used to skip such a bundle, so no tool could
+                # and a tool that skips such a bundle leaves no tool able to
                 # make its first cuts. It is marked from scratch, so last.
                 if self._uncut_bundle(bundle) and self._needs_reseg(bundle, {}):
                     self._queue.append((bundle, 0))
@@ -735,7 +734,7 @@ automatic.
 
     def _load_bundle(self, bundle: Path):
         stem = bundle.name
-        # One review window per video (review_claims, MRR-02d): two people
+        # One review window per video (review_claims): two people
         # re-cutting the same video at once would each save over the other's
         # cuts. The video left is let go; one another window holds is skipped.
         from . import review_claims
@@ -811,7 +810,7 @@ automatic.
             logger.warning("Could not read the earlier boundary calls of %s: %s", stem, err)
             kept = {}
         self._calls = {f: r for f, r in kept.items() if f in self.boundaries}
-        # The walk always starts at boundary 1 (owner rule): the person sees
+        # The walk always starts at boundary 1: the person sees
         # every cut in order; ones already answered keep their answer.
         self._gw_idx = 0
         self._gw_load()
@@ -1452,8 +1451,7 @@ automatic.
             QMessageBox.warning(self, "Too few cuts",
                                 "At least two cuts are needed to make a segment.")
             return
-        # Every boundary must be explicitly accepted or moved first (owner
-        # decision MRR-08d, 2026-11-19): saving stamps the cuts as a person's,
+        # Every boundary must be explicitly accepted or moved first: saving stamps the cuts as a person's,
         # and a cut nobody looked at is not a person's call.
         left = self._uncalled()
         if left:

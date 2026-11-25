@@ -308,11 +308,11 @@ def stage_video(
 
     INTO A REVIEW QUEUE (``pending_dir`` is the configured triage or deep-review
     folder, the default): the bundle goes in through the watcher's own router
-    (review_gate.route_to_queue), never written into the queue here. WHY: this
-    stager used to write ``<queue>/<stem>`` itself, so the watcher database
-    never learned the video was held (its row stayed 'archived' or
-    'crystallized'), a crystallized video got a bundle, and ``overwrite=True``
-    regenerated a live bundle in place, under a reviewer. Now:
+    (review_gate.route_to_queue), never written into the queue here. WHY: a
+    stager that writes ``<queue>/<stem>`` itself would leave the watcher database
+    never learning the video was held (its row stays 'archived' or
+    'crystallized'), give a crystallized video a bundle, and ``overwrite=True``
+    would regenerate a live bundle in place, under a reviewer. So:
       * the video must be known to this machine's watcher database and be
         filed ('archived'); a crystallized video, one the watcher is working on
         or holds, one it does not know, and a machine with no readable watcher
