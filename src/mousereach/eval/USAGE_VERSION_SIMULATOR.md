@@ -205,6 +205,29 @@ Applies historical version filters to reach list. Import it from `mousereach.eva
 3. **Evaluates against ground truth** using standard ReachEvaluator
 4. **Returns metrics** (precision, recall, F1, etc.)
 
+## Testing
+
+Run the test script:
+```bash
+cd <MouseReach folder>\src\mousereach\eval
+python test_version_simulator.py
+```
+
+The v1.0.0 test currently fails, because it expects an extent > 5 filter that the code's v1.0.0 does not have; the run stops there. When every test passes, the output ends with:
+```
+Testing version_simulator module...
+============================================================
+[OK] All version filters defined
+[OK] v1.0.0 filter works
+[OK] v2.0.0 filter works
+[OK] v3.0.0 filter works
+[OK] v3.3.0 filter (bug) works as expected
+[OK] v3.4.0 filter (current) works
+[OK] Bug impact analysis complete
+
+[OK] All tests passed!
+```
+
 ## Troubleshooting
 
 ### "No ground truth files found"

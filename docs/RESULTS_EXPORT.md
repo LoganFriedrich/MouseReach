@@ -131,15 +131,11 @@ Per tray, day and animal (`session_...`, `day_...`, `animal_...`), the same set:
 
 ## Older export commands
 
-- `mousereach-features-csv` is retired: it looked for `*_grasp_features.json`, a
-  file the pipeline no longer writes, and found nothing. It now runs
-  `mousereach-results --level reach`.
-- `mousereach-quick-summary` now writes the session level of the filed results
-  and prints the overall totals (it read only the local Processing folder, which
-  filing empties).
-- `mousereach-build-database`'s Sessions and Mice sheets are now this export's
-  session and animal levels. They used to count reach rows: their
-  `retrieval_rate` was the share of reaches whose pellet was retrieved, and a
-  pellet nobody reached for was left out.
+- `mousereach-features-csv` runs `mousereach-results --level reach`; the
+  `*_grasp_features.json` files it was named for are not written by the pipeline.
+- `mousereach-quick-summary` writes the session level of the filed results and
+  prints the overall totals.
+- `mousereach-build-database`'s Sessions and Mice sheets are this export's
+  session and animal levels, so their rates count pellets, not reach rows.
 - `mousereach-export` and `mousereach-summary` still read one flat folder you
   name with `-i`; for filed results use `mousereach-results`.

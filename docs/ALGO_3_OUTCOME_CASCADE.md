@@ -31,7 +31,7 @@ There are two detectors in this directory.
 
 `mousereach-detect-outcomes --legacy` passes `legacy=True` by name through `process_batch` (`core/batch.py`) into `process_single`, whose `legacy` branch is the only place that constructs `PelletOutcomeDetector`. Passing `legacy` positionally would leave it `False` (it is the fifth parameter of `process_single`), so the flag is passed by name; a file stamped `6.1.0` was produced by v6 whatever flag was typed.
 
-### The "Step 2 - Run Pipeline" tab no longer runs the legacy detector
+### The "Step 2 - Run Pipeline" tab does not run the legacy detector
 
 The napari **"Step 2 - Run Pipeline"** tab does not run its own processor (one that constructs `PelletOutcomeDetector` directly would run BEFORE reach detection with no reach file, and stamp its files `4.0.0_step2`). The tab runs one pass of this machine's watcher (`pipeline/batch_widget.py`, the same code as the Watcher Control tab's Run Once), so on the processing machine it runs v6 through `process_single` after reach detection, exactly as the watcher does. (On a pose-only graphics-card PC the pass only cuts and poses; no outcome detector runs there.) Files stamped `4.0.0_step2` that already exist were made by the old tab.
 
@@ -298,9 +298,7 @@ Stage 98 is the only stage whose purpose is to give a triage a *specific* reason
 
 An earlier block at `:231-233` computes the same late-zone count using a 0.75 cut-point and stores it under the same feature key; `:281-283` overwrites it with the 0.5 version. The 0.75 computation has no effect.
 
-**Update:** Stage 98, the CV-artifact guard and the batch runner now find the video by one rule (`cv_artifact_gate.resolve_video`: `.mp4`, `.avi`, `.mkv`), so the paragraph below describes the earlier behaviour.
-
-**It only looked for `{video_id}.mp4`** (`stage_98_lost_in_shadow_triage.py:121-127`). The directory search that supplies `video_dir` accepts `.avi`, `.mp4` and `.mkv` (`core/batch.py:148`). For a video stored as `.avi`, `video_dir` is found, this stage reports `video_unavailable`, and the segment falls to stage 99 with the generic reason. The pixel guard on displaced commits does not have this problem — it checks `.mp4` and `.avi` (`cv_artifact_gate.py:164`).
+**Finding the video.** Stage 98, the CV-artifact guard and the batch runner find the video by one rule (`cv_artifact_gate.resolve_video`: `.mp4`, `.avi`, `.mkv`), so a video stored as `.avi` is found by all three.
 
 Every failure inside stage 98 becomes a `continue`: `cv2` not installed (`:336-343`), video will not open (`:345-351`), tray box degenerate (`:324-329`). Nothing is logged. The result is indistinguishable from "not a shadow case".
 
@@ -371,7 +369,7 @@ Per segment, triaged case — the same six keys plus `flag_reason`, with `outcom
 
 ### What later steps add
 
-The retired triage-clearing tool wrote back into this file when a person resolved a segment, setting on that segment `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` and `causal_reach_id`. It no longer does anything (it prints a pointer to `mousereach-review-tool` and stops); a person's answer now goes into the review record `{stem}_causal_review.json`, never into this file. So `causal_reach_id` and those clearing fields appear in an outcomes file only if an old copy of the tool wrote them.
+An old triage-clearing tool wrote back into this file when a person resolved a segment, setting on that segment `flagged_for_review: false`, `triage_cleared: true`, `human_verified: true`, `cleared_by`, `cleared_at`, `original_triage_reason`, `original_outcome` and `causal_reach_id`. It no longer does anything (it prints a pointer to `mousereach-review-tool` and stops); a person's answer now goes into the review record `{stem}_causal_review.json`, never into this file. So `causal_reach_id` and those clearing fields appear in an outcomes file only if an old copy of the tool wrote them.
 
 In practice it appears nowhere: a scan of every `_pellet_outcomes.json` under `Analyzed` and `Processing` found **zero** v6 segments carrying `triage_cleared`, `human_verified`, `cleared_by`, `original_triage_reason` or `causal_reach_id`. Every v6 file in the pipeline is exactly as the detector wrote it.
 

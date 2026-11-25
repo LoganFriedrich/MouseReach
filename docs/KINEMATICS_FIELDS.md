@@ -42,36 +42,11 @@ One class, `FeatureExtractor` (`feature_extractor.py:169`), turns three files in
 
 ---
 
-## 2. Read this before the tables: nothing the algorithm produces links a reach to an outcome
+## 2. Linking a reach to an outcome
 
-> **read this first: the title of this section is no longer true.** Since extractor 2.1.0 the extractor loads `{video}_reach_assignments.json` (found beside the outcomes file) and, on every segment no person decided, sets the segment's `causal_reach_id` to the reach the reach-assignment step credited (`causal_reach_source = reach_assignment`) and fills a missing `interaction_frame` from that step's `segment_ifr`. So `causal_reach`, `outcome`, `interaction_frame` and the `*_at_contact_*` columns ARE filled on the algorithm's causal reach. On a segment a person decided, the person's pick stands and the assignment's pick is recorded as `algo_causal_reach_id`. Still true: `SegmentFeatures` has no `interaction_frame` field, and `distance_to_interaction` is never computed. The rules are in "the algorithm's causal reach now reaches the data" and "Who owns a causal reach" at the end of this document. The text below describes the code before 2.1.0 and is kept as the record.
+The extractor loads `{video}_reach_assignments.json` (found beside the outcomes file) and, on every segment no person decided, sets the segment's `causal_reach_id` to the reach the reach-assignment step credited (`causal_reach_source = reach_assignment`). It fills a missing `interaction_frame` from that step's `segment_ifr`. So `causal_reach`, `outcome`, `interaction_frame` and the `*_at_contact_*` columns are filled on the algorithm's causal reach. On a segment a person decided, the person's pick stands and the assignment's pick is recorded as `algo_causal_reach_id`.
 
-The extractor decides which reach caused the pellet's fate with one comparison (`feature_extractor.py:380-384`):
-
-```python
-causal_reach_id = outcome_data.get('causal_reach_id')
-if causal_reach_id is not None and causal_reach_id == reach_id:
-    features.causal_reach = True
-    features.outcome = outcome_data['outcome']
-    features.interaction_frame = outcome_data.get('interaction_frame')
-```
-
-**The current outcome detector never writes `causal_reach_id`.** Every segment it emits carries exactly seven keys — `segment_num`, `outcome`, `outcome_known_frame`, `interaction_frame`, `stage`, `flagged_for_review`, and `flag_reason` when triaged. Measured over every outcome file in the Processing corpus:
-
-| Outcome detector | Segments with `causal_reach_id` | Segments with `confidence` |
-|---|---|---|
-| `v6_cascade` 6.1.0 | **none** | **none** |
-| unnamed, version 2.4.4 (older) | some | all |
-
-So `causal_reach = True` only ever arrives from somewhere other than the current algorithm. In the Analyzed-archive sample, the causal reaches come mostly from old pre-v6 files, then from human causal reviews, a few from ground-truth files, and **none** with `outcome_source = 'algo'`. Human reviews and ground truth put a causal reach id onto the segment through the truth-layering step (`review/truth_resolver.py`), and the extractor then picks it up. That step resolves a human's causal pick by its **frames** whenever the review records them, and only falls back to the stored reach id when it does not: reach ids are renumbered on every run, so a review written against last month's reach list named an id this run does not have, and the human's answer silently vanished from the reach rows. The stored id is kept beside the resolved one for provenance.
-
-**Two things follow, and they are the largest holes in this data.**
-
-1. **`interaction_frame` is thrown away.** The current outcome detector supplies a non-null `interaction_frame` on most of its segments. `SegmentFeatures` has no field for it, and the reach only receives it inside the `causal_reach_id` branch above. So it is discarded. Everything keyed to the moment of contact goes null with it: the reach's `interaction_frame`, and all ten extended `*_at_contact_*` columns. Across the Analyzed sample those ten are populated on well under one percent of reaches.
-
-2. **`distance_to_interaction` can never be filled, for a second and independent reason.** The extractor reads it from `outcome_data['reach_features']` (`:387-389`). No outcomes file contains a `reach_features` key — on no segment, at either detector version. In the older detector the dictionary is genuinely computed (`outcomes/core/pellet_outcome.py:1645-1689`), returned by `find_causal_reach`, assigned to a local variable at `:1572`, and then not passed into the `PelletOutcome` built at `:1591-1600`; the dataclass has no such field. So `.get('reach_features', {})` returns empty every time. Even if causal reaches came back, this stays null.
-
-**The causal link is computed — by a different stage, into a file the extractor never opens.** `{video}_reach_assignments.json` (detector `assignment_v2` 2.1.0, present for every current video in Processing) carries per reach: `is_causal`, `label`, `segment_outcome`, `segment_ifr`, `segment_num`. In a sample of these files, a small share of reaches are marked `is_causal`. Nothing under `src/mousereach/kinematics/` references that file.
+The outcome detector itself never writes `causal_reach_id`; only the reach-assignment step and a person's review do. `SegmentFeatures` has no `interaction_frame` field, and `distance_to_interaction` is never computed. The rules are in "the algorithm's causal reach reaches the data" and "Who owns a causal reach" at the end of this document.
 
 ---
 
@@ -576,8 +551,8 @@ The audit's small `causal_reach` and `interaction_frame` fill rates come from le
 
 * `REACH_KINEMATIC_DATA_DICTIONARY.md:89` defines `distance_to_interaction` as "`interaction_frame - apex_frame`, in frames". Nothing computes that; the value is read from a dictionary that is never written (§2).
 * `REACH_KINEMATIC_DATA_DICTIONARY.md:39-43` says tracking-quality gating is unnecessary because "numerically robust accumulation (`np.nansum`, `np.nanmean`, etc.) tolerates occasional NaN frames within a tracked reach". There are no NaN frames — DeepLabCut always emits a coordinate (whole videos checked, zero nulls). The conclusion happens to be defensible; the stated reason is not, and it obscures the real consequence, which is that low-confidence frames enter every trajectory measurement at full weight.
-* `feature_extractor.py:361` still initialises `segment_num=0` with the comment "Will be set by caller". That is true — `:317` sets it. The comment is now merely stale rather than wrong.
-* `sync/database.py:56-60` says the extractor "leaves it 0 on every reach". That is no longer true, and the change made on the strength of that comment is what broke the database insert (§8).
+* `feature_extractor.py` initialises `segment_num=0` with the comment "Will be set by caller"; the assignment later in the same function sets it.
+* `sync/database.py` says the extractor "leaves it 0 on every reach". That is not true: the extractor sets it (§8).
 
 ---
 

@@ -221,7 +221,7 @@ Part of every triage answer is checking that the event happened to the pellet
 shown. If it did not, answer nothing and press **Escalate: bad segmentation ->
 re-segmentation** (see "Escalating out of triage").
 
-### Fitting a small screen, and plain words (evening)
+### Fitting a small screen, and plain words
 
 - The reach list offers only reaches inside the pellet's own frames. The reach
   file groups reaches made before the first pellet arrived into segment 1, and
@@ -1331,8 +1331,6 @@ So after a re-segmentation, an answer whose frames no longer match any current s
 
 `resolve_truth_layers` reads every copy of the video's review: the folder or file the caller passes (a file is taken as its folder), the triage and re-segmentation queue bundles, the video's filed folder, and the durable store `review_records/reviews/` -- merged per pellet by `causal_review_io.effective_review` (folders from `causal_review_io.review_dirs`). A review is applied whether or not its bundle is still in a queue: once the return scan has moved a bundle back into processing, its review is still read from there (the feature extractor passes the run's own folder as `extra_review_dirs`) and from the durable store.
 
-an earlier version of this section, titled "Reviews mostly do not reach the numbers", said a review was applied only while its bundle sat in a queue folder, because the results step was handed the review FILE and looked for a file inside it. That is no longer so: a file passed in is taken as its folder, and every copy is read.
-
 ---
 
 ## What depends on a segment being in the right place
@@ -2035,7 +2033,7 @@ kinematics recalculation sends it. It comes back only when a person sends it
 that filed video), and then the queue gets a COPY: the filed results stay in Analyzed until the
 video's new run is filed and replaces them. See docs/PIPELINE_AS_BUILT.md, "filed is final".
 
-## findings no review can fix no longer reach a queue
+## findings no review can fix do not reach a queue
 
 An unusable pose (will not load, or SABL/SABR missing) and a missing or unreadable step output are no
 longer held in re-segmentation for a person: nothing in a review window can fix them. A video not

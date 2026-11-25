@@ -711,7 +711,6 @@ mousereach-export --help
 - **[DeepLabCut](https://github.com/DeepLabCut/DeepLabCut)** - Markerless pose estimation ([Mathis Lab](http://www.mackenziemathislab.org/))
   > Mathis, A., Mamidanna, P., et al. (2018). DeepLabCut: markerless pose estimation of user-defined body parts with deep learning. *Nature Neuroscience*, 21, 1281-1289.
 - **[napari](https://napari.org/)** - Multi-dimensional image viewer
-- **[Claude](https://anthropic.com/)** - AI-assisted development (Anthropic)
 
 ---
 
