@@ -22,7 +22,7 @@ This is a more permissive untouched stage that catches segments where:
 - BUT the pellet was clearly on the pillar throughout the segment in
   aggregate (frac_inside >= 0.99 of confident frames)
 
-Empirical calibration (2026-05-02 corpus, train_pool, 740 GT segments):
+Empirical calibration (train_pool corpus, 740 GT segments):
 - Untouched class: visibility_frac p1 = 0.993; frac_inside p25 = 0.994
 - Retrieved class: visibility_frac p99 = 0.970 (pellet disappears
   when eaten); frac_inside p75 = 0.983

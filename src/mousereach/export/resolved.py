@@ -5,8 +5,8 @@ WHY: the features file is the video's resolved result -- the algorithm's calls
 with every person's answer applied (review, ground truth, ignore windows,
 exclusions; review.truth_resolver). The pellet-outcomes and reaches files are
 the algorithm's own calls BEFORE any person's answer. The export, summary,
-quick-summary, real-kinematics and ASPA sync commands used to read those, so
-a pellet a reviewer corrected was counted with the algorithm's call.
+quick-summary, real-kinematics and ASPA sync commands must not read those, or
+a pellet a reviewer corrected would be counted with the algorithm's call.
 
 A video in the folder with algorithm files but no features file has no
 resolved result yet (its kinematics have not run, or were held). It is left
@@ -51,9 +51,8 @@ def load_resolved_videos(input_dir: Path, pellets_only: bool = False) -> Tuple[L
         except (OSError, ValueError) as err:
             left_out.append(f"{stem}: its features file could not be read ({err})")
             continue
-        # A reach that starts before the first cut belongs to no pellet (owner
-        # decision D2-3): a features file filed before 2026-11-19 lists it
-        # under pellet 1, so it is taken out of pellet 1 here, on reading --
+        # A reach that starts before the first cut belongs to no pellet: an older
+        # features file lists it under pellet 1, so it is taken out of pellet 1 here, on reading --
         # the filed file itself is never changed.
         from mousereach.reach.core.before_first_cut import split_before_first_cut
         doc = split_before_first_cut(doc)

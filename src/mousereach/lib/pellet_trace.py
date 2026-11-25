@@ -27,7 +27,7 @@ read off this trace.
 Geometry note: the SA is a box whose top edge (toward the mouse / the exit) is
 SATL-SATR and bottom edge is SABL-SABR; the in-SA test reuses the v6 cascade
 bounding-box formula. The reachability budget is a first-pass physics bound to
-be GT-calibrated later (see the redesign plan, Phase 5).
+be GT-calibrated later.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from .pillar_geometry import compute_pillar_geometry_series
 DEFAULT_LK_PRESENT = 0.7          # DLC confidence below this => not the pellet (Tier-1 impossibility)
 DEFAULT_MAX_STEP_RULER = 0.5      # max plausible pellet displacement per frame, in ruler units
                                   # (the SA is ~1 ruler wide; >0.5 ruler in one frame is a teleport).
-                                  # FIRST-PASS physics bound -- GT-calibrate in Phase 5.
+                                  # FIRST-PASS physics bound -- to be GT-calibrated.
 
 
 def _col(dlc_df: pd.DataFrame, name: str, n: int) -> np.ndarray:

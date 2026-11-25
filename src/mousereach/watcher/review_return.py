@@ -99,8 +99,8 @@ def _resolve_inputs(bundle: Path, stem: str, processing_dir=None,
     bundle-local ``{stem}_manifest.json``. Only LEGACY staged bundles carry the
     algo JSONs alone, with a ``{stem}_manifest.json`` pointing at the mp4 and
     pose in Analyzed. Returning a bundle without resolving the inputs means the
-    pipeline re-runs the video with no pose at all -- which is how hundreds of
-    videos ended up in the deep-review queue as "segmentation_failed".
+    pipeline re-runs the video with no pose at all -- which is how videos
+    end up in the deep-review queue as "segmentation_failed".
 
     Note this must run BEFORE the bundle is emptied: ``{stem}_manifest.json`` is
     queue metadata (_is_queue_metadata), so the move loop deletes the very file
@@ -298,7 +298,7 @@ def _is_leftover_copy(bundle: Path, twin: Path, signature: tuple) -> bool:
     and pose moved to deep review, the mp4 stayed in triage. What remains in
     triage then holds nothing the deep-review copy lacks, so archiving it loses
     nothing, while leaving it made every return scan log the same "exists in
-    BOTH queues" line for weeks (hundreds of times for one video) with
+    BOTH queues" line for weeks with
     nobody ever doing the "deliberate cleanup" it asked for.
     Sizes are compared before any content is read; a copy that differs in
     anything stays for a person. Raises OSError.
@@ -361,18 +361,16 @@ def _ensure_registered(db, stem: str, source_path: Path) -> bool:
 
     WHY before touching the queue: a node that has never seen the video (fresh
     DB, or the review was cleared on a different machine) has no row to update
-    -- and the return used to move the bundle's files out, delete the bundle,
-    and only then discover it could not record the state. The clearance was
-    consumed, the files landed in Processing with nothing referencing them, and
-    the function returned True. Hundreds of bundles went that way in one run
-    before it was caught."""
+    -- and a return that moved the bundle's files out, deleted the bundle,
+    and only then discovered it could not record the state would consume
+    the clearance, land the files in Processing with nothing referencing them, and
+    return True."""
     try:
         if db.get_video(stem) is None:
             # Parse the stem's own metadata into the row. Rows registered here
-            # used to carry only the id and path -- no tray_type/date/animal --
-            # and tray-aware work selection silently degrades to a random pick
-            # on a NULL tray_type. This stops NEW metadata-less rows; rows that
-            # already exist with NULLs are handled by the orchestrator's
+            # must carry more than the id and path -- tray_type/date/animal --
+            # or tray-aware work selection silently degrades to a random pick
+            # on a NULL tray_type. This stops NEW metadata-less rows; rows with NULLs are handled by the orchestrator's
             # read-side filename fallback -- both halves are required.
             meta = {}
             try:
@@ -406,10 +404,10 @@ def _deep_review_cleared(bundle: Path, stem: str) -> bool:
     (review_gate._deep_review_cleared), so the scan and the gate cannot
     disagree about whether a person cleared a video.
 
-    WHY the marker only: a ground-truth file in the bundle used to count as a
+    WHY the marker only: a ground-truth file in the bundle must not count as a
     clear by its mere presence -- even a progress save with nothing in it
-    determined, and without anyone pressing Clear. The return then released
-    the video, the segmenter cut it again exactly as before (nothing copies
+    determined, and without anyone pressing Clear. The return would release
+    the video, the segmenter would cut it again exactly as before (nothing copies
     ground-truth boundaries into the segments file), and the gate, which
     reads only the marker, could send it straight back."""
     from .review_gate import _deep_review_cleared as _gate_cleared
@@ -791,7 +789,7 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
         return False
 
     # A crystallized (publication-locked) video is never moved back to
-    # Processing: its filed results must stay as published. This used to be
+    # Processing: its filed results must stay as published. This is not
     # forced through (force_state below), lock and all.
     from .db import crystallized_refusal
     locked = crystallized_refusal(db, stem, "returned to Processing")
@@ -886,12 +884,12 @@ def _return_to_processing(bundle: Path, stem: str, processing_dir: Path, db,
     # and the state is set inside the same try: if any move -- or the state
     # write -- fails, every file already moved goes back into the bundle and
     # the return is retried after RETURN_RETRY_S. The queue records (manifest,
-    # routing) are deleted only after the state is set. WHY: the moves used to
+    # routing) are deleted only after the state is set. WHY: moves that
     # stop at the first failure (a file held open by a review window, an
-    # indexer, a backup pass) with earlier files -- the video, its pose, the
+    # indexer, a backup pass) would leave earlier files -- the video, its pose, the
     # reviewer's answers, possibly the clear marker -- already in Processing
-    # and the queue records already deleted. The half left in the queue then
-    # read as unanswered and no review tool listed it; only a person could
+    # and the queue records already deleted. The half left in the queue would
+    # read as unanswered and no review tool would list it; only a person could
     # put it back together. Inputs move first and the clear marker LAST, so
     # even an undo that cannot finish never leaves a clear in the queue
     # beside a bundle missing its files.
@@ -1066,7 +1064,7 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
     be named -- stays where it is, with a note, listed for a person. A
     bundle with the note is skipped by every later scan.
 
-    WHY not the archive folder it used to go to: that folder is only for
+    WHY not the archive folder: that folder is only for
     cases the pipeline cannot process at all, and a stale bundle is a machine
     leftover -- worth nothing once a current copy exists, and a person's work
     in it is never moved where nobody looks.
@@ -1108,7 +1106,7 @@ def _retire_stale_bundle(bundle: Path, stem: str, video_state: str,
 # (max_local_pending), and released low-priority videos would hold up new
 # work. The bundle's machine outputs are deleted once the video is back in the
 # posed folder: that is the video's current copy, and its fresh run makes them
-# again. (They used to be moved to an archive folder that is meant only for
+# again. (They are not moved to an archive folder, which is meant only for
 # cases the pipeline cannot process at all.)
 QC_RECHECK_BUDGET_S = 30            # seconds of re-checks per scan
 _qc_recheck_cache: Dict[str, tuple] = {}
@@ -1144,7 +1142,7 @@ _bench_cache: Dict[str, tuple] = {}
 
 # What bench_recheck found for a triage bundle.
 BENCH_NOTHING = None                      # not held over its hand scores, or nothing to do
-BENCH_LABEL_MISMATCH = "label_mismatch"   # RETIRED 2026-11-20: never returned now
+BENCH_LABEL_MISMATCH = "label_mismatch"   # RETIRED: never returned now
 BENCH_RELEASE = "release"                 # now agrees, nobody answered: return it
 BENCH_REFRESHED = "refreshed"             # its kept scores and flags were brought up to date
 
@@ -1698,8 +1696,7 @@ def _catch_up_route_from_triage(bundle: Path, stem: str, db) -> bool:
     supersedes triage, and a route into triage is refused while this bundle
     exists, so 'triage' cannot be the video's real place.
 
-    WHY: a review window moves a video out of triage (Escalate, and Flag
-    Session before 2026-11-19) through the reviewer's own login. A login
+    WHY: a review window moves a video out of triage (Escalate) through the reviewer's own login. A login
     whose settings name no watcher database cannot write the row
     (db_location.open_watcher_db_if_present), so the folder moved and the row
     stayed 'triage'. When the window still had the mp4 open, the mp4 failed
@@ -1707,7 +1704,7 @@ def _catch_up_route_from_triage(bundle: Path, stem: str, db) -> bool:
     then refused to move it in -- "the watcher record says the video is
     'triage', not held in this queue" (_held_in_this_queue) -- and the triage
     copy could not be emptied while the bundle lacked a file, so the video
-    stayed in both queues for good (2026-11-19, three videos). The refusal
+    stayed in both queues for good. The refusal
     exists to protect a run in Processing; a source in the video's own triage
     folder is never a running copy."""
     if db is None:
@@ -2040,12 +2037,11 @@ def repair_unfinished_routes(force: bool = False, db=None,
     return out
 
 
-# A triage bundle the scan could neither divert, release nor offer, before
-# 2026-11-19: its segmentation failed, ground truth INSIDE the bundle
+# A triage bundle the scan could neither divert, release nor offer: its
+# segmentation failed, ground truth INSIDE the bundle
 # certified the whole video -- so it was not diverted to re-segmentation --
 # but the release check counted only the ground-truth index, so its pellets
-# stayed open, and the window hid it because it had ground truth. Since owner
-# decision MRR-03d (2026-11-19) the release check reads ground truth inside
+# stayed open, and the window hid it because it had ground truth. The release check reads ground truth inside
 # the bundle too (triage_status), so such a bundle is released and this case
 # no longer arises. The kind is kept only so that a listing written by older
 # code is taken off on the next scan.
@@ -2173,7 +2169,7 @@ def scan_review_queues(db, processing_dir: Path,
         # it to re-segmentation would hold a video the gate releases. Partial
         # ground truth does not: the gate sends that video to re-segmentation
         # anyway, so it goes there now instead of after a re-run. (A ground-
-        # truth file of any kind used to count, through _deep_review_cleared.)
+        # truth file of any kind does not count, through _deep_review_cleared.)
         marker_clear = _deep_review_cleared(bundle, stem)
         cleared = marker_clear or _gt_certifies_whole_video(bundle, stem)
         # DEEP REVIEW SUPERSEDES TRIAGE (review_routing): whatever this triage
@@ -2377,8 +2373,8 @@ def scan_review_queues(db, processing_dir: Path,
                              gt_only=cleared and not marker_clear, listed=gt_listed)
         # A bundle whose ONLY flags name segments that do not exist
         # (st.ghost; triage_status.triaged_in_range) has nothing a person
-        # could answer. It used to read "no triage" here and was skipped on
-        # every scan -- in the queue for ever, while the window offered it with
+        # could answer. Reading "no triage" here would skip it on
+        # every scan -- in the queue for ever, while the window offers it with
         # nothing to ask. It is returned like an answered bundle: the pipeline
         # resumes and its checks run again on the current outputs.
         ghost_only = (not st.has_triage) and bool(st.ghost)

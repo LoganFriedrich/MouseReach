@@ -206,7 +206,7 @@ class Stage26RetrievedViaUniqueVanishReach(Stage):
             pl = sub_raw[f"{bp}_likelihood"].to_numpy(dtype=float)
             paw_past |= (py <= slit_y) & (pl >= PAW_LK_THR)
         # Strict version: at least 2 paw bodyparts at lk >= 0.7 in the
-        # same frame (empirical 2026-05-03: cleanly separates real paw
+        # same frame (empirical: cleanly separates real paw
         # from DLC noise).
         paw_past_strict = paw_past & (n_paws_high >= 2)
 

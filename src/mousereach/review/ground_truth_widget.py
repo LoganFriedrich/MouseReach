@@ -2061,10 +2061,10 @@ class GroundTruthWidget(QWidget):
     def _save_to_algo_files(self):
         """Refused: the old Review Tool's save into the algorithm's files.
 
-        In review mode this widget used to rewrite {video}_segments.json,
-        {video}_reaches.json and {video}_pellet_outcomes.json in place,
-        stamped 'validated', with no mark that the cuts were a person's and
-        nothing after them redone. It now writes nothing. The Ground Truth
+        In review mode this widget writes nothing (rewriting {video}_segments.json,
+        {video}_reaches.json and {video}_pellet_outcomes.json in place, stamped
+        'validated', would carry no mark that the cuts were a person's and
+        nothing after them redone). The Ground Truth
         tool mode (review_mode=False) and its own file are unchanged.
         WHY no longer saved here: a correction written into the algorithm's
         own file is erased by the next run of that step, nothing after it is

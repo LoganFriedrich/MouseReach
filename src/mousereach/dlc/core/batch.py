@@ -392,8 +392,7 @@ def run_dlc_workflow(
     3. Move completed to Processing/
     """
     input_dir = Path(input_dir or DEFAULT_DLC_QUEUE)
-    # No config given: the model this machine is set up with. (This read an
-    # undefined DEFAULT_DLC_CONFIG and raised NameError -- found 2026-10-24.)
+    # No config given: the model this machine is set up with.
     if config_path is None:
         from mousereach.config import WatcherConfig
         config_path = WatcherConfig.load().dlc_config_path

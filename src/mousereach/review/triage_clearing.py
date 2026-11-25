@@ -1,9 +1,8 @@
 """Retired: the old per-segment triage-clearing tool.
 
-``mousereach-triage-clearing`` used to open a worklist of algorithm-flagged
-segments and save the reviewer's call straight INTO the algorithm's own
-output files (``_pellet_outcomes.json``, ``_reaches.json``) and a ground-truth
-file. That broke the pipeline's rules in four ways:
+``mousereach-triage-clearing`` must not save the reviewer's call straight INTO
+the algorithm's own output files (``_pellet_outcomes.json``, ``_reaches.json``)
+and a ground-truth file. That would break the pipeline's rules in four ways:
 
 * The answer was not a review record, so the next run of outcome detection
   or reach detection rewrote the files and the person's call was lost.

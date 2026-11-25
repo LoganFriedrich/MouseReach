@@ -278,13 +278,11 @@ class Paths:
     # nas_root is the shared pipeline folder: the one holding Unanalyzed/,
     # Processing/, Analyzed/ and pipeline_versions.json. Every path below hangs
     # off it, and every one is None when it is not configured.
-    # WHY no fallback: an unset nas_root used to be GUESSED as a folder of an
-    # older, retired layout on the NAS drive. Every derived path
-    # then pointed at the old place and a node looked like it was working
-    # right up until someone went looking for its output; the watcher refused
-    # to start there, but the review tools and intake commands make no such
-    # check. Saving from mousereach-setup also used to delete nas_root, which
-    # made the guess a live risk on every machine. Unset now means unset: each
+    # WHY no fallback: guessing an unset nas_root as a folder of an
+    # older layout would point every derived path at the wrong place and a
+    # node would look like it was working right up until someone went looking
+    # for its output; the watcher refuses to start there, but the review tools
+    # and intake commands make no such check. Unset means unset: each
     # tool says it is not configured and names mousereach-setup.
     _nas_root = _config.get("nas_root")
     NAS_ROOT = Path(_nas_root) if _nas_root else None
@@ -1013,7 +1011,7 @@ class WatcherConfig:
         self.max_retries: int = cfg.get('max_retries', 3)
         # 'dlc_pc' (cut + pose), 'processing_server' (analyse + file) or
         # 'standalone' (one machine does both: watcher/standalone.py). The
-        # default stays 'dlc_pc' for machines set up before 2026-11-19;
+        # default stays 'dlc_pc' for machines set up before roles existed;
         # mousereach-setup and the Setup tab now always write a role.
         self.mode: str = cfg.get('mode', 'dlc_pc')
         # How many posed videos the processing node keeps on its own disk
@@ -1250,9 +1248,9 @@ def central_db_path():
     database is an INTEGRATION a lab may or may not run, so its location is
     configuration -- ``central_db`` in ~/.mousereach/config.json or the
     ``MOUSEREACH_CENTRAL_DB`` environment variable -- and there is NO built-in
-    default. Unset means: no sync, no error, one log line saying so. (Until
-    2026-08-28 a lab-specific absolute path was hardcoded here, which made
-    the tool unusable elsewhere and tied it to a database it does not own.)
+    default. Unset means: no sync, no error, one log line saying so. (No
+    absolute path is hardcoded here: that would tie the tool to a database
+    it does not own.)
     """
     import os
     raw = os.environ.get("MOUSEREACH_CENTRAL_DB") or _load_config().get("central_db")

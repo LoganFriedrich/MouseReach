@@ -88,7 +88,7 @@ def no_manifest_attention_items(video_ids) -> list:
     } for vid in sorted(video_ids)]
 
 
-# FILED IS FINAL (lab rule, 2026-11-19). Once a video is filed, what the four
+# FILED IS FINAL. Once a video is filed, what the four
 # algorithms decided for it -- the cuts (segmenter), the reaches (reach
 # detector), the pellet outcomes (outcome detector) and which reach caused
 # each one (assignment) -- is its final answer for good. A newer version of
@@ -112,8 +112,8 @@ def filed_is_final(comparison: dict) -> tuple:
     """``(comparison, kept)``: the version comparison of a FILED video with
     every algorithm and pose-model difference taken out (kept, by name), so
     only a kinematics difference can make it outdated. ``kept`` lists what a
-    newer declaration would have re-run before the 2026-11-19 rule ("filed is
-    final", block comment above): component names, with " (not recorded)"
+    newer declaration would have re-run without the "filed is
+    final" rule (block comment above): component names, with " (not recorded)"
     for a stage the manifest never recorded. The input is not changed."""
     stale = list(comparison.get("stale_components") or [])
     unrec = list(comparison.get("unrecorded_components") or [])
@@ -418,7 +418,7 @@ class ReprocessingScanner:
             'failed_rerun_waiting_videos': [],
             'unsupported_tray_videos': [],
             # Filed videos a newer algorithm or pose model would have re-run
-            # before the 2026-11-19 rule (filed_is_final): not re-run, their
+            # without the filed_is_final rule: not re-run, their
             # filed results kept. Counted and named, so a version change never
             # looks as if it covered them.
             'filed_final_kept': 0,
@@ -484,8 +484,8 @@ class ReprocessingScanner:
         # RECONCILE DISK AGAINST DB before scanning: the archive on disk is
         # the ground truth for what exists; this db is one node's ledger.
         # Videos archived by ANOTHER node (also_process GPU machines) have no
-        # row here, so no version scan anywhere ever covered them -- hundreds
-        # accumulated exactly this way before being adopted by hand. Adopt them automatically so the
+        # row here, so no version scan anywhere ever covered them -- many
+        # could accumulate this way. Adopt them automatically so the
         # blind spot cannot return on the next version bump. Bounded per scan;
         # the remainder is adopted on subsequent passes, and freshly adopted
         # rows are version-checked on the NEXT pass (this pass's archived
@@ -610,10 +610,10 @@ class ReprocessingScanner:
             #
             # ONE exception: a filed one with no features file has never had
             # its session file (FeatureExtractor.extract_session_only) -- every
-            # Easy/Flat video filed before 2026-10-23. Its session file is made
+            # Easy/Flat video filed without one. Its session file is made
             # once by the kinematics step alone, from its filed reaches (scope
-            # 'kinematics'). Before the 2026-11-19 rule (filed_is_final) it was
-            # re-run from segmentation, which re-ran reach detection on a filed
+            # 'kinematics'). Without the filed_is_final rule it would be
+            # re-run from segmentation, which re-runs reach detection on a filed
             # video. The work order runs Easy/Flat only when nothing else waits.
             if not is_supported_tray_type(f"{video_id}.mp4"):
                 summary['unsupported_tray'] += 1
@@ -641,8 +641,8 @@ class ReprocessingScanner:
                     # its kinematics have not applied is still owed, though --
                     # the check below works without a manifest (it falls back
                     # to the features file's time, or to "no kinematics yet").
-                    # WHY: this used to `continue` before the review check, so
-                    # a review saved for such a video never reached its filed
+                    # WHY: a `continue` before the review check would mean
+                    # a review saved for such a video never reaches its filed
                     # kinematics. The kinematics-only re-run writes a manifest,
                     # so the next scan compares its versions as for any video.
                     #
@@ -797,9 +797,9 @@ class ReprocessingScanner:
                                 scope = 'full'  # genuinely needs a new pose
                         else:
                             # A stage the manifest never recorded a version for
-                            # counts like a stale one, at ITS stage. WHY: only
-                            # the stale list used to be passed, so a manifest
-                            # missing nothing but its kinematics version gave
+                            # counts like a stale one, at ITS stage. WHY: passing only
+                            # the stale list would give a manifest
+                            # missing nothing but its kinematics version
                             # an empty list and a re-run from segmentation with
                             # every check, instead of kinematics only.
                             scope = earliest_stale_stage(
@@ -873,11 +873,11 @@ class ReprocessingScanner:
                 # A HAND-MARK. A person said "re-run this", with a recorded
                 # why -- version currency is irrelevant (the usual reason is
                 # precisely that the current-version OUTPUTS are wrong). The
-                # protection used to live only in the compat branch below, so
-                # a version-current-outright row lost its hand-mark within one
-                # scan: the dashboard Re-run button's promise self-cancelled
-                # inside 30 minutes for every current video, and a repair
-                # re-mark was wiped mid-repair. Never un-mark a
+                # protection must not live only in the compat branch below, or
+                # a version-current-outright row would lose its hand-mark within one
+                # scan: the dashboard Re-run button's promise would self-cancel
+                # for every current video, and a repair
+                # re-mark would be wiped mid-repair. Never un-mark a
                 # row carrying a reason; only the drain clears it.
                 continue
             try:
@@ -993,7 +993,7 @@ class ReprocessingScanner:
         the review window) AFTER its features file was written, so the filed
         features do not carry the flag yet.
 
-        WHY (lab decision 2026-11-19, D5-10): a flag changes nothing and holds
+        WHY: a flag changes nothing and holds
         nothing; it is only recorded where it can be found later -- the
         ``session_flag`` field of the video's features file, which the
         database integrator reads (orchestrator.with_session_flag). Writing it
@@ -1291,7 +1291,7 @@ class ReprocessingScanner:
             # A COPY is routed; the filed results stay in Analyzed until the
             # re-cut video is filed again and replaces them (watcher/
             # filed_copy_route.py). WHY this divert may reopen a filed video
-            # at all (lab rule 2026-11-19, 'filed is final'): it fires only on
+            # at all: it fires only on
             # a review a PERSON saved on this filed video saying a segment
             # shows another pellet (true_segment_num) -- a person's own
             # prescription, never an algorithm's.
@@ -1316,9 +1316,8 @@ class ReprocessingScanner:
         never inside a superseded folder (analyzed_tree says why) and never a
         dot-name or anything inside a dot-folder. The modified times come from
         the listing itself. WHY: separate network stats per file cost
-        minutes a pass. WHY any depth: this used to list exactly
-        Analyzed/<project>/<cohort>, and a project folder may now be two levels
-        (group/project) -- a fixed depth would have dropped every video filed
+        minutes a pass. WHY any depth: a project folder may be two levels
+        (group/project), not only Analyzed/<project>/<cohort> -- a fixed depth would drop every video filed
         that way from the version scan without a word."""
         from mousereach.pipeline.analyzed_tree import iter_file_entries
         from mousereach.pipeline.publication_lock import LOCK_SUFFIX
@@ -1378,15 +1377,15 @@ class ReprocessingScanner:
         ONE walk, built the first time a stem misses the scan's index and kept
         for the rest of that scan.
 
-        WHY THIS EXISTS. The fallback used to be a per-video
+        WHY THIS EXISTS. The alternative, a per-video
         ``iter_files(archive_dir, "<stem>_processing_manifest.json")`` -- a full
         recursive walk of Analyzed, per video, to look for ONE name. A video
         whose manifest the scan's index does not hold (archived somewhere the
-        index does not cover, or simply with no manifest on disk) therefore cost
-        a whole-tree walk, and a video with no manifest cost one on EVERY pass
-        because nothing ever satisfies it. A few dozen such videos took most
-        of a pass that ran over half an hour -- and the work loop does nothing while a
-        scan runs. The same walk now serves all of them.
+        index does not cover, or simply with no manifest on disk) therefore costs
+        a whole-tree walk, and a video with no manifest costs one on EVERY pass
+        because nothing ever satisfies it. A few dozen such videos would take most
+        of a pass -- and the work loop does nothing while a
+        scan runs. One shared walk serves all of them.
 
         Same tree, same exclusions and same first-hit-wins order as the old
         per-video walk (one ``iter_files`` in os.walk order), so the manifest
