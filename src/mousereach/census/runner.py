@@ -596,7 +596,7 @@ def run_census(window_days: int = 14) -> dict:
         held_for_hand_scores = sum(1 for sid, el in elements.items()
                                    if el == "mousereach" and sid in held)
         # Listed by video, with what each matched, so a reader (the database
-        # tool's Where Is My Data tab) can show them without the watcher's lists.
+        # tool's MouseReach Video Processing Progress tab) can show them without the watcher's lists.
         held_for_label_mismatch = sorted(
             ({"video_id": i.get("video_id"), "cohort_id": i.get("cohort_id"),
               "own_row": i.get("own_row"), "matched_rows": i.get("matched_rows") or [],
